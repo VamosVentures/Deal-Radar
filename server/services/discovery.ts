@@ -6,11 +6,20 @@ import {
   RESTRICTED_SOURCES,
   type DiscoveryCandidate, type DiscoveryQuery, type DiscoveryRun,
 } from '../../shared/discovery';
-import { importedCompanySchema, importedCompanies, type ImportedCompany } from './imports';
-import { normalizeCompanyName, normalizeDomain } from '../../shared/integrations';
+import { importedCompanySchema, type ImportedCompany } from './imports';
 import { runSource, type RawCandidate } from './sources';
-import { upsertRecord } from './records';
-import { loadCompanies } from '../../src/data/loader';
+import { detectDuplicate, existingCandidates } from '../sourcing/dedupe';
+import { mergeIntoRun } from '../sourcing/enrich';
+import { appendEvidence, getCompany, saveCompany } from '../db/repos/companies';
+import {
+  getConfig, listRuns, recordReviewDecision, saveRun, saveScore, setConfig, updateRunCounts,
+} from '../db/repos/operations';
+import { scoreCompany } from '../../src/lib/scoring';
+import type { Company } from '../../src/types';
+
+// Deduplication lives in server/sourcing/dedupe.ts; re-exported here
+// so existing imports (routes, tests) keep working.
+export { detectDuplicate, existingCandidates };
 
 /**
  * Discovery pipeline: run sources under strict budgets → normalize →
@@ -59,6 +68,7 @@ function normalizeCandidate(raw: RawCandidate, runId: string, sourceId: string, 
     discoveredAt: new Date().toISOString(),
     sourceId,
     simulated,
+    externalId: raw.externalId ?? null,
     companyName: raw.companyName?.trim(),
     website: raw.website ?? 'Unknown',
     pitch: raw.pitch ?? 'Unknown',
@@ -96,150 +106,186 @@ function matchesQuery(c: DiscoveryCandidate, q: DiscoveryQuery): boolean {
   return true; // Unknown fields never exclude a candidate — humans decide.
 }
 
-// ── Duplicate detection ──────────────────────────────────────────
-
-interface KnownRecord { id: string; name: string; domain: string | null; kind: 'bundled' | 'imported' | 'candidate' }
-
-function knownRecords(): KnownRecord[] {
-  const imported = importedCompanies().map((c) => ({
-    id: c.id, name: c.name, domain: c.website ? normalizeDomain(c.website) : null, kind: 'imported' as const,
-  }));
-  const candidates = existingCandidates()
-    .filter((c) => c.status !== 'dismissed')
-    .map((c) => ({ id: c.id, name: c.companyName, domain: c.website !== 'Unknown' ? normalizeDomain(c.website) : null, kind: 'candidate' as const }));
-  return [...BUNDLED_INDEX, ...imported, ...candidates];
+/**
+ * Evidence-recency threshold: drop a candidate whose evidence is ALL
+ * older than the configured window. A candidate with no parseable
+ * evidence date is never excluded this way — recency can't be judged,
+ * so it isn't guessed.
+ */
+function passesEvidenceRecency(c: DiscoveryCandidate, q: DiscoveryQuery): boolean {
+  if (q.minEvidenceRecencyDays === null) return true;
+  const dated = c.evidence
+    .map((e) => new Date(e.dateAccessed).getTime())
+    .filter((t) => !Number.isNaN(t));
+  if (dated.length === 0) return true;
+  const ageDays = (Date.now() - Math.max(...dated)) / 86_400_000;
+  return ageDays <= q.minEvidenceRecencyDays;
 }
 
-/** Bundled sample names/domains — the server reuses the frontend data layer (pure TS + Zod). */
-const BUNDLED_INDEX: KnownRecord[] = loadCompanies().map((c) => ({
-  id: c.id,
-  name: c.name,
-  domain: c.website ? normalizeDomain(c.website) : null,
-  kind: 'bundled' as const,
-}));
+/**
+ * 'stale-only' mode targets refreshing EXISTING companies, not finding
+ * new ones: a candidate is kept only when it matches a company that
+ * has gone unrefreshed for at least `staleAfterDays` (or never).
+ */
+function passesStaleOnlyFilter(c: DiscoveryCandidate, q: DiscoveryQuery): boolean {
+  if (q.mode !== 'stale-only') return true;
+  if (c.duplicateStatus === 'none' || !c.duplicateOfId) return false;
+  const existing = getCompany(c.duplicateOfId);
+  const last = existing?.lastRefreshed;
+  if (!last) return true;
+  const ageDays = (Date.now() - new Date(last).getTime()) / 86_400_000;
+  return ageDays >= q.staleAfterDays;
+}
 
-export function detectDuplicate(c: DiscoveryCandidate): Pick<DiscoveryCandidate, 'duplicateStatus' | 'duplicateOfId' | 'duplicateOfName'> {
-  const domain = c.website !== 'Unknown' ? normalizeDomain(c.website) : null;
-  const name = normalizeCompanyName(c.companyName);
-  for (const k of knownRecords()) {
-    if (k.id === c.id) continue;
-    if (domain && k.domain && domain === k.domain) {
-      return { duplicateStatus: 'exact', duplicateOfId: k.id, duplicateOfName: k.name };
-    }
-  }
-  for (const k of knownRecords()) {
-    if (k.id === c.id) continue;
-    if (normalizeCompanyName(k.name) === name) {
-      return { duplicateStatus: 'likely', duplicateOfId: k.id, duplicateOfName: k.name };
-    }
-  }
-  return { duplicateStatus: 'none', duplicateOfId: null, duplicateOfName: null };
+// ── Overlap prevention ───────────────────────────────────────────
+// One sourcing run (manual, scheduled, or an admin's "Run sourcing
+// now") at a time. The lock is persisted (not just in-process) so it
+// holds even across the scheduler's hourly tick and ad hoc admin
+// triggers; a crashed run can't wedge it forever because a lock older
+// than RUN_LOCK_STALE_MS is treated as abandoned and reclaimed.
+
+const RUN_LOCK_KEY = 'discovery-run-lock';
+const RUN_LOCK_STALE_MS = 15 * 60_000;
+const runLockSchema = z.object({ startedAt: z.string(), initiatedBy: z.string() }).nullable();
+
+function acquireRunLock(initiatedBy: string): boolean {
+  const existing = getConfig(RUN_LOCK_KEY, runLockSchema, null);
+  if (existing && Date.now() - new Date(existing.startedAt).getTime() < RUN_LOCK_STALE_MS) return false;
+  setConfig(RUN_LOCK_KEY, { startedAt: new Date().toISOString(), initiatedBy });
+  return true;
+}
+function releaseRunLock(): void {
+  setConfig(RUN_LOCK_KEY, null);
 }
 
 // ── Run pipeline ─────────────────────────────────────────────────
 
-export function existingCandidates(): DiscoveryCandidate[] {
-  return z.array(discoveryCandidateSchema).catch([]).parse(store.raw.discoveryCandidates);
-}
-
 export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType: DiscoveryRun['runType'] = 'manual'): Promise<DiscoveryRun> {
   assertNoRestrictedSources(rawReq);
   const q = discoveryQuerySchema.parse(rawReq);
-  const started = Date.now();
-  store.raw.discoveryCancelRequested = false;
 
-  const runId = store.nextId('run');
-  const sourceResults: DiscoveryRun['sourceResults'] = [];
-  const errors: string[] = [];
-  let apiCalls = 0;
-  let discovered = 0;
-  let duplicatesSkipped = 0;
-  let rejectedByValidation = 0;
-  let cancelled = false;
-  const accepted: DiscoveryCandidate[] = [];
-
-  for (const sourceId of q.sources) {
-    if (store.raw.discoveryCancelRequested) { cancelled = true; break; }
-    if (discovered >= q.maxResults) {
-      sourceResults.push({ sourceId, mode: 'skipped', found: 0, detail: 'Result budget reached before this source ran.' });
-      continue;
-    }
-    let result;
-    try {
-      result = await runSource(sourceId, q, q.maxApiCalls - apiCalls);
-    } catch (e) {
-      errors.push(`${sourceId}: ${(e as Error).message}`);
-      sourceResults.push({ sourceId, mode: 'failed', found: 0, detail: (e as Error).message });
-      continue; // partial failure never loses other sources' work
-    }
-    apiCalls += result.apiCalls;
-    let found = 0;
-    for (const raw of result.candidates) {
-      if (discovered >= q.maxResults) break;
-      const parsed = discoveryCandidateSchema.safeParse(normalizeCandidate(raw, runId, sourceId, result.mode !== 'live'));
-      if (!parsed.success) {
-        rejectedByValidation += 1;
-        continue;
-      }
-      let cand = parsed.data;
-      if (!matchesQuery(cand, q)) continue;
-      cand = { ...cand, ...detectDuplicate(cand) };
-      if (cand.duplicateStatus === 'exact' && q.mode === 'new-only') {
-        duplicatesSkipped += 1;
-        continue; // still counted; humans can rerun in 'all' mode to see them
-      }
-      accepted.push(cand);
-      discovered += 1;
-      found += 1;
-    }
-    sourceResults.push({ sourceId, mode: result.mode, found, detail: result.detail });
-    if (result.mode === 'failed') errors.push(`${sourceId}: ${result.detail}`);
+  if (!acquireRunLock(initiatedBy)) {
+    throw Object.assign(
+      new Error('A sourcing run is already in progress. Wait for it to finish, or check back in a few minutes.'),
+      { status: 409 },
+    );
   }
 
-  store.raw.discoveryCandidates = [...store.raw.discoveryCandidates, ...accepted];
+  try {
+    const startedAt = new Date();
+    store.raw.discoveryCancelRequested = false;
 
-  const liveCount = sourceResults.filter((r) => r.mode === 'live').length;
-  const simCount = sourceResults.filter((r) => r.mode === 'simulated').length;
-  const failedCount = sourceResults.filter((r) => r.mode === 'failed').length;
-  const budgetWarnings: string[] = [];
-  if (apiCalls >= q.maxApiCalls) budgetWarnings.push('API-call budget reached');
-  if (discovered >= q.maxResults) budgetWarnings.push('Result budget reached');
+    const runId = store.nextId('run');
+    const sourceResults: DiscoveryRun['sourceResults'] = [];
+    const errors: string[] = [];
+    let apiCalls = 0;
+    let discovered = 0;
+    let duplicatesSkipped = 0;
+    let duplicatesIdentified = 0;
+    let filteredByPolicy = 0;
+    let rejectedByValidation = 0;
+    let enrichedInRun = 0;
+    let cancelled = false;
+    const accepted: DiscoveryCandidate[] = [];
 
-  const cost = estimateCost(q);
-  const run: DiscoveryRun = discoveryRunSchema.parse({
-    id: runId,
-    at: new Date().toISOString(),
-    runType,
-    mode: liveCount > 0 && simCount > 0 ? 'mixed' : liveCount > 0 ? 'live' : simCount > 0 ? 'simulated' : 'local',
-    query: q,
-    sourceResults,
-    discovered,
-    updatedExisting: 0,
-    duplicatesSkipped,
-    rejectedByValidation,
-    imported: 0,
-    errors,
-    apiCalls,
-    modelCalls: 0,
-    estimatedTokens: 0, // model calls are not used during discovery itself
-    estimatedCostUsd: 0,
-    durationMs: Date.now() - started,
-    status: cancelled ? 'Cancelled'
-      : failedCount > 0 && discovered === 0 && failedCount === sourceResults.length ? 'Failed'
-      : failedCount > 0 || budgetWarnings.length > 0 ? 'Completed with warnings'
-      : liveCount === 0 ? 'Simulated'
-      : 'Completed',
-    initiatedBy,
-  });
-  void cost;
-  store.raw.discoveryRuns = [run, ...store.raw.discoveryRuns].slice(0, 100);
-  store.save();
-  audit({
-    provider: 'system', mode: liveCount > 0 ? 'live' : 'mock', action: 'discovery-run',
-    subject: `${q.sources.join(',')}`, outcome: run.status === 'Failed' ? 'error' : 'ok',
-    detail: `${discovered} discovered, ${duplicatesSkipped} dup-skipped, ${rejectedByValidation} rejected, ${apiCalls} API calls, status ${run.status}${budgetWarnings.length > 0 ? ` (${budgetWarnings.join('; ')})` : ''}`,
-  });
-  return run;
+    for (const sourceId of q.sources) {
+      if (store.raw.discoveryCancelRequested) { cancelled = true; break; }
+      if (discovered >= q.maxResults) {
+        sourceResults.push({ sourceId, mode: 'skipped', found: 0, detail: 'Result budget reached before this source ran.' });
+        continue;
+      }
+      let result;
+      try {
+        result = await runSource(sourceId, q, q.maxApiCalls - apiCalls);
+      } catch (e) {
+        errors.push(`${sourceId}: ${(e as Error).message}`);
+        sourceResults.push({ sourceId, mode: 'failed', found: 0, detail: (e as Error).message });
+        continue; // partial failure never loses other sources' work
+      }
+      apiCalls += result.apiCalls;
+      let found = 0;
+      for (const raw of result.candidates) {
+        if (discovered >= q.maxResults) break;
+        const parsed = discoveryCandidateSchema.safeParse(normalizeCandidate(raw, runId, sourceId, result.mode !== 'live'));
+        if (!parsed.success) {
+          rejectedByValidation += 1;
+          continue;
+        }
+        let cand = parsed.data;
+        if (!matchesQuery(cand, q)) continue;
+        if (!passesEvidenceRecency(cand, q)) { filteredByPolicy += 1; continue; }
+        cand = { ...cand, ...detectDuplicate(cand) };
+        if (cand.duplicateStatus !== 'none') duplicatesIdentified += 1;
+        if (!passesStaleOnlyFilter(cand, q)) { filteredByPolicy += 1; continue; }
+        if (cand.duplicateStatus === 'exact' && q.mode === 'new-only') {
+          duplicatesSkipped += 1;
+          continue; // still counted; humans can rerun in 'all' mode to see them
+        }
+        // Enrichment: the same company surfaced by another source in THIS
+        // run gains evidence + missing fields instead of a duplicate row.
+        if (mergeIntoRun(accepted, cand)) {
+          enrichedInRun += 1;
+          continue;
+        }
+        accepted.push(cand);
+        discovered += 1;
+        found += 1;
+      }
+      sourceResults.push({ sourceId, mode: result.mode, found, detail: result.detail, ...(result.failureKind ? { failureKind: result.failureKind } : {}) });
+      if (result.mode === 'failed') errors.push(`${sourceId}: ${result.detail}`);
+    }
+
+    store.raw.discoveryCandidates = [...store.raw.discoveryCandidates, ...accepted];
+
+    const liveCount = sourceResults.filter((r) => r.mode === 'live').length;
+    const simCount = sourceResults.filter((r) => r.mode === 'simulated').length;
+    const failedCount = sourceResults.filter((r) => r.mode === 'failed').length;
+    const budgetWarnings: string[] = [];
+    if (apiCalls >= q.maxApiCalls) budgetWarnings.push('API-call budget reached');
+    if (discovered >= q.maxResults) budgetWarnings.push('Result budget reached');
+
+    const cost = estimateCost(q);
+    const completedAt = new Date();
+    const run: DiscoveryRun = discoveryRunSchema.parse({
+      id: runId,
+      at: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+      runType,
+      mode: liveCount > 0 && simCount > 0 ? 'mixed' : liveCount > 0 ? 'live' : simCount > 0 ? 'simulated' : 'local',
+      query: q,
+      sourceResults,
+      discovered,
+      updatedExisting: 0,
+      duplicatesSkipped,
+      duplicatesIdentified,
+      filteredByPolicy,
+      rejectedByValidation,
+      imported: 0,
+      errors,
+      apiCalls,
+      modelCalls: 0,
+      estimatedTokens: 0, // model calls are not used during discovery itself
+      estimatedCostUsd: 0,
+      durationMs: completedAt.getTime() - startedAt.getTime(),
+      status: cancelled ? 'Cancelled'
+        : failedCount > 0 && discovered === 0 && failedCount === sourceResults.length ? 'Failed'
+        : failedCount > 0 || budgetWarnings.length > 0 ? 'Completed with warnings'
+        : liveCount === 0 ? 'Simulated'
+        : 'Completed',
+      initiatedBy,
+    });
+    void cost;
+    saveRun(run);
+    store.save();
+    audit({
+      provider: 'system', mode: liveCount > 0 ? 'live' : 'local', action: 'discovery-run',
+      subject: `${q.sources.join(',')}`, outcome: run.status === 'Failed' ? 'error' : 'ok',
+      detail: `${discovered} discovered, ${enrichedInRun} enriched cross-source, ${duplicatesIdentified} duplicates identified (${duplicatesSkipped} skipped), ${filteredByPolicy} filtered by recency/refresh-age policy, ${rejectedByValidation} rejected, ${apiCalls} API calls, status ${run.status}${budgetWarnings.length > 0 ? ` (${budgetWarnings.join('; ')})` : ''}`,
+    });
+    return run;
+  } finally {
+    releaseRunLock();
+  }
 }
 
 export function cancelDiscovery(): void {
@@ -248,7 +294,7 @@ export function cancelDiscovery(): void {
 }
 
 export function discoveryRuns(): DiscoveryRun[] {
-  return z.array(discoveryRunSchema).catch([]).parse(store.raw.discoveryRuns);
+  return listRuns();
 }
 
 // ── Selective import (explicit human action) ─────────────────────
@@ -285,6 +331,7 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
         mergeEvidenceIntoExisting(cand);
         cand.status = 'merged';
         outcome.merged.push(id);
+        recordReviewDecision({ subjectType: 'candidate', subjectId: cand.id, decision: 'merged-evidence', actor: req.actor, reason: `into ${cand.duplicateOfName}` });
         continue;
       }
     }
@@ -294,46 +341,34 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
       outcome.skipped.push({ id, reason: company.reason });
       continue;
     }
-    store.raw.importedCompanies = [
-      ...store.raw.importedCompanies.filter((c) => (c as { id?: string }).id !== company.value.id),
-      company.value,
-    ];
-    store.raw.companyMeta[company.value.id] = {
-      ...store.raw.companyMeta[company.value.id],
-      reviewStatus: 'Needs Review',
+    saveCompany(company.value, {
+      origin: 'extracted', // public-source extraction; verified fields are never downgraded
+      source: `discovery:${cand.sourceId}`,
+      externalId: cand.externalId ? { sourceId: cand.sourceId, externalId: cand.externalId } : undefined,
+      reviewStatus: 'Awaiting Review',
       discoverySource: cand.sourceId,
       discoveredAt: cand.discoveredAt.slice(0, 10),
-    };
-    // Outreach tracker entry in the earliest human-review state.
-    upsertRecord({
-      companyId: company.value.id,
-      companyName: company.value.name,
-      founderName: cand.founderNames[0] ?? 'Unknown',
-      founderEmail: null,
-      owner: req.actor,
-      vertical: company.value.vertical,
-      companyStage: company.value.stage,
-      fitScore: 0, // computed in the UI from real fields; never invented here
-      policyException: null,
-      sourceQuality: Math.round(cand.confidence * 10),
     });
+    saveScore(company.value.id, scoreCompany(company.value as unknown as Company), company.value.evidence.map((e) => e.url));
+    recordReviewDecision({ subjectType: 'candidate', subjectId: cand.id, decision: 'imported', actor: req.actor });
     cand.status = 'imported';
     outcome.imported.push(id);
   }
 
   store.raw.discoveryCandidates = all;
   // Reflect import counts on the originating runs.
-  const runs = discoveryRuns();
-  for (const run of runs) {
-    run.imported = all.filter((c) => c.runId === run.id && c.status === 'imported').length;
-    run.updatedExisting = all.filter((c) => c.runId === run.id && c.status === 'merged').length;
+  const runIds = new Set(all.map((c) => c.runId));
+  for (const runId of runIds) {
+    updateRunCounts(runId, {
+      imported: all.filter((c) => c.runId === runId && c.status === 'imported').length,
+      updatedExisting: all.filter((c) => c.runId === runId && c.status === 'merged').length,
+    });
   }
-  store.raw.discoveryRuns = runs;
   store.save();
   audit({
-    provider: 'system', mode: 'mock', action: 'discovery-import', subject: req.candidateIds.join(','),
+    provider: 'system', mode: 'local', action: 'discovery-import', subject: req.candidateIds.join(','),
     outcome: 'ok',
-    detail: `${outcome.imported.length} imported to Needs Review, ${outcome.merged.length} merged, ${outcome.skipped.length} skipped — by ${req.actor}. No outreach, approval, or sync happened automatically.`,
+    detail: `${outcome.imported.length} imported to Awaiting Review, ${outcome.merged.length} merged, ${outcome.skipped.length} skipped — by ${req.actor}. No outreach, approval, or sync happened automatically.`,
   });
   return outcome;
 }
@@ -355,6 +390,9 @@ function candidateToImportedCompany(c: DiscoveryCandidate): { success: true; val
     foundedYear: c.foundingYear ?? new Date().getFullYear(),
     teamSize: Math.max(1, c.founderCount ?? 1),
     website: c.website !== 'Unknown' ? c.website : undefined,
+    raising: c.publicFunding !== 'Unknown' ? c.publicFunding : undefined,
+    accelerator: c.accelerator !== 'Unknown' ? c.accelerator : undefined,
+    lastFundingDate: c.fundingDate && /^\d{4}-\d{2}-\d{2}$/.test(c.fundingDate) ? c.fundingDate : undefined,
     traction: {
       level: 0,
       note: c.tractionSignals.length > 0 ? `Signals only: ${c.tractionSignals.join('; ')} (unrated — needs analyst review)` : 'Unknown — not yet researched',
@@ -380,20 +418,24 @@ function candidateToImportedCompany(c: DiscoveryCandidate): { success: true; val
 /** Merge candidate evidence into the matched record — appends, never overwrites; conflicts stay visible. */
 function mergeEvidenceIntoExisting(cand: DiscoveryCandidate): void {
   const targetId = cand.duplicateOfId!;
-  const imported = store.raw.importedCompanies as { id?: string; evidence?: unknown[] }[];
-  const target = imported.find((c) => c.id === targetId);
   const newEvidence = cand.evidence.map((e) => ({
     claim: e.claim, source: e.source, url: e.url, date: e.dateAccessed, type: 'Database record' as const,
   }));
+  if (getCompany(targetId)) {
+    // Append-only into the database: conflicting claims are preserved side by side.
+    appendEvidence(targetId, newEvidence, 'merge');
+    return;
+  }
+  // Target is another pending candidate — append onto its evidence list.
+  const all = existingCandidates();
+  const target = all.find((c) => c.id === targetId);
   if (target) {
-    const existing = (target.evidence ?? []) as { url?: string }[];
-    const fresh = newEvidence.filter((n) => !existing.some((x) => x.url === n.url));
-    target.evidence = [...existing, ...fresh]; // append-only: conflicting claims are preserved side by side
-  } else {
-    // Bundled records are read-only — evidence additions live in companyMeta and surface in the UI.
-    const meta = store.raw.companyMeta[targetId] ?? {};
-    const existing = (meta.addedEvidence ?? []) as { url?: string }[];
-    const fresh = newEvidence.filter((n) => !existing.some((x) => x.url === n.url));
-    store.raw.companyMeta[targetId] = { ...meta, addedEvidence: [...existing, ...fresh] };
+    const cited = new Set(target.evidence.map((e) => e.url));
+    target.evidence = [
+      ...target.evidence,
+      ...cand.evidence.filter((e) => !cited.has(e.url)),
+    ];
+    store.raw.discoveryCandidates = all;
+    store.save();
   }
 }

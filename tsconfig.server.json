@@ -15,5 +15,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["server", "shared", "src/data", "src/types.ts"]
+  "include": ["server", "shared", "scripts", "src/data", "src/types.ts", "src/lib/scoring.ts"]
 }

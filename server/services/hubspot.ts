@@ -1,10 +1,9 @@
-import { env, hubspotOAuthConfigured, integrationModeForcedMock, modes } from '../env';
-import { store, type MockHubSpotObject, type TokenRecord } from '../lib/store';
+import { env, hubspotOAuthConfigured, notConnected } from '../env';
+import { store, type TokenRecord } from '../lib/store';
 import { audit } from '../lib/guard';
 import { decrypt, encrypt, randomToken } from '../lib/crypto';
 import { fetchWithRetry } from '../lib/http';
 import {
-  normalizeCompanyName,
   normalizeDomain,
   type DuplicateMatch,
   type HubSpotCompanyRecord,
@@ -12,7 +11,6 @@ import {
   type HubSpotDealRecord,
   type HubSpotPipelineInfo,
   type SyncResult,
-  RADAR_HUBSPOT_STAGES,
 } from '../../shared/integrations';
 
 // ── Auth: private-app token OR user-connected OAuth ─────────────
@@ -22,13 +20,13 @@ function oauthToken(): TokenRecord | undefined {
 }
 
 /**
- * HubSpot is live when NOT forced to mock AND either a private-app
- * token exists in the environment or a user completed the OAuth flow.
+ * HubSpot is connected when either a private-app token exists in the
+ * environment or a user completed the OAuth flow. There is no mock
+ * fallback — when disconnected, HubSpot actions fail with an honest
+ * "not connected" error.
  */
-export function hubspotMode(): 'mock' | 'live' {
-  if (integrationModeForcedMock()) return 'mock';
-  if (env.HUBSPOT_ACCESS_TOKEN) return 'live';
-  return oauthToken() ? 'live' : 'mock';
+export function hubspotConnected(): boolean {
+  return !!env.HUBSPOT_ACCESS_TOKEN || !!oauthToken();
 }
 
 export function hubspotAuthType(): 'private-app' | 'oauth' | 'none' {
@@ -36,6 +34,9 @@ export function hubspotAuthType(): 'private-app' | 'oauth' | 'none' {
   if (oauthToken()) return 'oauth';
   return hubspotOAuthConfigured() ? 'oauth' : 'none';
 }
+
+const HUBSPOT_NOT_CONNECTED_HINT =
+  'Add HUBSPOT_ACCESS_TOKEN (private app) or HUBSPOT_CLIENT_ID/SECRET/REDIRECT_URI (OAuth) to .env, then connect under Data Sources & Refresh.';
 
 async function exchangeHubSpotToken(body: Record<string, string>) {
   const res = await fetchWithRetry('https://api.hubapi.com/oauth/v1/token', {
@@ -59,14 +60,11 @@ const HUBSPOT_OAUTH_SCOPES = [
   'crm.objects.deals.read', 'crm.objects.deals.write',
 ];
 
-export function beginHubSpotConnect(): { authUrl: string | null; demo: boolean; message: string } {
-  if (!hubspotOAuthConfigured() || integrationModeForcedMock()) {
+export function beginHubSpotConnect(): { authUrl: string | null; message: string } {
+  if (!hubspotOAuthConfigured()) {
     return {
       authUrl: null,
-      demo: true,
-      message: hubspotOAuthConfigured()
-        ? 'INTEGRATION_MODE=mock forces Local Mode. Set INTEGRATION_MODE=auto to use the real OAuth flow.'
-        : 'HubSpot OAuth is not configured. Set HUBSPOT_CLIENT_ID, HUBSPOT_CLIENT_SECRET, and HUBSPOT_REDIRECT_URI (or use a private-app token) to connect.',
+      message: 'HubSpot OAuth is not configured. Set HUBSPOT_CLIENT_ID, HUBSPOT_CLIENT_SECRET, and HUBSPOT_REDIRECT_URI (or use a private-app token) to connect.',
     };
   }
   const state = randomToken();
@@ -78,7 +76,7 @@ export function beginHubSpotConnect(): { authUrl: string | null; demo: boolean; 
     scope: HUBSPOT_OAUTH_SCOPES.join(' '),
     state,
   });
-  return { authUrl: `https://app.hubspot.com/oauth/authorize?${params}`, demo: false, message: 'Redirecting to HubSpot authorization.' };
+  return { authUrl: `https://app.hubspot.com/oauth/authorize?${params}`, message: 'Redirecting to HubSpot authorization.' };
 }
 
 export async function handleHubSpotCallback(code: string, state: string): Promise<void> {
@@ -111,7 +109,7 @@ export async function handleHubSpotCallback(code: string, state: string): Promis
 export function disconnectHubSpot(): void {
   store.raw.tokens = store.raw.tokens.filter((t) => t.provider !== 'hubspot');
   store.save();
-  audit({ provider: 'hubspot', mode: hubspotMode(), action: 'disconnect', subject: 'hubspot', outcome: 'ok', detail: 'OAuth tokens removed' });
+  audit({ provider: 'hubspot', mode: 'live', action: 'disconnect', subject: 'hubspot', outcome: 'ok', detail: 'OAuth tokens removed' });
 }
 
 /** Bearer token for live calls: private-app token, else OAuth (refreshing as needed). */
@@ -119,7 +117,7 @@ async function hubspotBearer(): Promise<string> {
   if (env.HUBSPOT_ACCESS_TOKEN) return env.HUBSPOT_ACCESS_TOKEN;
   const t = oauthToken();
   if (!t) {
-    throw Object.assign(new Error('HubSpot is not connected. Connect it under Data Sources or set HUBSPOT_ACCESS_TOKEN.'), { status: 401 });
+    throw notConnected('HubSpot', HUBSPOT_NOT_CONNECTED_HINT);
   }
   if (new Date(t.expiresAt).getTime() - Date.now() > 60_000) return decrypt(t.cipher);
   if (!t.refreshCipher) {
@@ -202,6 +200,10 @@ export function buildDealProperties(d: HubSpotDealRecord, stageId: string, pipel
       .join('; '),
     vamos_rationale: d.rationale,
     vamos_risks: d.risks,
+    vamos_score_explanation: d.scoreExplanation,
+    vamos_reviewer: d.approvedBy,
+    vamos_approval_date: d.approvalDate,
+    vamos_source_urls: d.sourceUrls.join('\n') || null,
     vamos_evidence_quality: d.evidenceQualityScore,
     vamos_policy_exception: d.policyException,
     vamos_sourcing_status: d.sourcingStatus,
@@ -217,19 +219,28 @@ export function buildDealProperties(d: HubSpotDealRecord, stageId: string, pipel
 
 export interface HubSpotSearchHit {
   recordId: string;
-  type: 'company' | 'contact';
+  type: 'company' | 'contact' | 'deal';
   title: string;
   subtitle: string;
   url: string | null;
   demo: boolean;
 }
 
+export interface DuplicateCheckInput {
+  name: string;
+  domain: string | null;
+  /** Verified founder emails, when available — matched against HubSpot contacts. */
+  founderEmails?: string[];
+  /** Our record id — matched against the vamos_deal_radar_id property. */
+  dealRadarId?: string;
+}
+
 export interface HubSpotService {
   mode: 'mock' | 'live';
   /** Cheap real call that proves the credentials work. */
   verifyConnection(): Promise<{ ok: boolean; detail: string }>;
-  search(query: string, type: 'companies' | 'contacts'): Promise<HubSpotSearchHit[]>;
-  checkDuplicate(name: string, domain: string | null): Promise<DuplicateMatch[]>;
+  search(query: string, type: 'companies' | 'contacts' | 'deals'): Promise<HubSpotSearchHit[]>;
+  checkDuplicate(input: DuplicateCheckInput): Promise<DuplicateMatch[]>;
   getPipelines(): Promise<HubSpotPipelineInfo[]>;
   syncCompany(args: {
     company: HubSpotCompanyRecord;
@@ -246,159 +257,7 @@ export interface HubSpotService {
   }): Promise<{ noteId: string; demo: boolean }>;
 }
 
-// ── Mock implementation ──────────────────────────────────────────
-
-class MockHubSpot implements HubSpotService {
-  mode = 'mock' as const;
-
-  async verifyConnection() {
-    return {
-      ok: true,
-      detail: 'Local Mode: simulated store responded. No real HubSpot connection was verified.',
-    };
-  }
-
-  async search(query: string, type: 'companies' | 'contacts'): Promise<HubSpotSearchHit[]> {
-    const q = query.trim().toLowerCase();
-    const objType = type === 'companies' ? 'company' : 'contact';
-    return store.raw.mockHubSpot
-      .filter((o) => o.type === objType)
-      .filter((o) => JSON.stringify(o.properties).toLowerCase().includes(q))
-      .slice(0, 8)
-      .map((o) => ({
-        recordId: o.id,
-        type: objType as 'company' | 'contact',
-        title: String(o.properties.name ?? `${o.properties.firstname ?? ''} ${o.properties.lastname ?? ''}`.trim()),
-        subtitle: String(o.properties.domain ?? o.properties.email ?? '—'),
-        url: null,
-        demo: true,
-      }));
-  }
-
-  async checkDuplicate(name: string, domain: string | null): Promise<DuplicateMatch[]> {
-    const nDomain = normalizeDomain(domain);
-    const nName = normalizeCompanyName(name);
-    const companies = store.raw.mockHubSpot.filter((o) => o.type === 'company');
-
-    const byDomain = nDomain
-      ? companies.filter((o) => normalizeDomain(String(o.properties.domain ?? '')) === nDomain)
-      : [];
-    const pool = byDomain.length > 0 ? byDomain : companies.filter(
-      (o) => normalizeCompanyName(String(o.properties.name ?? '')) === nName,
-    );
-    return pool.map((o) => ({
-      recordId: o.id,
-      name: String(o.properties.name ?? ''),
-      domain: (o.properties.domain as string | null) ?? null,
-      matchedOn: byDomain.length > 0 ? 'domain' : 'name',
-      url: null, // Demo Mode — no real HubSpot record exists
-      demo: true,
-    }));
-  }
-
-  async getPipelines(): Promise<HubSpotPipelineInfo[]> {
-    return [
-      {
-        id: 'demo-pipeline',
-        label: 'Demo Mode sample pipeline (not a real HubSpot pipeline)',
-        stages: RADAR_HUBSPOT_STAGES.map((s) => ({
-          id: `demo-${s.toLowerCase().replace(/\s+/g, '-')}`,
-          label: s,
-        })),
-      },
-    ];
-  }
-
-  private put(
-    type: MockHubSpotObject['type'],
-    properties: Record<string, string | number | null>,
-    existingId?: string | null,
-  ): MockHubSpotObject {
-    const now = new Date().toISOString();
-    if (existingId) {
-      const found = store.raw.mockHubSpot.find((o) => o.id === existingId);
-      if (found) {
-        found.properties = { ...found.properties, ...properties };
-        found.updatedAt = now;
-        store.save();
-        return found;
-      }
-    }
-    const obj: MockHubSpotObject = {
-      id: store.nextId(`mock-${type}`),
-      type,
-      properties,
-      associations: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-    store.raw.mockHubSpot.push(obj);
-    store.save();
-    return obj;
-  }
-
-  async syncCompany(args: Parameters<HubSpotService['syncCompany']>[0]): Promise<SyncResult> {
-    const { company, contacts, deal, stageId, pipelineId, resolution, existingRecordId } = args;
-    const updating = resolution === 'update-existing' && !!existingRecordId;
-    const companyObj = this.put(
-      'company',
-      buildCompanyProperties(company),
-      updating ? existingRecordId : null,
-    );
-    const contactObjs = contacts.map((c) => {
-      // Reuse an existing mock contact with the same email to avoid duplicates.
-      const email = c.email;
-      const existing = email
-        ? store.raw.mockHubSpot.find(
-            (o) => o.type === 'contact' && o.properties.email === email,
-          )
-        : undefined;
-      return this.put('contact', buildContactProperties(c), existing?.id ?? null);
-    });
-    const dealObj = this.put('deal', buildDealProperties(deal, stageId, pipelineId), null);
-
-    dealObj.associations = [companyObj.id, ...contactObjs.map((o) => o.id)];
-    companyObj.associations = Array.from(
-      new Set([...companyObj.associations, dealObj.id, ...contactObjs.map((o) => o.id)]),
-    );
-    store.save();
-
-    audit({
-      provider: 'hubspot', mode: 'mock',
-      action: updating ? 'update-company' : 'create-company',
-      subject: company.dealRadarId, outcome: 'ok',
-      detail: `Demo Mode: simulated ${updating ? 'update of' : 'creation of'} company, ${contactObjs.length} contact(s), 1 deal`,
-    });
-
-    return {
-      demo: true,
-      companyId: companyObj.id,
-      companyUrl: null, // no real record — never fabricate a HubSpot link
-      contactIds: contactObjs.map((o) => o.id),
-      dealId: dealObj.id,
-      dealUrl: null,
-      action: updating ? 'updated' : 'created',
-      message: `Demo Mode: simulated HubSpot sync. No real HubSpot ${updating ? 'update' : 'records'} occurred.`,
-    };
-  }
-
-  async logActivity(args: { companyRecordId: string; note: string }) {
-    const note = this.put('note', { body: args.note, about: args.companyRecordId }, null);
-    const target = store.raw.mockHubSpot.find((o) => o.id === args.companyRecordId);
-    if (target) {
-      target.associations.push(note.id);
-      store.save();
-    }
-    audit({
-      provider: 'hubspot', mode: 'mock', action: 'log-activity',
-      subject: args.companyRecordId, outcome: 'ok',
-      detail: 'Demo Mode: simulated HubSpot note',
-    });
-    return { noteId: note.id, demo: true };
-  }
-}
-
-// ── Live implementation (requires HUBSPOT_ACCESS_TOKEN) ──────────
+// ── Live implementation ──────────────────────────────────────────
 
 const HS = 'https://api.hubapi.com';
 
@@ -424,36 +283,76 @@ class LiveHubSpot implements HubSpotService {
     return (await res.json()) as T;
   }
 
-  async checkDuplicate(name: string, domain: string | null): Promise<DuplicateMatch[]> {
-    const nDomain = normalizeDomain(domain);
-    const search = async (prop: string, value: string) =>
-      this.call<{ results: { id: string; properties: Record<string, string> }[] }>(
-        '/crm/v3/objects/companies/search',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            filterGroups: [{ filters: [{ propertyName: prop, operator: 'EQ', value }] }],
-            properties: ['name', 'domain'],
-            limit: 5,
-          }),
-        },
-      );
-    let results = nDomain ? (await search('domain', nDomain)).results : [];
-    let matchedOn: 'domain' | 'name' = 'domain';
-    if (results.length === 0) {
-      results = (await search('name', name)).results;
-      matchedOn = 'name';
-    }
-    return results.map((r) => ({
+  private async searchCompaniesBy(prop: string, value: string) {
+    return this.call<{ results: { id: string; properties: Record<string, string> }[] }>(
+      '/crm/v3/objects/companies/search',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          filterGroups: [{ filters: [{ propertyName: prop, operator: 'EQ', value }] }],
+          properties: ['name', 'domain'],
+          limit: 5,
+        }),
+      },
+    );
+  }
+
+  /**
+   * Tiered duplicate check before any create:
+   * 1. our Vamos property (vamos_deal_radar_id) — exact prior sync,
+   * 2. normalized domain,
+   * 3. normalized company name,
+   * 4. verified founder emails against HubSpot contacts.
+   */
+  async checkDuplicate(input: DuplicateCheckInput): Promise<DuplicateMatch[]> {
+    const portal = env.HUBSPOT_PORTAL_ID;
+    const companyUrl = (id: string) => (portal ? `https://app.hubspot.com/contacts/${portal}/company/${id}` : null);
+    const toMatch = (r: { id: string; properties: Record<string, string> }, matchedOn: DuplicateMatch['matchedOn']): DuplicateMatch => ({
       recordId: r.id,
       name: r.properties.name ?? '',
       domain: r.properties.domain ?? null,
       matchedOn,
-      url: env.HUBSPOT_PORTAL_ID
-        ? `https://app.hubspot.com/contacts/${env.HUBSPOT_PORTAL_ID}/company/${r.id}`
-        : null,
+      url: companyUrl(r.id),
       demo: false,
-    }));
+    });
+
+    if (input.dealRadarId) {
+      const byRadar = await this.searchCompaniesBy('vamos_deal_radar_id', input.dealRadarId).catch(() => ({ results: [] }));
+      if (byRadar.results.length > 0) return byRadar.results.map((r) => toMatch(r, 'radar-id'));
+    }
+    const nDomain = normalizeDomain(input.domain);
+    if (nDomain) {
+      const byDomain = await this.searchCompaniesBy('domain', nDomain);
+      if (byDomain.results.length > 0) return byDomain.results.map((r) => toMatch(r, 'domain'));
+    }
+    const byName = await this.searchCompaniesBy('name', input.name);
+    if (byName.results.length > 0) return byName.results.map((r) => toMatch(r, 'name'));
+
+    const matches: DuplicateMatch[] = [];
+    for (const email of (input.founderEmails ?? []).slice(0, 3)) {
+      const contacts = await this.call<{ results: { id: string; properties: Record<string, string> }[] }>(
+        '/crm/v3/objects/contacts/search',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: email }] }],
+            properties: ['firstname', 'lastname', 'email', 'company'],
+            limit: 2,
+          }),
+        },
+      ).catch(() => ({ results: [] }));
+      for (const r of contacts.results) {
+        matches.push({
+          recordId: r.id,
+          name: `Contact: ${`${r.properties.firstname ?? ''} ${r.properties.lastname ?? ''}`.trim() || r.properties.email} (${r.properties.email})${r.properties.company ? ` — company on record: ${r.properties.company}` : ''}`,
+          domain: null,
+          matchedOn: 'founder-email',
+          url: portal ? `https://app.hubspot.com/contacts/${portal}/contact/${r.id}` : null,
+          demo: false,
+        });
+      }
+    }
+    return matches;
   }
 
   async getPipelines(): Promise<HubSpotPipelineInfo[]> {
@@ -476,8 +375,11 @@ class LiveHubSpot implements HubSpotService {
     }
   }
 
-  async search(query: string, type: 'companies' | 'contacts'): Promise<HubSpotSearchHit[]> {
-    const props = type === 'companies' ? ['name', 'domain'] : ['firstname', 'lastname', 'email'];
+  async search(query: string, type: 'companies' | 'contacts' | 'deals'): Promise<HubSpotSearchHit[]> {
+    const props =
+      type === 'companies' ? ['name', 'domain']
+      : type === 'contacts' ? ['firstname', 'lastname', 'email']
+      : ['dealname', 'dealstage', 'amount'];
     const data = await this.call<{ results: { id: string; properties: Record<string, string> }[] }>(
       `/crm/v3/objects/${type}/search`,
       {
@@ -486,28 +388,67 @@ class LiveHubSpot implements HubSpotService {
       },
     );
     const portal = env.HUBSPOT_PORTAL_ID;
+    const kind = type === 'companies' ? 'company' as const : type === 'contacts' ? 'contact' as const : 'deal' as const;
     return data.results.map((r) => ({
       recordId: r.id,
-      type: type === 'companies' ? 'company' as const : 'contact' as const,
-      title: type === 'companies'
-        ? (r.properties.name ?? r.id)
-        : `${r.properties.firstname ?? ''} ${r.properties.lastname ?? ''}`.trim() || r.id,
-      subtitle: (type === 'companies' ? r.properties.domain : r.properties.email) ?? '—',
+      type: kind,
+      title:
+        type === 'companies' ? (r.properties.name ?? r.id)
+        : type === 'contacts' ? (`${r.properties.firstname ?? ''} ${r.properties.lastname ?? ''}`.trim() || r.id)
+        : (r.properties.dealname ?? r.id),
+      subtitle:
+        (type === 'companies' ? r.properties.domain
+        : type === 'contacts' ? r.properties.email
+        : [r.properties.dealstage, r.properties.amount ? `$${r.properties.amount}` : null].filter(Boolean).join(' · ')) ?? '—',
       url: portal
-        ? `https://app.hubspot.com/contacts/${portal}/${type === 'companies' ? 'company' : 'contact'}/${r.id}`
+        ? `https://app.hubspot.com/contacts/${portal}/${kind === 'company' ? 'company' : kind === 'contact' ? 'contact' : 'deal'}/${r.id}`
         : null,
       demo: false,
     }));
   }
 
+  /**
+   * HubSpot's explicit fields win over anything we derived: when
+   * updating, core fields (name, domain, website, geography,
+   * description) that already hold values in HubSpot are NOT
+   * overwritten — only empty fields are filled, and vamos_* properties
+   * (which are ours) are always refreshed. Geography is never inferred:
+   * if HubSpot has city/state, ours are dropped.
+   */
+  private async propertiesRespectingExisting(recordId: string, company: HubSpotCompanyRecord) {
+    const PRESERVED = ['name', 'domain', 'website', 'city', 'state', 'country', 'description'] as const;
+    const ours = buildCompanyProperties(company) as Record<string, string | number | null>;
+    const existing = await this.call<{ properties: Record<string, string | null> }>(
+      `/crm/v3/objects/companies/${recordId}?properties=${PRESERVED.join(',')}`,
+    ).catch(() => null);
+    if (existing) {
+      for (const field of PRESERVED) {
+        const current = existing.properties[field];
+        if (current !== null && current !== undefined && String(current).trim() !== '') {
+          delete ours[field]; // explicit HubSpot value wins
+        }
+      }
+    }
+    return ours;
+  }
+
   async syncCompany(args: Parameters<HubSpotService['syncCompany']>[0]): Promise<SyncResult> {
     const { company, contacts, deal, stageId, pipelineId, resolution, existingRecordId } = args;
-    const updating = resolution === 'update-existing' && !!existingRecordId;
 
-    const companyRes = updating
-      ? await this.call<{ id: string }>(`/crm/v3/objects/companies/${existingRecordId}`, {
+    // Idempotency: if this radar record was ever synced, update that
+    // HubSpot company instead of creating a twin — even when the
+    // caller asked for create-new (e.g. a repeated click).
+    let targetId = resolution === 'update-existing' ? existingRecordId : null;
+    if (!targetId) {
+      const prior = await this.searchCompaniesBy('vamos_deal_radar_id', company.dealRadarId).catch(() => ({ results: [] }));
+      if (prior.results[0]) targetId = prior.results[0].id;
+    }
+    const updating = !!targetId;
+
+    const companyRes = targetId
+      ? await this.call<{ id: string }>(`/crm/v3/objects/companies/${targetId}`, {
           method: 'PATCH',
-          body: JSON.stringify({ properties: buildCompanyProperties(company) }),
+          body: JSON.stringify({ properties: await this.propertiesRespectingExisting(targetId, company) }),
         })
       : await this.call<{ id: string }>('/crm/v3/objects/companies', {
           method: 'POST',
@@ -575,7 +516,9 @@ class LiveHubSpot implements HubSpotService {
       dealId: dealRes.id,
       dealUrl: portal ? `https://app.hubspot.com/contacts/${portal}/deal/${dealRes.id}` : null,
       action: updating ? 'updated' : 'created',
-      message: 'HubSpot records saved.',
+      message: updating
+        ? 'HubSpot record updated (existing explicit HubSpot fields were preserved; Vamos properties refreshed).'
+        : 'HubSpot records saved.',
     };
   }
 
@@ -603,10 +546,23 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
-export function hubspotService(): HubSpotService {
-  return hubspotMode() === 'live' ? new LiveHubSpot() : new MockHubSpot();
+// ── Service resolution ───────────────────────────────────────────
+
+/** Test-only override so automated tests can inject an in-memory fixture. */
+let serviceOverride: HubSpotService | null = null;
+export function __setHubSpotServiceForTests(svc: HubSpotService | null): void {
+  serviceOverride = svc;
 }
 
-// modes.hubspot from env stays for private-app-only checks; keep the
-// import referenced so both entry points agree in that case.
-void modes;
+/** The service when available: a test fixture, or the live client when connected. */
+export function hubspotServiceIfAvailable(): HubSpotService | null {
+  if (serviceOverride) return serviceOverride;
+  return hubspotConnected() ? new LiveHubSpot() : null;
+}
+
+/** The service, or an honest "not connected" error — never a simulation. */
+export function hubspotService(): HubSpotService {
+  const svc = hubspotServiceIfAvailable();
+  if (!svc) throw notConnected('HubSpot', HUBSPOT_NOT_CONNECTED_HINT);
+  return svc;
+}

@@ -70,9 +70,10 @@ export interface Company {
   founders: Founder[];
   evidence: Evidence[];
   flags: PolicyFlag[];
-  /** Optional enrichment used by CRM sync — merged in the data loader. */
+  /** Optional recorded facts — absent means unknown, never guessed. */
   website?: string;
   accelerator?: string;
+  lastFundingDate?: string;
   dateFirstSurfaced?: string;
   lastRefreshed?: string;
 }
@@ -113,26 +114,11 @@ export interface FitScore {
   totalPoints: number; // out of 100
   components: ScoreComponent[];
   exceptions: { flag: PolicyFlag; message: string }[];
+  /** Scoring model version — stored with every snapshot. */
+  version: string;
+  /** 0–1: how well-sourced the record is. Distinct from thesis fit. */
+  evidenceConfidence: number;
+  /** Plain-language summary of how the number was produced. */
+  explanation: string;
 }
 
-// ── Outreach pipeline ────────────────────────────────────────────
-
-export const PIPELINE_STAGES = [
-  'To research',
-  'Outreach drafted',
-  'In conversation',
-  'Deal review',
-  'Passed',
-  'Invested',
-] as const;
-
-export type PipelineStage = (typeof PIPELINE_STAGES)[number];
-
-export interface PipelineItem {
-  companyId: string;
-  stage: PipelineStage;
-  owner: string;
-  lastTouch: string; // ISO date
-  nextStep: string;
-  notes: string;
-}

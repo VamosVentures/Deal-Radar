@@ -1,19 +1,20 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
+import { listHubspotSyncHistory } from '../db/repos/operations';
+import { installMockIntegrations, installTestPipelineMapping, uninstallMockIntegrations } from './mocks/install';
+import { adminAgent } from './testAuth';
 
 /**
- * The main workflow, exactly as the product requires it — every
- * external step is explicit, human-initiated, and Demo-Mode-labeled:
- *
- *  1. Open a surfaced company        7. Generate an outreach email
- *  2. Approve it for HubSpot         8. Edit the email
- *  3. Run duplicate detection        9. Save it as an Outlook draft
- *  4. Add the company               10. Outreach Pipeline updated
- *  5. Create founder contacts      11. Activity logged to HubSpot
- *  6. Create + associate the deal  12. Set a follow-up date
+ * The screening workflow, end to end over HTTP. HubSpot stays the
+ * system of record: the radar checks duplicates, syncs an approved
+ * company once (idempotently), records the score + explanation +
+ * reviewer + approval date + source URLs on the deal, and drafts
+ * outreach for manual sending. There is no internal tracker.
+ * Integrations here are in-memory TEST FIXTURES injected via
+ * test-only hooks; the running app has no mock mode.
  */
 
 const company = {
@@ -45,12 +46,15 @@ const contactMariana = {
 const deal = {
   companyName: 'SolCare Health', fitScore: 8.7, recommendation: 'Prioritize — strong thesis fit',
   vertical: 'Health & Wellness', stage: 'Seed',
-  scoreBreakdown: [{ label: 'Thesis / vertical fit', points: 25, max: 25 }],
+  scoreBreakdown: [{ label: 'Thesis / vertical fit', points: 20, max: 20 }],
   rationale: 'Direct thesis match.', risks: 'None flagged.',
-  evidenceQualityScore: 8, policyException: null,
+  evidenceQualityScore: 4, policyException: null,
   sourcingStatus: 'Surfaced by Deal Radar', dateSurfaced: '2026-04-12',
   nextAction: 'Approve outreach', relationshipOwner: 'DR',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
+  scoreExplanation: 'Vamos Fit Score 8.7/10 (87/100 points, model v3.0 (2026-07)).',
+  approvedBy: 'DR', approvalDate: '2026-07-18',
+  sourceUrls: ['https://example.com/solcare-pilot', 'https://example.com/formd/solcare'],
 };
 
 const genContext = {
@@ -69,148 +73,119 @@ const genContext = {
   meetingAsk: 'a 25-minute intro call in the next two weeks',
 };
 
-describe('main workflow (mock mode, end to end over HTTP)', () => {
+const syncPayload = () => ({
+  company, contacts: [contactMariana], deal,
+  radarStage: 'Approved to Track', duplicateResolution: 'create-new', existingRecordId: null,
+});
+
+describe('screening workflow (fixture integrations, end to end over HTTP)', () => {
   beforeEach(() => {
     store.resetForTests();
     resetIdempotencyForTests();
+    installMockIntegrations();
+    installTestPipelineMapping();
   });
+  afterAll(() => uninstallMockIntegrations());
 
-  it('runs all 12 steps', async () => {
+  it('checks duplicates, syncs once, records everything, and drafts for manual sending', async () => {
     const app = createApp();
 
-    // 1–2. Surfaced company reviewed & approved → status endpoint shows Demo Mode honestly.
+    // Status reflects the fixtures (Connected appears only after a verified check).
     const status = await request(app).get('/api/integrations/status');
-    expect(status.status).toBe(200);
-    expect(status.body.mode).toBe('mock');
-    expect(status.body.hubspot.detail).toContain('Local Mode');
-    expect(status.body.statuses.hubspot.status).toBe('Local Mode');
-    expect(status.body.statuses.refresh.status).toBe('Disconnected'); // no refresh run yet
+    expect(status.body.statuses.hubspot.status).toBe('Connected');
+    expect(status.body.statuses.hubspot.detail).toContain('Test fixture');
 
-    // 3. Duplicate detection — clean the first time.
+    // Duplicate check — clean the first time.
     const dup1 = await request(app)
       .post('/api/hubspot/check-duplicate')
-      .send({ name: 'SolCare Health', domain: 'solcarehealth.example.com' });
-    expect(dup1.status).toBe(200);
+      .send({ name: 'SolCare Health', domain: 'solcarehealth.example.com', dealRadarId: 'c-solcare' });
     expect(dup1.body.matches).toHaveLength(0);
 
-    // 4–6. Add company + founder contacts + deal, associated, in one reviewed submission.
+    // Approved sync: company + contact + deal with score, explanation, reviewer, approval date, source URLs.
     const sync = await request(app)
-      .post('/api/hubspot/sync-company')
-      .set('Idempotency-Key', 'wf-sync-1')
-      .send({
-        company, contacts: [contactMariana], deal,
-        radarStage: 'Approved to Track', duplicateResolution: 'create-new', existingRecordId: null,
-      });
+      .post('/api/hubspot/sync-company').set('Idempotency-Key', 'wf-sync-1').send(syncPayload());
     expect(sync.status).toBe(200);
-    expect(sync.body.demo).toBe(true);
-    expect(sync.body.message).toContain('Demo Mode');
     expect(sync.body.contactIds).toHaveLength(1);
+
     const dealObj = store.raw.mockHubSpot.find((o) => o.id === sync.body.dealId)!;
+    expect(dealObj.properties.vamos_fit_score).toBe(8.7);
+    expect(dealObj.properties.vamos_score_explanation).toContain('model v3.0');
+    expect(dealObj.properties.vamos_reviewer).toBe('DR');
+    expect(dealObj.properties.vamos_approval_date).toBe('2026-07-18');
+    expect(String(dealObj.properties.vamos_source_urls)).toContain('https://example.com/solcare-pilot');
     expect(dealObj.associations).toContain(sync.body.companyId);
 
-    // Duplicate detection now finds the record (would prompt the user in the UI).
+    // Synchronization success recorded durably.
+    const history = listHubspotSyncHistory('c-solcare');
+    expect(history[0].outcome).toBe('ok');
+    expect(history[0].hubspotCompanyId).toBe(sync.body.companyId);
+
+    // Duplicate check now finds the record by our own radar id (tier 1).
     const dup2 = await request(app)
       .post('/api/hubspot/check-duplicate')
-      .send({ name: 'SolCare Health, Inc.', domain: 'https://www.solcarehealth.example.com' });
+      .send({ name: 'Different Name', domain: null, dealRadarId: 'c-solcare' });
     expect(dup2.body.matches).toHaveLength(1);
-    expect(dup2.body.matches[0].matchedOn).toBe('domain');
+    expect(dup2.body.matches[0].matchedOn).toBe('radar-id');
 
-    // 7. Generate an outreach email (Demo Mode template, fact-guarded).
+    // Founder email matches surface too.
+    const dup3 = await request(app)
+      .post('/api/hubspot/check-duplicate')
+      .send({ name: 'Zzz Unrelated', domain: null, founderEmails: ['mariana@solcarehealth.example.com'] });
+    expect(dup3.body.matches[0].matchedOn).toBe('founder-email');
+
+    // Generate a draft (labeled local template) and save it to Outlook.
     const gen = await request(app).post('/api/outreach/generate').send(genContext);
     expect(gen.status).toBe(200);
-    expect(gen.body.demo).toBe(true);
     expect(gen.body.body).toContain('Mariana');
-    expect(gen.body.weakEvidence).toBe(false);
 
-    // 8. Human edits the email.
-    const editedSubject = `${gen.body.subject} — edited by DR`;
-    const editedBody = `${gen.body.body}\n\nP.S. Edited by a human before saving.`;
-
-    // 9. Save as an Outlook draft (the ONLY email action; connect first).
-    await request(app).post('/api/outlook/connect').send({});
+    await (await adminAgent(app)).post('/api/outlook/connect').send({});
     const draft = await request(app)
-      .post('/api/outlook/drafts')
-      .set('Idempotency-Key', 'wf-draft-1')
+      .post('/api/outlook/drafts').set('Idempotency-Key', 'wf-draft-1')
       .send({
         companyId: 'c-solcare',
         to: 'mariana@solcarehealth.example.com',
-        subject: editedSubject,
-        body: editedBody,
+        subject: `${gen.body.subject} — edited by DR`,
+        body: `${gen.body.body}\n\nP.S. Edited by a human before saving.`,
         senderName: 'Daniela Reyes',
         tone: 'Warm and conversational',
       });
     expect(draft.status).toBe(200);
-    expect(draft.body.demo).toBe(true);
-    expect(draft.body.message).toContain('Demo Mode');
-    expect(draft.body.outlookDraftId).toBeTruthy();
-    // Draft identifier stored on the backend:
-    expect(store.raw.drafts).toHaveLength(1);
-    expect(store.raw.drafts[0].subject).toBe(editedSubject);
+    expect(draft.body.message).toContain('send it yourself'); // never sent automatically
+    // Draft creation is recorded (id + link, no delivery simulation).
+    const drafts = await request(app).get('/api/outlook/drafts?companyId=c-solcare');
+    expect(drafts.body.drafts).toHaveLength(1);
+    expect(drafts.body.drafts[0].outlookDraftId).toBe(draft.body.outlookDraftId);
+    expect(drafts.body.drafts[0].body).toBeUndefined(); // bodies never echoed in lists
 
-    // 10. Outreach Pipeline updated — status, dates, sender, subject all logged.
-    const records = await request(app).get('/api/outreach/records');
-    const rec = records.body.records.find((r: { companyId: string }) => r.companyId === 'c-solcare');
-    expect(rec.outreachStatus).toBe('Saved to Outlook');
-    expect(rec.draftSubject).toBe(editedSubject);
-    expect(rec.draftCreatedAt).toBeTruthy();
-    expect(rec.hubspotStatus).toBe('Added');
-    const draftActivity = rec.activities.find((a: { kind: string }) => a.kind === 'draft-created');
-    expect(draftActivity.actor).toBe('Daniela Reyes');
-    // No auto-send: the record explicitly waits for a human.
-    expect(rec.emailSentAt).toBeNull();
-    expect(rec.nextAction.toLowerCase()).toContain('send it yourself');
-
-    // 11. Log activity to HubSpot (simulated note, associated with the company).
-    const log = await request(app)
-      .post('/api/hubspot/log-activity')
-      .set('Idempotency-Key', 'wf-log-1')
-      .send({ companyId: 'c-solcare', note: 'Partner review complete; outreach approved.', actor: 'MG' });
-    expect(log.status).toBe(200);
-    expect(store.raw.mockHubSpot.some((o) => o.type === 'note')).toBe(true);
-
-    // Human marks the email as sent (after sending it from Outlook themselves).
-    const sent = await request(app)
-      .post('/api/outreach/mark-sent')
-      .set('Idempotency-Key', 'wf-sent-1')
-      .send({ companyId: 'c-solcare', actor: 'DR' });
-    expect(sent.body.outreachStatus).toBe('Manually Marked Sent');
-    expect(sent.body.emailSentAt).toBeTruthy();
-
-    // 12. Set a follow-up date.
-    const due = new Date().toISOString().slice(0, 10);
-    const fu = await request(app)
-      .post('/api/outreach/follow-up')
-      .send({ companyId: 'c-solcare', dueDate: due, note: 'Nudge if quiet', actor: 'DR' });
-    expect(fu.status).toBe(200);
-    const summary = await request(app).get('/api/outreach/records');
-    expect(summary.body.followUps.dueToday.map((r: { companyId: string }) => r.companyId)).toContain('c-solcare');
-
-    // Audit log captured the run without any secrets or bodies.
+    // Audit captured the run without any secrets or bodies.
     const auditRes = await request(app).get('/api/audit');
-    expect(auditRes.body.length).toBeGreaterThan(3);
-    expect(JSON.stringify(auditRes.body)).not.toContain(editedBody.slice(0, 40));
+    expect(auditRes.body.length).toBeGreaterThan(2);
+    expect(JSON.stringify(auditRes.body)).not.toContain('P.S. Edited by a human');
   });
 
-  it('blocks duplicate button submissions via Idempotency-Key', async () => {
+  it('sync is idempotent: repeated clicks and re-submissions never create duplicate companies', async () => {
     const app = createApp();
-    const payload = {
-      company, contacts: [], deal,
-      radarStage: 'Approved to Track', duplicateResolution: 'create-new', existingRecordId: null,
-    };
-    const first = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(payload);
+
+    // Same Idempotency-Key (double-click) → blocked outright.
+    const first = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(syncPayload());
     expect(first.status).toBe(200);
-    const second = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(payload);
+    const second = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(syncPayload());
     expect(second.status).toBe(409);
     expect(second.body.error).toBe('duplicate_submission');
+
+    // NEW key, same company (e.g. hours later, still create-new) → updates, never a twin.
+    const third = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'later-resync').send(syncPayload());
+    expect(third.status).toBe(200);
+    expect(third.body.action).toBe('updated');
+    expect(third.body.companyId).toBe(first.body.companyId);
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'company')).toHaveLength(1);
   });
 
   it('rejects a sync payload whose demographics lack a source (guardrail over HTTP)', async () => {
     const app = createApp();
     const res = await request(app).post('/api/hubspot/sync-company').send({
-      company, deal,
+      ...syncPayload(),
       contacts: [{ ...contactMariana, demographics: [{ indicator: 'Latino-led', basis: 'Self-identified', sourceName: 'n/a', sourceRef: 'x', verificationStatus: 'Self-reported' }] }],
-      radarStage: 'Approved to Track', duplicateResolution: 'create-new', existingRecordId: null,
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_failed');

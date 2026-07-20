@@ -1,45 +1,49 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { loadCompanies } from '../data/loader';
 import type { Company } from '../types';
-import { api, type CompanyMeta } from '../lib/api';
+import { api, ApiError, type CompanyMeta } from '../lib/api';
 
 /**
- * Single source of companies for the UI: the bundled sample dataset
- * plus any locally-imported CSV companies (validated server-side
- * through the same guardrails — sourced evidence required, identity
- * columns refused). Refresh metadata from refresh jobs is merged in.
+ * Single source of companies for the UI: rows imported through the
+ * server (CSV import or Deal Discovery — both validated server-side
+ * with sourced-evidence guardrails; identity columns refused). There
+ * is no bundled sample dataset: when nothing has been imported yet,
+ * the UI shows an honest empty state.
  */
 
 interface CompaniesApi {
   companies: Company[];
   importedCount: number;
   meta: Record<string, CompanyMeta>;
+  /** null while the first load is in flight. */
+  loaded: boolean;
+  /** Set when the backend can't be reached — pages surface it honestly. */
+  loadError: string | null;
   refresh: () => Promise<void>;
 }
 
 const Ctx = createContext<CompaniesApi | null>(null);
 
 export function CompaniesProvider({ children }: { children: ReactNode }) {
-  const bundled = useMemo(loadCompanies, []);
   const [imported, setImported] = useState<Company[]>([]);
   const [meta, setMeta] = useState<Record<string, CompanyMeta>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const data = await api.imports.imported();
-      setImported(
-        (data.companies as (Company & { imported: boolean })[]).map((c) => ({
-          ...c,
-          // Imported rows never carry identity data — the server refuses
-          // those columns — so founders arrive without `identity` and the
-          // UI correctly shows "Identity not on record — never inferred".
-        })),
-      );
+      // Imported rows never carry identity data — the server refuses
+      // those columns — so founders arrive without `identity` and the
+      // UI correctly shows "Identity not on record — never inferred".
+      setImported(data.companies as Company[]);
       setMeta(data.companyMeta ?? {});
-    } catch {
-      // Backend offline — bundled data still works.
+      setLoadError(null);
+    } catch (e) {
       setImported([]);
+      setLoadError(e instanceof ApiError ? e.message : 'The company list could not be loaded.');
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -47,13 +51,13 @@ export function CompaniesProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
-  const companies = useMemo(() => {
-    const merged = [...bundled, ...imported];
-    return merged.map((c) => (meta[c.id]?.lastRefreshed ? { ...c, lastRefreshed: meta[c.id].lastRefreshed } : c));
-  }, [bundled, imported, meta]);
+  const companies = useMemo(
+    () => imported.map((c) => (meta[c.id]?.lastRefreshed ? { ...c, lastRefreshed: meta[c.id].lastRefreshed } : c)),
+    [imported, meta],
+  );
 
   return (
-    <Ctx.Provider value={{ companies, importedCount: imported.length, meta, refresh }}>
+    <Ctx.Provider value={{ companies, importedCount: imported.length, meta, loaded, loadError, refresh }}>
       {children}
     </Ctx.Provider>
   );

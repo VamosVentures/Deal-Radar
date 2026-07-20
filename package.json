@@ -9,9 +9,17 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "dev:web": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "PORT=8787 tsx watch --env-file-if-exists=.env server/index.ts",
+    "typecheck": "tsc -b",
     "test": "vitest run",
-    "smoke": "tsx scripts/smoke.ts"
+    "start": "NODE_ENV=production tsx --env-file-if-exists=.env server/index.ts",
+    "db:backup": "tsx --env-file-if-exists=.env scripts/db-backup.ts",
+    "db:list-backups": "tsx --env-file-if-exists=.env scripts/db-list-backups.ts",
+    "db:restore": "tsx --env-file-if-exists=.env scripts/db-restore.ts",
+    "db:integrity": "tsx --env-file-if-exists=.env scripts/db-integrity.ts",
+    "smoke-test": "tsx --env-file-if-exists=.env scripts/smoke-test.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.2",
@@ -26,6 +34,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^24.13.2",

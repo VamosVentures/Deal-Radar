@@ -1,21 +1,19 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { env } from '../env';
+import { getDb, resetDbForTests } from '../db/client';
 import type {
-  FollowUpTask,
-  HubSpotPipelineMapping,
   OutreachDraft,
-  OutreachRecord,
   IntegrationAuditLog,
 } from '../../shared/integrations';
 
 /**
- * Development datastore. A single JSON file keeps mock CRM records,
- * outreach state, follow-ups, audit entries, and (encrypted) tokens
- * so Demo Mode survives restarts. Tests run fully in memory with
- * DATA_FILE=':memory:'. Swap for Postgres/Supabase in production —
- * the shape below is the table plan.
+ * Operational state store, persisted in the SAME SQLite database as
+ * the domain repositories (server/db/) — the old best-effort JSON
+ * file is gone. Collections here are working state (outreach tracker,
+ * drafts, encrypted tokens, audit log, pending discovery candidates);
+ * companies, founders, evidence, runs, scores, review decisions,
+ * sync history, health, and sourcing config live in real tables via
+ * server/db/repos/*.
+ *
+ * The mockHubSpot collection exists solely for the test fixtures.
  */
 
 export interface MockHubSpotObject {
@@ -52,21 +50,9 @@ export interface RefreshLogEntry {
   }[];
 }
 
-export interface ConnectorState {
-  id: string;
-  enabled: boolean;
-  lastSyncAt: string | null;
-  lastSyncMode: 'live' | 'local' | 'simulated' | 'failed' | null;
-  recordsImported: number;
-  lastError: string | null;
-}
-
 interface StoreShape {
   mockHubSpot: MockHubSpotObject[];
-  outreach: Record<string, OutreachRecord>;
   drafts: OutreachDraft[];
-  followUps: FollowUpTask[];
-  pipelineMapping: HubSpotPipelineMapping | null;
   tokens: TokenRecord[];
   audit: IntegrationAuditLog[];
   oauthStates: { state: string; expiresAt: string }[];
@@ -75,31 +61,15 @@ interface StoreShape {
   aiCache: Record<string, { at: string; value: unknown }>;
   refreshLog: RefreshLogEntry[];
   refreshCancelRequested: boolean;
-  connectors: Record<string, ConnectorState>;
-  importedCompanies: unknown[];
-  portfolio: unknown[];
-  /** Per-company metadata updated by refresh jobs (bundled sample data is read-only). */
-  companyMeta: Record<string, {
-    lastRefreshed?: string;
-    reviewStatus?: string;
-    discoverySource?: string;
-    discoveredAt?: string;
-    /** Evidence merged onto existing records from discovery — never overwrites, always appends. */
-    addedEvidence?: unknown[];
-  }>;
-  discoveryRuns: unknown[];
   discoveryCandidates: unknown[];
   discoveryCancelRequested: boolean;
   stealthSignals: unknown[];
-  scheduledJobs: unknown[];
+  portfolio: unknown[];
 }
 
 const EMPTY: StoreShape = {
   mockHubSpot: [],
-  outreach: {},
   drafts: [],
-  followUps: [],
-  pipelineMapping: null,
   tokens: [],
   audit: [],
   oauthStates: [],
@@ -107,47 +77,52 @@ const EMPTY: StoreShape = {
   aiCache: {},
   refreshLog: [],
   refreshCancelRequested: false,
-  connectors: {},
-  importedCompanies: [],
-  portfolio: [],
-  companyMeta: {},
-  discoveryRuns: [],
   discoveryCandidates: [],
   discoveryCancelRequested: false,
   stealthSignals: [],
-  scheduledJobs: [],
+  portfolio: [],
 };
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const filePath =
-  env.DATA_FILE && env.DATA_FILE !== ':memory:'
-    ? env.DATA_FILE
-    : path.join(here, '..', '.data', 'dev-store.json');
-const inMemory = env.DATA_FILE === ':memory:';
-
-let state: StoreShape = structuredClone(EMPTY);
-
-if (!inMemory) {
+function loadState(): StoreShape {
+  const state = structuredClone(EMPTY);
   try {
-    state = { ...structuredClone(EMPTY), ...JSON.parse(fs.readFileSync(filePath, 'utf8')) };
+    const rows = getDb().prepare('SELECT collection, value FROM kv').all() as { collection: string; value: string }[];
+    for (const row of rows) {
+      if (row.collection in state) {
+        (state as unknown as Record<string, unknown>)[row.collection] = JSON.parse(row.value);
+      }
+    }
   } catch {
-    /* first run — empty store */
+    /* first run — empty state */
   }
+  return state;
 }
+
+let state: StoreShape = loadState();
 
 let writeQueued = false;
 function persist() {
-  if (inMemory || writeQueued) return;
+  if (writeQueued) return;
   writeQueued = true;
   setTimeout(() => {
     writeQueued = false;
-    try {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, JSON.stringify(state, null, 1));
-    } catch {
-      /* dev store is best-effort */
+    flush();
+  }, 25);
+}
+
+/** Transactional write of every collection. */
+function flush() {
+  const db = getDb();
+  const upsert = db.prepare('INSERT INTO kv (collection, value) VALUES (?, ?) ON CONFLICT (collection) DO UPDATE SET value = excluded.value');
+  db.exec('BEGIN');
+  try {
+    for (const [collection, value] of Object.entries(state)) {
+      upsert.run(collection, JSON.stringify(value));
     }
-  }, 50);
+    db.exec('COMMIT');
+  } catch {
+    db.exec('ROLLBACK');
+  }
 }
 
 export const store = {
@@ -162,7 +137,12 @@ export const store = {
   save(): void {
     persist();
   },
+  /** Write pending changes immediately (used at shutdown). */
+  flush(): void {
+    flush();
+  },
   resetForTests(): void {
     state = structuredClone(EMPTY);
+    resetDbForTests();
   },
 };

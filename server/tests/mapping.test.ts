@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
+import { installMockIntegrations, uninstallMockIntegrations } from './mocks/install';
+import { adminAgent } from './testAuth';
 
 function syncPayload() {
   return {
@@ -34,22 +36,27 @@ describe('pipeline-stage mapping', () => {
   beforeEach(() => {
     store.resetForTests();
     resetIdempotencyForTests();
+    installMockIntegrations();
   });
+  afterAll(() => uninstallMockIntegrations());
 
-  it('mock mode falls back to demo stage ids when no mapping exists', async () => {
+  it('blocks submission with instructions when a stage is unmapped — never guesses IDs', async () => {
     const app = createApp();
+    // resolveStage throws BEFORE any HubSpot call is attempted.
     const res = await request(app).post('/api/hubspot/sync-company').send(syncPayload());
-    expect(res.status).toBe(200);
-    const deal = store.raw.mockHubSpot.find((o) => o.type === 'deal')!;
-    expect(deal.properties.dealstage).toBe('demo-approved-to-track');
-    expect(deal.properties.pipeline).toBe('demo-pipeline');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('blocked');
+    expect(res.body.message).toMatch(/no hubspot stage is mapped/i);
+    expect(res.body.hint).toMatch(/pipeline mapping/i);
+    expect(store.raw.mockHubSpot).toHaveLength(0); // nothing was written
   });
 
   it('a saved mapping is used for the deal stage', async () => {
     const app = createApp();
-    const put = await request(app).put('/api/hubspot/pipeline-mapping').send({
-      pipelineId: 'demo-pipeline',
-      pipelineLabel: 'Demo',
+    const agent = await adminAgent(app);
+    const put = await agent.put('/api/hubspot/pipeline-mapping').send({
+      pipelineId: 'test-pipeline',
+      pipelineLabel: 'Test',
       stages: { 'Approved to Track': 'custom-stage-42' },
     });
     expect(put.status).toBe(200);
@@ -57,33 +64,25 @@ describe('pipeline-stage mapping', () => {
     expect(res.status).toBe(200);
     const deal = store.raw.mockHubSpot.find((o) => o.type === 'deal')!;
     expect(deal.properties.dealstage).toBe('custom-stage-42');
+    expect(deal.properties.pipeline).toBe('test-pipeline');
   });
 
   it('rejects an invalid mapping payload', async () => {
     const app = createApp();
-    const res = await request(app).put('/api/hubspot/pipeline-mapping').send({ pipelineId: '', stages: 'nope' });
+    const agent = await adminAgent(app);
+    const res = await agent.put('/api/hubspot/pipeline-mapping').send({ pipelineId: '', stages: 'nope' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_failed');
   });
 
-  it('LIVE mode blocks submission with instructions when a stage is unmapped — never guesses IDs', async () => {
-    vi.resetModules();
-    process.env.INTEGRATION_MODE = 'auto';
-    process.env.HUBSPOT_ACCESS_TOKEN = 'fake-live-token';
-    const { createApp: createLiveApp } = await import('../app');
-    const { store: liveStore } = await import('../lib/store');
-    const { resetIdempotencyForTests: resetIdem } = await import('../lib/guard');
-    liveStore.resetForTests();
-    resetIdem();
-    const app = createLiveApp();
-    // resolveStage throws BEFORE any HubSpot network call is attempted.
+  it('fails honestly with 503 not_connected when HubSpot has no credentials', async () => {
+    uninstallMockIntegrations();
+    const app = createApp();
     const res = await request(app).post('/api/hubspot/sync-company').send(syncPayload());
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe('blocked');
-    expect(res.body.message).toMatch(/no hubspot stage is mapped/i);
-    expect(res.body.hint).toMatch(/pipeline mapping/i);
-    process.env.INTEGRATION_MODE = 'mock';
-    delete process.env.HUBSPOT_ACCESS_TOKEN;
-    vi.resetModules();
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('not_connected');
+    expect(res.body.message).toMatch(/not connected/i);
+    expect(res.body.hint).toMatch(/HUBSPOT_ACCESS_TOKEN/);
+    expect(store.raw.mockHubSpot).toHaveLength(0);
   });
 });

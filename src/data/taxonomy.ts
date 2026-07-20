@@ -89,11 +89,11 @@ export const VERTICALS: Vertical[] = [
   },
   {
     id: 'aoi',
-    name: 'Areas of Interest',
-    short: 'Adjacent',
+    name: 'Other Industries',
+    short: 'Other',
     core: false,
     description:
-      'Adjacent-interest areas scored separately from the four core sectors. Hardware-heavy or off-thesis companies carry a visible Policy Exception.',
+      'Industries outside the four core sectors, scored on a separate scale. Hardware-heavy or off-thesis companies carry a visible Policy Exception.',
     subcategories: [
       { name: 'Robotics', exception: 'Often hardware-heavy — check thesis fit.' },
       { name: 'Space technology', exception: 'Often hardware-heavy — check thesis fit.' },

@@ -1,4 +1,4 @@
-import { aiKey, env, modes } from '../env';
+import { aiConfigured, aiKey, env } from '../env';
 import { fetchWithRetry } from '../lib/http';
 import { audit } from '../lib/guard';
 import {
@@ -101,7 +101,10 @@ function weakEvidence(c: EmailGenContext): { weak: boolean; warnings: string[] }
   return { weak: warnings.length >= 2, warnings };
 }
 
-// ── Deterministic template generator (Demo Mode) ─────────────────
+// ── Deterministic local template generator (no AI model) ─────────
+// Not a simulation of anything external: it assembles a draft from
+// the verified facts it is given and is always labeled as a local
+// template in the UI. Used whenever no AI provider is configured.
 
 const OPENERS: Record<EmailGenContext['tone'], (c: EmailGenContext) => string> = {
   'Warm and conversational': (c) => `Hope your week is going well. I came across ${c.companyName} and wanted to reach out directly.`,
@@ -113,7 +116,7 @@ const OPENERS: Record<EmailGenContext['tone'], (c: EmailGenContext) => string> =
 };
 
 class TemplateGenerator implements EmailGenerator {
-  provider = 'template (Demo Mode)';
+  provider = 'local template (no AI model)';
 
   explainPersonalizationSources(c: EmailGenContext): string[] {
     const used: string[] = [`Company description and vertical fit (${c.vertical} → ${c.subcategory}).`];
@@ -170,9 +173,9 @@ class TemplateGenerator implements EmailGenerator {
       demo: true,
     };
     audit({
-      provider: 'ai', mode: 'mock', action: 'generate-email',
+      provider: 'ai', mode: 'local', action: 'generate-email',
       subject: c.companyId, outcome: 'ok',
-      detail: `Demo Mode template, tone "${c.tone}"${weak ? ' (weak evidence)' : ''}`,
+      detail: `Local template (no AI model), tone "${c.tone}"${weak ? ' (weak evidence)' : ''}`,
     });
     return validateGeneratedEmail(c, result);
   }
@@ -217,7 +220,7 @@ class LiveGenerator implements EmailGenerator {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: env.AI_MODEL ?? 'claude-sonnet-4-6',
+          model: env.AI_MODEL ?? 'claude-sonnet-5',
           max_tokens: 1200,
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -293,5 +296,5 @@ function ensurePeriod(s: string): string {
 }
 
 export function emailGenerator(): EmailGenerator {
-  return modes.ai() === 'live' ? new LiveGenerator() : new TemplateGenerator();
+  return aiConfigured() ? new LiveGenerator() : new TemplateGenerator();
 }

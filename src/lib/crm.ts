@@ -86,7 +86,7 @@ export function founderToHubSpot(c: Company, f: Founder, owner: string | null): 
   };
 }
 
-export function dealToHubSpot(c: Company, owner: string | null, nextAction: string): HubSpotDealRecord {
+export function dealToHubSpot(c: Company, owner: string | null, nextAction: string, reviewer?: string | null): HubSpotDealRecord {
   const fit = scoreCompany(c);
   const evidenceQuality = fit.components.find((x) => x.key === 'evidence')?.points ?? 0;
   const risks = [
@@ -110,6 +110,10 @@ export function dealToHubSpot(c: Company, owner: string | null, nextAction: stri
     relationshipOwner: owner,
     dealRadarId: c.id,
     dealRadarUrl: `${window.location.origin}/?company=${c.id}`,
+    scoreExplanation: fit.explanation,
+    approvedBy: reviewer ?? owner,
+    approvalDate: TODAY(),
+    sourceUrls: c.evidence.map((e) => e.url),
   };
 }
 

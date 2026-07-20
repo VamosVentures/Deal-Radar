@@ -1,17 +1,17 @@
 import type {
+  CompanyStatus,
   CompanySyncRequest,
   DuplicateMatch,
   EmailGenContext,
   FitExplainContext,
   FitExplanation,
-  FollowUpTask,
   GeneratedEmail,
   HubSpotPipelineInfo,
   HubSpotPipelineMapping,
   IntegrationsStatus,
-  OutreachRecord,
   PortfolioCompany,
   PortfolioComparison,
+  StaleSettings,
   SyncResult,
 } from '../../shared/integrations';
 import type {
@@ -19,7 +19,7 @@ import type {
   ScheduledJob, StealthSignal,
 } from '../../shared/discovery';
 
-export type UiStatus = 'Connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error' | 'Local Mode';
+export type UiStatus = 'Connected' | 'Not connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error';
 export type StatusMap = Record<'hubspot' | 'outlook' | 'ai' | 'refresh', { status: UiStatus; detail: string }>;
 export type FullStatus = IntegrationsStatus & { statuses: StatusMap };
 
@@ -42,12 +42,17 @@ export interface CompanyMeta {
   reviewStatus?: string;
   discoverySource?: string;
   discoveredAt?: string;
+  hubspotCompanyId?: string;
+  /** Computed: true when a non-terminal company has gone unreviewed past the staleness threshold. */
+  stale?: boolean;
+  /** Per-field origin: verified / user-entered / extracted / ai-inferred / unverified / missing. */
+  provenance?: Record<string, string>;
   addedEvidence?: { claim: string; source: string; url: string; date: string; type: string }[];
 }
 
 export interface HubSpotSearchHit {
   recordId: string;
-  type: 'company' | 'contact';
+  type: 'company' | 'contact' | 'deal';
   title: string;
   subtitle: string;
   url: string | null;
@@ -93,19 +98,25 @@ async function call<T>(path: string, init?: RequestInit & { idempotent?: boolean
 export const api = {
   status: () => call<FullStatus>('/api/integrations/status'),
 
+  auth: {
+    status: () => call<{ configured: boolean; authenticated: boolean }>('/api/auth/status'),
+    login: (password: string) => call<{ ok: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) }),
+    logout: () => call<{ ok: boolean }>('/api/auth/logout', { method: 'POST', body: '{}' }),
+  },
+
   hubspot: {
-    connect: () => call<{ authUrl: string | null; demo: boolean; message: string }>('/api/hubspot/connect', { method: 'POST', body: '{}' }),
+    connect: () => call<{ authUrl: string | null; message: string }>('/api/hubspot/connect', { method: 'POST', body: '{}' }),
     disconnect: () => call<{ ok: boolean }>('/api/hubspot/disconnect', { method: 'POST', body: '{}' }),
-    verify: () => call<{ ok: boolean; detail: string; mode: 'mock' | 'live' }>('/api/hubspot/verify', { method: 'POST', body: '{}' }),
-    search: (query: string, type: 'companies' | 'contacts') =>
+    verify: () => call<{ ok: boolean; detail: string }>('/api/hubspot/verify', { method: 'POST', body: '{}' }),
+    search: (query: string, type: 'companies' | 'contacts' | 'deals') =>
       call<{ hits: HubSpotSearchHit[]; demo: boolean }>('/api/hubspot/search', {
         method: 'POST',
         body: JSON.stringify({ query, type }),
       }),
-    checkDuplicate: (name: string, domain: string | null) =>
+    checkDuplicate: (input: { name: string; domain: string | null; founderEmails?: string[]; dealRadarId?: string }) =>
       call<{ matches: DuplicateMatch[]; demo: boolean }>('/api/hubspot/check-duplicate', {
         method: 'POST',
-        body: JSON.stringify({ name, domain }),
+        body: JSON.stringify(input),
       }),
     pipelines: () =>
       call<{ pipelines: HubSpotPipelineInfo[]; demo: boolean }>('/api/hubspot/pipelines'),
@@ -128,13 +139,20 @@ export const api = {
         body: JSON.stringify({ companyId, note, actor }),
         idempotent: true,
       }),
+    failedSyncs: () => call<{ failed: { companyId: string; detail: string; at: string }[] }>('/api/hubspot/failed-syncs'),
+    retrySync: (companyId: string) =>
+      call<SyncResult>('/api/hubspot/retry-sync', {
+        method: 'POST',
+        body: JSON.stringify({ companyId }),
+        idempotent: true,
+      }),
   },
 
   outlook: {
     status: () =>
-      call<{ mode: 'mock' | 'live'; connected: boolean; account: string | null; permissions: string[]; lastConnectedAt: string | null; detail: string }>('/api/outlook/status'),
+      call<{ mode: 'live' | 'disconnected'; connected: boolean; account: string | null; permissions: string[]; lastConnectedAt: string | null; detail: string }>('/api/outlook/status'),
     connect: () =>
-      call<{ authUrl: string | null; demo: boolean; message: string }>('/api/outlook/connect', {
+      call<{ authUrl: string | null; message: string }>('/api/outlook/connect', {
         method: 'POST',
         body: '{}',
       }),
@@ -145,11 +163,6 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(input),
         idempotent: true,
-      }),
-    syncStatus: (companyId: string, actor: string) =>
-      call<{ status: { found: boolean; isDraft: boolean; sentAt: string | null; demo: boolean; detail: string }; record: OutreachRecord }>('/api/outlook/sync-status', {
-        method: 'POST',
-        body: JSON.stringify({ companyId, actor }),
       }),
   },
 
@@ -174,7 +187,7 @@ export const api = {
   },
 
   discovery: {
-    sources: () => call<{ sources: { id: string; name: string; liveCapable: boolean; needs: string }[] }>('/api/discovery/sources'),
+    sources: () => call<{ sources: { id: string; name: string; state: 'live' | 'credentials-required' | 'planned' | 'unavailable'; liveCapable: boolean; needs: string }[] }>('/api/discovery/sources'),
     estimate: (q: Partial<DiscoveryQuery>) =>
       call<{ estimatedTokens: number; estimatedCostUsd: number; note: string }>('/api/discovery/estimate', { method: 'POST', body: JSON.stringify(q) }),
     run: (query: Partial<DiscoveryQuery>, actor: string) =>
@@ -207,6 +220,9 @@ export const api = {
     save: (job: Omit<ScheduledJob, 'id' | 'lastRunAt'>) =>
       call<ScheduledJob>('/api/schedule', { method: 'POST', body: JSON.stringify(job) }),
     remove: (id: string) => call<{ ok: boolean }>(`/api/schedule/${id}`, { method: 'DELETE' }),
+    /** Administrator-only: run this schedule's search immediately, outside its cadence. */
+    runNow: (id: string, actor: string) =>
+      call<DiscoveryRun>(`/api/schedule/${id}/run-now`, { method: 'POST', body: JSON.stringify({ actor }) }),
   },
 
   imports: {
@@ -217,6 +233,26 @@ export const api = {
       }),
     imported: () => call<{ companies: unknown[]; companyMeta: Record<string, CompanyMeta> }>('/api/companies/imported'),
     clear: () => call<{ ok: boolean }>('/api/companies/imported/clear', { method: 'POST', body: '{}' }),
+    setStatus: (id: string, status: CompanyStatus, actor: string) =>
+      call<{ ok: boolean; status: CompanyStatus }>(`/api/companies/${id}/status`, {
+        method: 'POST',
+        body: JSON.stringify({ status, actor }),
+      }),
+    refresh: (id: string, actor: string) =>
+      call<{ ok: boolean; lastRefreshed: string }>(`/api/companies/${id}/refresh`, {
+        method: 'POST',
+        body: JSON.stringify({ actor }),
+      }),
+    refreshResearch: (id: string, actor: string) =>
+      call<RefreshResearchResult>(`/api/companies/${id}/refresh-research`, {
+        method: 'POST',
+        body: JSON.stringify({ actor }),
+      }),
+    bulkStatus: (ids: string[], status: CompanyStatus, actor: string) =>
+      call<{ ok: boolean; status: CompanyStatus; updated: string[]; skipped: { id: string; reason: string }[] }>('/api/companies/bulk-status', {
+        method: 'POST',
+        body: JSON.stringify({ ids, status, actor }),
+      }),
     getPortfolio: () => call<{ portfolio: PortfolioCompany[] }>('/api/portfolio'),
     savePortfolio: (portfolio: PortfolioCompany[]) =>
       call<{ count: number }>('/api/portfolio', { method: 'PUT', body: JSON.stringify(portfolio) }),
@@ -240,23 +276,105 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ context, instructions }),
       }),
-    records: () =>
-      call<{ records: OutreachRecord[]; followUps: { dueToday: OutreachRecord[]; overdue: OutreachRecord[]; dueThisWeek: OutreachRecord[]; draftsNeverSent: OutreachRecord[] } }>('/api/outreach/records'),
-    setStatus: (companyId: string, status: string, actor: string) =>
-      call<OutreachRecord>('/api/outreach/status', {
-        method: 'POST',
-        body: JSON.stringify({ companyId, status, actor }),
-      }),
-    markSent: (companyId: string, actor: string) =>
-      call<OutreachRecord>('/api/outreach/mark-sent', {
-        method: 'POST',
-        body: JSON.stringify({ companyId, actor }),
-        idempotent: true,
-      }),
-    setFollowUp: (companyId: string, dueDate: string, note: string, actor: string) =>
-      call<FollowUpTask>('/api/outreach/follow-up', {
-        method: 'POST',
-        body: JSON.stringify({ companyId, dueDate, note, actor }),
-      }),
+  },
+
+  admin: {
+    status: () => call<AdminStatus>('/api/admin/status'),
+    sourceAnalytics: () => call<{ sources: SourceAnalytics[] }>('/api/admin/source-analytics'),
+    backups: {
+      list: () => call<{ backups: BackupMetadata[]; settings: { maxBackups: number; maxBackupAgeDays: number } }>('/api/admin/backups'),
+      create: (actor: string) => call<BackupMetadata>('/api/admin/backups', { method: 'POST', body: JSON.stringify({ actor }) }),
+    },
+  },
+
+  staleSettings: {
+    get: () => call<StaleSettings>('/api/stale-settings'),
+    update: (patch: Partial<StaleSettings>) =>
+      call<StaleSettings>('/api/admin/stale-settings', { method: 'PUT', body: JSON.stringify(patch) }),
+  },
+
+  duplicates: {
+    /** Possible-duplicate review queue — uncertain matches surfaced during discovery/import, awaiting a human decision. */
+    list: (status?: 'pending' | 'confirmed-duplicate' | 'not-duplicate') =>
+      call<{ duplicates: PossibleDuplicateEntry[] }>(`/api/duplicates${status ? `?status=${status}` : ''}`),
+    resolve: (id: number, resolution: 'confirmed-duplicate' | 'not-duplicate', actor: string) =>
+      call<{ ok: boolean }>(`/api/duplicates/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution, actor }) }),
   },
 };
+
+export interface PossibleDuplicateEntry {
+  id: number;
+  companyId: string;
+  otherCompanyId: string | null;
+  matchedBy: string;
+  similarity: number;
+  detail: string;
+  status: 'pending' | 'confirmed-duplicate' | 'not-duplicate';
+  createdAt: string;
+  company: { id: string; name: string } | null;
+  otherCompany: { id: string; name: string } | null;
+}
+
+/** The Settings — Admin Only system panel. Presence booleans only — never secret values. */
+export interface AdminStatus {
+  database: { ok: boolean; engine: string; location: string; companies: number; migrationVersion: number };
+  connectors: Record<'github' | 'hubspot' | 'outlook' | 'ai', { status: UiStatus; detail: string }>;
+  credentials: Record<string, boolean>;
+  sourcing: {
+    lastRun: { at: string; status: string; initiatedBy: string } | null;
+    lastSuccessfulRun: { at: string; status: string } | null;
+    lastFailedRun: { at: string; status: string } | null;
+    recordsRetrieved: number;
+    recordsCreated: number;
+    recordsUpdated: number;
+    recentErrors: string[];
+    rateLimited: string[];
+  };
+  hubspotFailedSyncs: { companyId: string; detail: string; at: string }[];
+}
+
+/** Result of a "Refresh live research" action — see server/services/companyRefresh.ts. */
+export interface RefreshResearchResult {
+  companyId: string;
+  refreshedAt: string;
+  newEvidenceCount: number;
+  newEvidence: { claim: string; source: string; url: string; date: string; type: string }[];
+  updatedFields: { field: string; from: string; to: string; source: string }[];
+  conflictingFields: { field: string; existing: string; attempted: string; source: string; reason: string }[];
+  unchangedFieldCount: number;
+  newFounderNamesFound: string[];
+  sourcesRan: { sourceId: string; detail: string; found: number }[];
+  sourcesFailed: { sourceId: string; detail: string; found: number }[];
+  sourcesSkipped: { sourceId: string; detail: string; found: number }[];
+  fieldsRequiringHumanReview: string[];
+  oldScore: { score: number; version: string } | null;
+  newScore: { score: number; version: string };
+}
+
+export interface BackupMetadata {
+  file: string;
+  createdAt: string;
+  sizeBytes: number;
+  schemaVersion: number;
+  companyCount: number;
+  triggeredBy: string;
+}
+
+/** Source-quality analytics — computed from persisted run history only, never fabricated. */
+export interface SourceAnalytics {
+  sourceId: string;
+  name: string;
+  state: 'live' | 'credentials-required' | 'planned' | 'unavailable';
+  totalAppearances: number;
+  successfulRuns: number;
+  failedRuns: number;
+  skippedRuns: number;
+  failureRate: number | null;
+  avgResponseTimeMs: number | null;
+  resultsRetrieved: number;
+  companiesImported: number;
+  companiesApprovedOrSynced: number;
+  avgFitScoreOfImported: number | null;
+  mostRecentSuccessfulRunAt: string | null;
+  mostRecentFailedRunAt: string | null;
+}

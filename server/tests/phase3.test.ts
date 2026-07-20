@@ -3,13 +3,17 @@ import request from 'supertest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
-import { importCompaniesCsv, parseCsv } from '../services/imports';
+import { importCompaniesCsv, importedCompanies, parseCsv } from '../services/imports';
+import { companyMetaView } from '../db/repos/companies';
 import { runRefresh, listConnectors, cancelRefresh, setConnectorEnabled } from '../services/refresh';
 import { explainFit, comparePortfolio } from '../services/analysis';
+import { installMockIntegrations, installTestPipelineMapping, uninstallMockIntegrations } from './mocks/install';
+import { adminAgent } from './testAuth';
 
 beforeEach(() => {
   store.resetForTests();
   resetIdempotencyForTests();
+  uninstallMockIntegrations();
 });
 
 const GOOD_ROW =
@@ -31,7 +35,7 @@ describe('local CSV import', () => {
     expect(report.imported).toBe(1);
     expect(report.skipped).toHaveLength(1);
     expect(report.skipped[0].issues.join(' ')).toMatch(/url/i);
-    expect(store.raw.importedCompanies).toHaveLength(1);
+    expect(importedCompanies()).toHaveLength(1);
   });
 
   it('requires sourced evidence — a row without it is rejected', () => {
@@ -51,7 +55,7 @@ describe('local CSV import', () => {
     const csv = [CSV_HEADER, GOOD_ROW].join('\n');
     importCompaniesCsv(csv);
     importCompaniesCsv(csv);
-    expect(store.raw.importedCompanies).toHaveLength(1);
+    expect(importedCompanies()).toHaveLength(1);
   });
 
   it('imported companies are exposed over HTTP', async () => {
@@ -67,27 +71,35 @@ describe('local CSV import', () => {
 
 describe('refresh engine', () => {
   it('runs enabled connectors, logs modes honestly, and updates connector state', async () => {
+    installMockIntegrations();
     const { outlookService } = await import('../services/outlook');
-    await outlookService().beginConnect(); // simulated mailbox so verification passes
+    await outlookService().beginConnect(); // fixture mailbox so verification passes
     const entry = await runRefresh({ connectorIds: ['hubspot', 'outlook', 'ai', 'local-csv'] });
     expect(entry.status).toBe('ok');
     expect(entry.trigger).toBe('manual');
     const byId = Object.fromEntries(entry.results.map((r) => [r.connector, r]));
-    expect(byId.hubspot.mode).toBe('simulated'); // Local Mode is never labeled live
-    expect(byId.hubspot.detail).toContain('Local Mode');
+    expect(byId.hubspot.mode).toBe('simulated'); // fixtures are never labeled live
+    expect(byId.hubspot.detail).toContain('Connection verified');
     expect(byId['local-csv'].mode).toBe('local');
     const state = listConnectors().find((c) => c.meta.id === 'hubspot')!.state;
     expect(state.lastSyncAt).toBeTruthy();
     expect(state.lastSyncMode).toBe('simulated');
   });
 
+  it('reports not-connected integrations as failed — never simulated as working', async () => {
+    const entry = await runRefresh({ connectorIds: ['hubspot', 'outlook'] });
+    const byId = Object.fromEntries(entry.results.map((r) => [r.connector, r]));
+    expect(byId.hubspot.mode).toBe('failed');
+    expect(byId.hubspot.detail).toMatch(/not connected/i);
+    expect(byId.outlook.mode).toBe('failed');
+    expect(byId.outlook.detail).toMatch(/not connected/i);
+    expect(entry.status).toBe('failed');
+  });
+
   it('reports partial failure without losing successful results', async () => {
     // A recorded website behind an unreachable domain → websites connector fails,
     // while local connectors still succeed in the same run.
-    importCompaniesCsv([CSV_HEADER, GOOD_ROW.replace('https://example.com/nueva', 'https://example.com/nueva') ].join('\n'));
-    store.raw.importedCompanies = store.raw.importedCompanies.map((c) => ({
-      ...(c as object), website: 'https://unreachable.invalid',
-    }));
+    importCompaniesCsv([`${CSV_HEADER},website`, `${GOOD_ROW},https://unreachable.invalid`].join('\n'));
     setConnectorEnabled('websites', true);
     const entry = await runRefresh({ connectorIds: ['local-csv', 'websites'] });
     const byId = Object.fromEntries(entry.results.map((r) => [r.connector, r]));
@@ -109,31 +121,28 @@ describe('refresh engine', () => {
     expect(['cancelled', 'ok']).toContain(entry2.status); // timing-dependent but never crashes
   });
 
-  it('updates company verification dates for tracked companies', async () => {
-    store.raw.outreach['c-solcare'] = {
-      companyId: 'c-solcare', companyName: 'SolCare', founderName: 'M', founderEmail: null,
-      owner: 'DR', vertical: 'Health', companyStage: 'Seed', fitScore: 8, policyException: null,
-      sourceQuality: 8, hubspotStatus: 'Not added', hubspotCompanyId: null, hubspotUrl: null,
-      outreachStatus: 'Not Reviewed', draftCreatedAt: null, draftSubject: null,
-      outlookDraftId: null, outlookWebLink: null, emailSentAt: null, lastResponseAt: null,
-      meetingStatus: 'None', followUp: null, nextAction: '—', activities: [],
-    };
-    await runRefresh({ connectorIds: ['local-csv'] });
-    expect(store.raw.companyMeta['c-solcare'].lastRefreshed).toBe(new Date().toISOString().slice(0, 10));
+  it('updates company verification dates for persisted companies', async () => {
+    importCompaniesCsv([CSV_HEADER, GOOD_ROW].join('\n'));
+    const id = importedCompanies()[0].id;
+    await runRefresh({ connectorIds: ['local-csv'], companyIds: [id] });
+    expect(companyMetaView()[id].lastRefreshed).toBe(new Date().toISOString().slice(0, 10));
   });
 
   it('refresh log is exposed over HTTP and capped', async () => {
     const app = createApp();
-    await request(app).post('/api/refresh/run').send({ connectorIds: ['local-csv'] });
-    const log = await request(app).get('/api/refresh/log');
+    const agent = await adminAgent(app);
+    await agent.post('/api/refresh/run').send({ connectorIds: ['local-csv'] });
+    const log = await agent.get('/api/refresh/log');
     expect(log.body.log[0].results[0].connector).toBe('local-csv');
     const status = await request(app).get('/api/integrations/status');
     expect(status.body.statuses.refresh.status).toBe('Connected');
   });
 });
 
-describe('HubSpot search + OAuth (mock / offline)', () => {
-  it('searches simulated companies and contacts', async () => {
+describe('HubSpot search + OAuth (fixtures / offline)', () => {
+  it('searches fixture companies and contacts', async () => {
+    installMockIntegrations();
+    installTestPipelineMapping();
     const app = createApp();
     await request(app).post('/api/hubspot/sync-company').send({
       company: {
@@ -165,44 +174,21 @@ describe('HubSpot search + OAuth (mock / offline)', () => {
     expect(contacts.body.hits[0].subtitle).toContain('mariana@');
   });
 
-  it('mock connect explains what is missing and never claims a real connection', async () => {
+  it('connect explains what is missing and never claims a real connection', async () => {
     const app = createApp();
-    const res = await request(app).post('/api/hubspot/connect').send({});
-    expect(res.body.demo).toBe(true);
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/hubspot/connect').send({});
     expect(res.body.authUrl).toBeNull();
-    expect(res.body.message).toMatch(/HUBSPOT_CLIENT_ID|INTEGRATION_MODE/);
+    expect(res.body.message).toMatch(/HUBSPOT_CLIENT_ID/);
   });
 
-  it('verify endpoint reports Local Mode honestly', async () => {
+  it('verify endpoint reports not-connected honestly with a 503', async () => {
     const app = createApp();
-    const res = await request(app).post('/api/hubspot/verify').send({});
-    expect(res.body.ok).toBe(true);
-    expect(res.body.mode).toBe('mock');
-    expect(res.body.detail).toContain('No real HubSpot connection');
-  });
-});
-
-describe('Outlook draft status sync', () => {
-  it('reports a simulated draft as still unsent and never flips sent status', async () => {
-    const app = createApp();
-    await request(app).post('/api/outlook/connect').send({});
-    await request(app).post('/api/hubspot/sync-company').send(minimalSync('c-x', 'XCo'));
-    await request(app).post('/api/outlook/drafts').send({
-      companyId: 'c-x', to: 'a@b.co', subject: 'Hello', body: 'A body long enough here.',
-      senderName: 'DR', tone: '—',
-    });
-    const res = await request(app).post('/api/outlook/sync-status').send({ companyId: 'c-x' });
-    expect(res.status).toBe(200);
-    expect(res.body.status.demo).toBe(true);
-    expect(res.body.status.isDraft).toBe(true);
-    expect(res.body.status.sentAt).toBeNull();
-    expect(res.body.record.emailSentAt).toBeNull();
-  });
-
-  it('404s when no draft is on record', async () => {
-    const app = createApp();
-    const res = await request(app).post('/api/outlook/sync-status').send({ companyId: 'nope' });
-    expect(res.status).toBe(404);
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/hubspot/verify').send({});
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('not_connected');
+    expect(res.body.message).toMatch(/not connected/i);
   });
 });
 
@@ -268,23 +254,3 @@ describe('AI analysis (local templates + caching)', () => {
   });
 });
 
-function minimalSync(id: string, name: string) {
-  return {
-    company: {
-      name, domain: null, website: null, city: 'X', state: 'TX', country: 'United States',
-      description: 'x', vertical: 'Health', subcategory: 'Care', stage: 'Seed',
-      accelerator: null, fundingRaised: null, dateFirstSurfaced: '2026-01-01',
-      lastRefreshed: '2026-01-01', primarySource: 'src', policyException: null,
-      dealRadarId: id, dealRadarUrl: 'http://localhost:5173',
-    },
-    contacts: [],
-    deal: {
-      companyName: name, fitScore: 5, recommendation: 'Track', vertical: 'Health',
-      stage: 'Seed', scoreBreakdown: [], rationale: '', risks: '', evidenceQualityScore: 5,
-      policyException: null, sourcingStatus: 'Surfaced', dateSurfaced: '2026-01-01',
-      nextAction: 'Review', relationshipOwner: null, dealRadarId: id,
-      dealRadarUrl: 'http://localhost:5173',
-    },
-    radarStage: 'Surfaced', duplicateResolution: 'create-new', existingRecordId: null,
-  };
-}

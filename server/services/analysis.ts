@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { aiKey, env, modes } from '../env';
+import { aiConfigured, aiKey, env } from '../env';
 import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { fetchWithRetry } from '../lib/http';
@@ -58,7 +58,7 @@ async function callModelJson<T>(prompt: string, schema: z.ZodType<T>): Promise<T
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: env.AI_MODEL ?? 'claude-sonnet-4-6',
+        model: env.AI_MODEL ?? 'claude-sonnet-5',
         max_tokens: MAX_TOKENS,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -115,7 +115,7 @@ export async function explainFit(raw: unknown): Promise<FitExplanation> {
   const cached = fromCache<FitExplanation>(key);
   if (cached) return { ...cached, cached: true };
 
-  if (modes.ai() !== 'live') {
+  if (!aiConfigured()) {
     const local = localFitExplanation(c);
     toCache(key, local);
     return local;
@@ -194,7 +194,7 @@ export async function comparePortfolio(rawCompany: unknown, rawPortfolio: unknow
   const cached = fromCache<PortfolioComparison>(key);
   if (cached) return { ...cached, cached: true };
 
-  if (modes.ai() !== 'live') {
+  if (!aiConfigured()) {
     const local = localPortfolioComparison(company, portfolio);
     toCache(key, local);
     return local;
@@ -217,8 +217,8 @@ export async function comparePortfolio(rawCompany: unknown, rawPortfolio: unknow
 
 /** Cheap verification that the configured AI key actually works. */
 export async function verifyAiConnection(): Promise<{ ok: boolean; detail: string }> {
-  if (modes.ai() !== 'live') {
-    return { ok: true, detail: 'Local Mode: deterministic templates active. No AI key configured (or INTEGRATION_MODE=mock).' };
+  if (!aiConfigured()) {
+    return { ok: true, detail: 'No AI provider is configured. Deterministic local templates answer instead and are labeled as such.' };
   }
   try {
     if (env.AI_PROVIDER === 'anthropic') {

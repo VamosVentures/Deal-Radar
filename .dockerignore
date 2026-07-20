@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+server/.data
+.env
+.env.*
+!.env.example
+.git
+.github
+*.log
+npm-debug.log*
+.DS_Store
+coverage
+playwright-report
+test-results
+e2e/.auth

@@ -4,7 +4,6 @@ import { api } from '../lib/api';
 import { useCompanies } from '../store/companies';
 import type { DiscoveryCandidate, DiscoveryQuery, DiscoveryRun } from '../../shared/discovery';
 import { GEOGRAPHIES, PREFERRED_STATES_P4 } from '../../shared/discovery';
-import { SchedulePanel } from '../components/Schedule';
 
 const VERTICALS = [
   { id: '', name: 'Any vertical' },
@@ -12,7 +11,7 @@ const VERTICALS = [
   { id: 'fintech', name: 'FinTech' },
   { id: 'fow', name: 'Future of Work' },
   { id: 'sustainability', name: 'Sustainability' },
-  { id: 'aoi', name: 'Areas of Interest' },
+  { id: 'aoi', name: 'Other Industries' },
 ] as const;
 
 const STAGES = ['Pre-seed', 'Seed', 'Series A'] as const;
@@ -37,8 +36,8 @@ const modeChip: Record<string, string> = {
 
 export function Discovery() {
   const { refresh: refreshCompanies } = useCompanies();
-  const [sources, setSources] = useState<{ id: string; name: string; liveCapable: boolean; needs: string }[]>([]);
-  const [picked, setPicked] = useState<string[]>(['yc', 'github', 'funding-news', 'accelerators', 'grants']);
+  const [sources, setSources] = useState<{ id: string; name: string; state: 'live' | 'credentials-required' | 'planned' | 'unavailable'; needs: string }[]>([]);
+  const [picked, setPicked] = useState<string[]>(['yc', 'github', 'funding-news', 'grants', 'research']);
   const [vertical, setVertical] = useState('');
   const [subcategory, setSubcategory] = useState('');
   const [terms, setTerms] = useState('');
@@ -126,7 +125,7 @@ export function Discovery() {
     try {
       const out = await api.discovery.import([...selected], 'team', dupAction);
       const skippedNote = out.skipped.length > 0 ? ` Skipped: ${out.skipped.map((s) => s.reason).join(' ')}` : '';
-      setImportMsg(`${out.imported.length} imported into Needs Review, ${out.merged.length} merged as evidence.${skippedNote} Nothing was approved, synced, or contacted automatically.`);
+      setImportMsg(`${out.imported.length} imported into Awaiting Review, ${out.merged.length} merged as evidence.${skippedNote} Nothing was approved, synced, or contacted automatically.`);
       setSelected(new Set());
       await Promise.all([loadLists(), refreshCompanies()]);
     } catch (e) {
@@ -148,7 +147,7 @@ export function Discovery() {
       <PageHeader
         eyebrow="Sourcing"
         title="Deal Discovery"
-        blurb="Search authorized public sources only — YC, GitHub, SEC, grants, accelerators, funding news, uploads, and licensed exports. LinkedIn, PitchBook, and Crunchbase are never scraped. Every candidate keeps its evidence trail, unknowns stay Unknown, and imports always land in Needs Review for a human."
+        blurb="Search authorized public sources only — YC, GitHub, SEC, grants, accelerators, funding news, uploads, and licensed exports. LinkedIn, PitchBook, and Crunchbase are never scraped. Every candidate keeps its evidence trail, unknowns stay Unknown, and imports always land in Awaiting Review for a human."
       />
 
       {/* ── Search configuration ── */}
@@ -250,21 +249,28 @@ export function Discovery() {
         <div className="mt-3">
           <label className={label}>Sources (authorized only)</label>
           <div className="grid gap-1 md:grid-cols-2">
-            {sources.map((s) => (
-              <label key={s.id} className="flex items-start gap-2 rounded-sm border border-slate-100 px-2 py-1 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={picked.includes(s.id)}
-                  onChange={() => setPicked((p) => (p.includes(s.id) ? p.filter((x) => x !== s.id) : [...p, s.id]))}
-                />
-                <span>
-                  <span className="font-medium text-slate-800">{s.name}</span>
-                  {s.liveCapable && <span className="ml-1 rounded-sm bg-verde-soft px-1 text-[10px] text-verde">live-capable</span>}
-                  <span className="block text-[11px] text-slate-500">{s.needs}</span>
-                </span>
-              </label>
-            ))}
+            {sources.map((s) => {
+              const disabled = s.state === 'planned' || s.state === 'unavailable';
+              return (
+                <label key={s.id} className={`flex items-start gap-2 rounded-sm border border-slate-100 px-2 py-1 text-sm ${disabled ? 'opacity-60' : ''}`}>
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    disabled={disabled}
+                    checked={picked.includes(s.id)}
+                    onChange={() => setPicked((p) => (p.includes(s.id) ? p.filter((x) => x !== s.id) : [...p, s.id]))}
+                  />
+                  <span>
+                    <span className="font-medium text-slate-800">{s.name}</span>
+                    {s.state === 'live' && <span className="ml-1 rounded-sm bg-verde-soft px-1 text-[10px] text-verde">live</span>}
+                    {s.state === 'credentials-required' && <span className="ml-1 rounded-sm bg-marigold-soft px-1 text-[10px] text-marigold">credentials required — will be skipped</span>}
+                    {s.state === 'planned' && <span className="ml-1 rounded-sm bg-slate-100 px-1 text-[10px] text-slate-500">planned — no adapter yet</span>}
+                    {s.state === 'unavailable' && <span className="ml-1 rounded-sm bg-slate-100 px-1 text-[10px] text-slate-500">unavailable</span>}
+                    <span className="block text-[11px] text-slate-500">{s.needs}</span>
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </div>
 
@@ -317,8 +323,6 @@ export function Discovery() {
         </section>
       )}
 
-      <SchedulePanel currentQuery={query} />
-
       {/* ── Candidate preview ── */}
       <section className="mb-4 rounded-sm border border-slate-200 bg-white p-4">
         <div className="mb-2 flex flex-wrap items-center gap-3">
@@ -335,7 +339,7 @@ export function Discovery() {
               disabled={selected.size === 0}
               className="rounded-sm bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
             >
-              Import {selected.size > 0 ? `${selected.size} ` : ''}selected → Needs Review
+              Import {selected.size > 0 ? `${selected.size} ` : ''}selected → Awaiting Review
             </button>
           </div>
         </div>

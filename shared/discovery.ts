@@ -34,6 +34,19 @@ export const discoveryQuerySchema = z.object({
   maxEstimatedTokens: z.number().int().min(0).max(500_000).default(50_000),
   minConfidence: z.number().min(0).max(1).default(0),
   mode: z.enum(['new-only', 'stale-only', 'all']).default('new-only'),
+  /**
+   * Evidence-recency threshold (days). A candidate whose evidence is
+   * ALL older than this is dropped. Candidates with no dated evidence
+   * are never excluded by this — unknowns are never guessed away.
+   * null = no recency filter.
+   */
+  minEvidenceRecencyDays: z.number().int().min(1).max(3650).nullable().default(null),
+  /**
+   * Refresh-age threshold (days) used only in 'stale-only' mode: a
+   * candidate is kept only if it matches an existing company that has
+   * gone unrefreshed for at least this long (or was never refreshed).
+   */
+  staleAfterDays: z.number().int().min(1).max(365).default(30),
 });
 export type DiscoveryQuery = z.infer<typeof discoveryQuerySchema>;
 
@@ -58,6 +71,8 @@ export const discoveryCandidateSchema = z.object({
   discoveredAt: z.string(),
   sourceId: z.enum(DISCOVERY_SOURCES),
   simulated: z.boolean(),
+  /** The source's own record id (repo slug, accession number, …) for exact re-identification. */
+  externalId: z.string().nullable().default(null),
   companyName: z.string().min(1),
   website: unknownable,
   pitch: unknownable,
@@ -92,7 +107,10 @@ export const RUN_STATUSES = [
 
 export const discoveryRunSchema = z.object({
   id: z.string(),
+  /** Start time. */
   at: z.string(),
+  /** End time. */
+  completedAt: z.string(),
   runType: z.enum(['manual', 'scheduled-weekly', 'scheduled-biweekly']),
   mode: z.enum(['live', 'local', 'simulated', 'mixed']),
   query: discoveryQuerySchema,
@@ -101,10 +119,18 @@ export const discoveryRunSchema = z.object({
     mode: z.enum(['live', 'local', 'simulated', 'failed', 'skipped']),
     found: z.number(),
     detail: z.string(),
+    /** Typed failure state (timeout, rate-limited, invalid-response, …) when mode is failed/skipped. */
+    failureKind: z.enum(['timeout', 'rate-limited', 'http-error', 'invalid-response', 'network', 'missing-credentials', 'not-configured']).optional(),
+    /** Real elapsed time (ms) of the adapter call — absent for a skip, since nothing ran. Used by source-quality analytics. */
+    durationMs: z.number().optional(),
   })),
   discovered: z.number(),
   updatedExisting: z.number(),
   duplicatesSkipped: z.number(),
+  /** Every candidate that matched an existing record, exact or likely — regardless of what happened to it afterward. */
+  duplicatesIdentified: z.number().default(0),
+  /** Candidates dropped by the evidence-recency or refresh-age policy filters (not by schema validation, not as duplicates). */
+  filteredByPolicy: z.number().default(0),
   rejectedByValidation: z.number(),
   imported: z.number(),
   errors: z.array(z.string()),
@@ -122,9 +148,9 @@ export type DiscoveryRun = z.infer<typeof discoveryRunSchema>;
 
 export const STEALTH_SIGNAL_TYPES = [
   'Public departure announcement', 'New GitHub organization/repository', 'New open-source project',
-  'Patent filing', 'Research publication', 'Accelerator/fellowship/residency', 'Hackathon/demo day',
-  'Government grant', 'New company/domain registration', 'Public bio states building/founder/stealth',
-  'Public interview/announcement', 'User-provided public profile',
+  'Patent filing', 'Public filing', 'Research publication', 'Accelerator/fellowship/residency', 'Hackathon/demo day',
+  'Government grant', 'New company/domain registration', 'Hiring announcement',
+  'Public bio states building/founder/stealth', 'Public interview/announcement', 'User-provided public profile',
 ] as const;
 
 export const stealthSignalSchema = z.object({
@@ -142,6 +168,9 @@ export const stealthSignalSchema = z.object({
   dateAccessed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   possibleVertical: z.enum(['health', 'fintech', 'fow', 'sustainability', 'aoi', 'Unknown']).default('Unknown'),
   possibleTheme: unknownable,
+  /** Suspected geography (city/state or region) — 'Unknown' until recorded, never guessed. */
+  suspectedGeography: unknownable,
+  /** Why this looks like stealth activity — what the source actually says. */
   evidenceSummary: z.string().min(5),
   confidence: z.enum(['Low', 'Medium', 'High']),
   verificationStatus: z.enum(VERIFICATION_STATUSES).default('Not verified'),

@@ -52,7 +52,14 @@ export function ExceptionBadge({ flag, compact = false }: { flag: PolicyFlag; co
 export function IdentityChips({ founders }: { founders: { identity?: VerifiedIdentity }[] }) {
   const ids = founders.map((f) => f.identity).filter((x): x is VerifiedIdentity => !!x);
   if (ids.length === 0) {
-    return <span className="text-xs text-slate-mid italic">Identity not on record — never inferred</span>;
+    return (
+      <span
+        className="cursor-help text-xs text-slate-mid italic"
+        title="No explicit public statement or self-identification is on record. Nothing is ever inferred from names, photos, appearance, language, or geography — adding an indicator requires human verification of an explicit source."
+      >
+        Identity not on record — requires human verification, never inferred
+      </span>
+    );
   }
   const chips: { label: string; source: string }[] = [];
   const latino = ids.find((i) => i.latinoLed);
@@ -67,7 +74,7 @@ export function IdentityChips({ founders }: { founders: { identity?: VerifiedIde
         <span
           key={chip.label}
           className="cursor-help rounded-sm bg-verde-soft px-1.5 py-0.5 font-mono text-[11px] font-semibold text-verde"
-          title={`Verification: ${chip.source}`}
+          title={`Publicly identified founder signal — ${chip.source}`}
         >
           {chip.label}
         </span>

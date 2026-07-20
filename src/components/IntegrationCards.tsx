@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type HubSpotSearchHit } from '../lib/api';
 import { useIntegrations } from '../store/integrations';
-import { btnGhost, btnPrimary, DemoBadge, ErrorNote } from './Modal';
+import { btnGhost, btnPrimary, ErrorNote } from './Modal';
 import {
   RADAR_HUBSPOT_STAGES,
   type HubSpotPipelineInfo,
@@ -34,12 +34,11 @@ export function IntegrationCards() {
     <section className="mt-6">
       <div className="mb-2 flex items-center gap-2">
         <h2 className="font-display text-base font-bold">Integrations</h2>
-        <DemoBadge show={status.mode === 'mock'} />
       </div>
       <p className="mb-3 max-w-3xl text-xs text-slate-mid">
         Credentials live only in the backend&rsquo;s <code className="rounded-sm bg-paper px-1 font-mono">.env</code> — the browser never sees tokens or keys, and this
-        page never displays saved secrets. Each integration goes live independently once its credentials exist and
-        <code className="mx-1 rounded-sm bg-paper px-1 font-mono">INTEGRATION_MODE=auto</code>. See <code className="rounded-sm bg-paper px-1 font-mono">.env.example</code>.
+        page never displays saved secrets. Each integration goes live independently once its credentials exist; until then
+        it is simply not connected and every action fails with an honest error. See <code className="rounded-sm bg-paper px-1 font-mono">.env.example</code>.
       </p>
       <div className="grid gap-4 xl:grid-cols-3">
         <HubSpotCard conn={status.hubspot} refreshAll={refresh} />
@@ -55,8 +54,8 @@ function CardShell({ title, conn, children }: { title: string; conn: Integration
     <div className="flex flex-col rounded-md border border-line bg-panel p-4">
       <div className="flex items-center gap-2">
         <h3 className="font-display text-sm font-bold">{title}</h3>
-        <span className={`ml-auto rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${conn.mode === 'live' ? 'bg-verde-soft text-verde' : 'bg-marigold-soft text-marigold'}`}>
-          {conn.mode === 'live' ? (conn.connected ? 'Live · connected' : 'Live · not connected') : 'Demo Mode'}
+        <span className={`ml-auto rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${conn.connected ? 'bg-verde-soft text-verde' : 'bg-marigold-soft text-marigold'}`}>
+          {conn.mode === 'live' ? (conn.connected ? 'Connected' : 'Configured · not connected') : 'Implemented — credentials required'}
         </span>
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-slate-mid">{conn.detail}</p>
@@ -93,7 +92,7 @@ function HubSpotCard({ conn, refreshAll }: { conn: IntegrationConnection; refres
     setTestResult(null);
     try {
       const v = await api.hubspot.verify();
-      setTestResult(v.mode === 'mock' ? v.detail : v.ok ? `Verified: ${v.detail}` : `Verification failed: ${v.detail}`);
+      setTestResult(v.ok ? `Verified: ${v.detail}` : `Verification failed: ${v.detail}`);
     } catch (e) {
       setError(e as ApiError);
     }
@@ -130,7 +129,7 @@ function HubSpotCard({ conn, refreshAll }: { conn: IntegrationConnection; refres
   return (
     <CardShell title="HubSpot CRM" conn={conn}>
       <div className="space-y-2 text-xs text-slate-mid">
-        <div>Auth type: <span className="font-mono text-ink">{conn.mode === 'live' ? (conn.account === 'oauth' ? 'OAuth (user connection)' : 'private-app token / OAuth') : 'none — Local Mode'}</span> (secrets stay on the backend)</div>
+        <div>Auth type: <span className="font-mono text-ink">{conn.mode === 'live' ? (conn.account === 'oauth' ? 'OAuth (user connection)' : 'private-app token / OAuth') : 'none — not connected'}</span> (secrets stay on the backend)</div>
         <div>Property mapping: Deal Radar fields → <span className="font-mono text-ink">vamos_*</span> custom properties (see README for the recommended property set).</div>
         <div className="flex flex-wrap gap-2 pt-1">
           <button className={btnGhost} onClick={testConnection} disabled={busy}>Test connection</button>
@@ -142,17 +141,17 @@ function HubSpotCard({ conn, refreshAll }: { conn: IntegrationConnection; refres
         </div>
         {testResult && <div className="rounded-sm bg-paper px-2 py-1.5">{testResult}</div>}
         {error && <ErrorNote message={error.message} hint={error.hint} />}
-        {showMapping && <PipelineMappingEditor demo={conn.mode === 'mock'} />}
-        <HubSpotSearch demo={conn.mode === 'mock'} />
+        {showMapping && <PipelineMappingEditor />}
+        <HubSpotSearch />
         <SyncHistory provider="hubspot" />
       </div>
     </CardShell>
   );
 }
 
-function HubSpotSearch({ demo }: { demo: boolean }) {
+function HubSpotSearch() {
   const [query, setQuery] = useState('');
-  const [type, setType] = useState<'companies' | 'contacts'>('companies');
+  const [type, setType] = useState<'companies' | 'contacts' | 'deals'>('companies');
   const [hits, setHits] = useState<HubSpotSearchHit[] | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
 
@@ -170,7 +169,7 @@ function HubSpotSearch({ demo }: { demo: boolean }) {
 
   return (
     <div className="border-t border-line pt-2">
-      <div className="mb-1 font-mono text-[10px] uppercase tracking-wider">Search HubSpot {demo && '(simulated records)'}</div>
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-wider">Search HubSpot</div>
       <div className="flex flex-wrap gap-1.5">
         <input
           value={query}
@@ -180,9 +179,10 @@ function HubSpotSearch({ demo }: { demo: boolean }) {
           className="min-w-40 flex-1 rounded-sm border border-line bg-panel px-2 py-1"
           aria-label="HubSpot search query"
         />
-        <select value={type} onChange={(e) => setType(e.target.value as 'companies' | 'contacts')} className="rounded-sm border border-line bg-panel px-1.5 py-1" aria-label="Record type">
+        <select value={type} onChange={(e) => setType(e.target.value as 'companies' | 'contacts' | 'deals')} className="rounded-sm border border-line bg-panel px-1.5 py-1" aria-label="Record type">
           <option value="companies">Companies</option>
           <option value="contacts">Contacts</option>
+          <option value="deals">Deals</option>
         </select>
         <button className={btnGhost} onClick={search}>Search</button>
       </div>
@@ -197,7 +197,7 @@ function HubSpotSearch({ demo }: { demo: boolean }) {
               <span>{h.subtitle}</span>
               {h.url
                 ? <a href={h.url} target="_blank" rel="noreferrer" className="ml-auto text-verde underline">Open in HubSpot</a>
-                : <span className="ml-auto font-mono text-[10px]">{h.demo ? 'simulated — no real record link' : ''}</span>}
+                : <span className="ml-auto font-mono text-[10px]">no portal link (set HUBSPOT_PORTAL_ID)</span>}
             </li>
           ))}
         </ul>
@@ -216,8 +216,8 @@ function SyncHistory({ provider }: { provider: string }) {
           if (entries) { setEntries(null); return; }
           try {
             const res = await fetch('/api/audit');
-            const data = (await res.json()) as { entries: { at: string; provider: string; action: string; subject: string; outcome: string; detail: string }[] };
-            setEntries(data.entries.filter((e) => e.provider === provider).slice(0, 8));
+            const data = (await res.json()) as { at: string; provider: string; action: string; subject: string; outcome: string; detail: string }[];
+            setEntries(data.filter((e) => e.provider === provider).slice(0, 8));
           } catch { setEntries([]); }
         }}
       >
@@ -240,7 +240,7 @@ function SyncHistory({ provider }: { provider: string }) {
   );
 }
 
-function PipelineMappingEditor({ demo }: { demo: boolean }) {
+function PipelineMappingEditor() {
   const [pipelines, setPipelines] = useState<HubSpotPipelineInfo[]>([]);
   const [mapping, setMapping] = useState<HubSpotPipelineMapping | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -275,9 +275,8 @@ function PipelineMappingEditor({ demo }: { demo: boolean }) {
   return (
     <div className="rounded-sm border border-line bg-paper p-3">
       <p className="mb-2 leading-relaxed">
-        Map each Deal Radar status to an existing HubSpot stage. {demo
-          ? 'In Demo Mode a simulated pipeline is offered so the flow can be exercised.'
-          : 'Live submissions are blocked for any status without a mapping — the app never guesses stage IDs.'}
+        Map each Deal Radar status to an existing HubSpot stage. Submissions are blocked for any status without a
+        mapping — the app never guesses stage IDs.
       </p>
       <label className="block font-mono text-[10px] uppercase tracking-wider">
         HubSpot deal pipeline
@@ -454,7 +453,7 @@ function AiCard({ conn }: { conn: IntegrationConnection }) {
         customInstructions: '',
         meetingAsk: 'a quick call',
       });
-      setSample(`Subject: ${email.subject}${email.demo ? ' (Demo Mode template)' : ''}`);
+      setSample(`Subject: ${email.subject}${email.demo ? ' (local template — no AI model)' : ''}`);
     } catch (e) {
       setError(e as ApiError);
     } finally {
@@ -466,9 +465,9 @@ function AiCard({ conn }: { conn: IntegrationConnection }) {
     <CardShell title="AI email provider" conn={conn}>
       <div className="space-y-2 text-xs text-slate-mid">
         <div>
-          Provider abstraction supports Anthropic or OpenAI; Demo Mode uses a deterministic template built only from
-          verified facts. Every provider&rsquo;s output passes the same fact-validation gate (no invented funding, traction,
-          customers, or accelerators).
+          Provider abstraction supports Anthropic or OpenAI. Without a configured provider, drafts come from a
+          deterministic local template built only from verified facts and are labeled that way. Every provider&rsquo;s
+          output passes the same fact-validation gate (no invented funding, traction, customers, or accelerators).
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
           <button className={btnGhost} onClick={testGeneration} disabled={busy}>

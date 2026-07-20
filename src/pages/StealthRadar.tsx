@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { loadStealthFounders } from '../data/loader';
 import { verticalById } from '../data/taxonomy';
 import type { Company, Founder, VerticalId } from '../types';
-import { ConfidenceMeter, IdentityChips, PageHeader } from '../components/ui';
+import { ConfidenceMeter, PageHeader } from '../components/ui';
 import { OutreachPanel } from '../components/OutreachPanel';
 import { api } from '../lib/api';
 import type { FounderHypothesis, StealthSignal } from '../../shared/discovery';
@@ -12,7 +11,6 @@ const ORDER: Record<'High' | 'Medium' | 'Low', number> = { High: 0, Medium: 1, L
 const OWNERS = ['DR', 'MG', 'AL'];
 
 export function StealthRadar() {
-  const [tab, setTab] = useState<'feed' | 'queue' | 'watchlist'>('feed');
   const [signals, setSignals] = useState<StealthSignal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -27,11 +25,6 @@ export function StealthRadar() {
     () => [...signals].sort((a, b) => ORDER[a.confidence] - ORDER[b.confidence]),
     [signals],
   );
-  const queue = useMemo(
-    () => feed.filter((s) => s.outreachStatus === 'Research queue' || s.verificationStatus === 'Unknown' || s.verificationStatus === 'Not verified'),
-    [feed],
-  );
-
   return (
     <div>
       <PageHeader
@@ -41,33 +34,27 @@ export function StealthRadar() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
-        {([['feed', `Signal feed (${feed.length})`], ['queue', `Research queue (${queue.length})`], ['watchlist', 'Sample watchlist']] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`rounded-sm border px-3 py-1.5 ${tab === id ? 'border-verde bg-verde-soft font-semibold text-verde' : 'border-line text-slate-mid'}`}
-          >
-            {label}
-          </button>
-        ))}
+        <span className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">
+          Signal feed ({feed.length})
+        </span>
         <button onClick={() => setShowAdd(true)} className="ml-auto rounded-sm bg-ink px-3 py-1.5 text-sm font-semibold text-white">
           + Add signal manually
         </button>
       </div>
       {error && <p className="mb-3 text-sm text-alerta">{error} — is the API server running? (npm run dev starts both.)</p>}
 
-      {tab !== 'watchlist' && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {(tab === 'feed' ? feed : queue).map((s) => (
-            <SignalCard key={s.id} s={s} onChanged={load} onOutreach={(c) => setOutreachFor(c)} />
-          ))}
-          {(tab === 'feed' ? feed : queue).length === 0 && (
-            <p className="text-sm text-slate-mid">Nothing here yet.</p>
-          )}
-        </div>
-      )}
-
-      {tab === 'watchlist' && <BundledWatchlist />}
+      <div className="grid gap-3 lg:grid-cols-2">
+        {feed.map((s) => (
+          <SignalCard key={s.id} s={s} onChanged={load} onOutreach={(c) => setOutreachFor(c)} />
+        ))}
+        {feed.length === 0 && (
+          <p className="col-span-full rounded-md border border-line bg-panel px-4 py-6 text-sm text-slate-mid">
+            No stealth signals are on record yet. Add one manually from an authorized public source (the button above),
+            or record signals as they surface from filings, GitHub activity, or public announcements. Nothing is
+            pre-populated or simulated.
+          </p>
+        )}
+      </div>
 
       {showAdd && <AddSignalForm onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
       {outreachFor && <OutreachPanel c={outreachFor} onClose={() => setOutreachFor(null)} />}
@@ -129,6 +116,7 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
         <span className="rounded-sm bg-marigold-soft px-1.5 py-0.5 font-mono font-semibold text-marigold">{s.signalType}</span>
         <span className="rounded-sm bg-paper px-1.5 py-0.5 text-slate-mid">{s.possibleVertical === 'Unknown' ? 'vertical unknown' : verticalById(s.possibleVertical as VerticalId).short}</span>
+        <span className="rounded-sm bg-paper px-1.5 py-0.5 text-slate-mid">{s.suspectedGeography === 'Unknown' ? 'geography unknown' : s.suspectedGeography}</span>
         <span className="rounded-sm bg-alerta-soft px-1.5 py-0.5 text-alerta">{s.verificationStatus}</span>
         {s.simulated && <span className="rounded-sm bg-paper px-1.5 py-0.5 text-slate-mid">simulated</span>}
         {s.outreachStatus !== 'None' && <span className="rounded-sm bg-paper px-1.5 py-0.5 font-semibold text-ink">{s.outreachStatus}</span>}
@@ -152,8 +140,10 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
             <li><span className="font-mono text-[10px] text-slate-mid">{s.signalDate}</span> — {s.signalType}: {s.evidenceSummary}</li>
             <li><span className="font-mono text-[10px] text-slate-mid">{s.dateAccessed}</span> — recorded from {s.sourceName}</li>
           </ul>
-          <p className="mt-1 text-[11px] text-slate-mid"><em>Alternative explanation:</em> {s.alternativeExplanation}</p>
+          <p className="mt-1 text-[11px] text-slate-mid"><em>Why this looks like stealth activity:</em> {s.signalType} — {s.evidenceSummary}</p>
+          <p className="text-[11px] text-slate-mid"><em>Alternative explanation:</em> {s.alternativeExplanation}</p>
           <p className="text-[11px] text-slate-mid"><em>Suggested next step:</em> {s.suggestedNextStep}</p>
+          <MissingInfo s={s} />
           {(s.knownSkills.length > 0 || s.priorStartups.length > 0) && (
             <p className="text-[11px] text-slate-mid">
               {s.knownSkills.length > 0 && <>Recorded skills: {s.knownSkills.join(', ')}. </>}
@@ -200,6 +190,23 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
   );
 }
 
+/** Exactly what is not yet known about a signal — shown, never guessed. */
+function MissingInfo({ s }: { s: StealthSignal }) {
+  const missing: string[] = [];
+  if (s.possibleVertical === 'Unknown') missing.push('Suspected vertical');
+  if (s.suspectedGeography === 'Unknown') missing.push('Suspected geography');
+  if (s.possibleTheme === 'Unknown') missing.push('Product theme');
+  if (s.previousRole === 'Unknown') missing.push('Previous role');
+  if (s.previousEmployer === 'Unknown') missing.push('Previous employer');
+  if (s.verificationStatus !== 'Verified') missing.push('Verification of the underlying signal');
+  if (missing.length === 0) return null;
+  return (
+    <p className="mt-1 text-[11px] text-slate-mid">
+      <em>Missing information:</em> {missing.join(' · ')}
+    </p>
+  );
+}
+
 function HypothesisView({ h }: { h: FounderHypothesis }) {
   return (
     <div className="mt-2 rounded-sm border border-alerta/40 bg-alerta-soft p-2 text-xs">
@@ -234,6 +241,7 @@ function AddSignalForm({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const [sourceName, setSourceName] = useState('');
   const [evidenceSummary, setEvidenceSummary] = useState('');
   const [possibleVertical, setPossibleVertical] = useState('Unknown');
+  const [suspectedGeography, setSuspectedGeography] = useState('');
   const [confidence, setConfidence] = useState<'Low' | 'Medium' | 'High'>('Low');
   const [alt, setAlt] = useState('');
   const [err, setErr] = useState<string | null>(null);
@@ -254,6 +262,7 @@ function AddSignalForm({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         sourceUrl,
         dateAccessed: today,
         possibleVertical: possibleVertical as StealthSignal['possibleVertical'],
+        suspectedGeography: suspectedGeography.trim() || 'Unknown',
         possibleTheme: 'Unknown',
         evidenceSummary,
         confidence,
@@ -291,6 +300,7 @@ function AddSignalForm({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <input className={input} placeholder="Source name (e.g. conference bio, public GitHub)" value={sourceName} onChange={(e) => setSourceName(e.target.value)} />
           <textarea className={input} rows={2} placeholder="Evidence summary * — what the source actually says" value={evidenceSummary} onChange={(e) => setEvidenceSummary(e.target.value)} />
           <textarea className={input} rows={2} placeholder="Alternative explanation (kept alongside the signal)" value={alt} onChange={(e) => setAlt(e.target.value)} />
+          <input className={input} placeholder="Suspected geography (city, state — leave empty if unknown)" value={suspectedGeography} onChange={(e) => setSuspectedGeography(e.target.value)} />
           <div className="grid grid-cols-2 gap-2">
             <select className={input} value={possibleVertical} onChange={(e) => setPossibleVertical(e.target.value)}>
               {['Unknown', 'health', 'fintech', 'fow', 'sustainability', 'aoi'].map((v) => <option key={v}>{v}</option>)}
@@ -305,67 +315,6 @@ function AddSignalForm({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <button onClick={onClose} className="rounded-sm border border-line px-3 py-1.5 text-sm">Cancel</button>
           <button onClick={save} className="rounded-sm bg-verde px-3 py-1.5 text-sm font-semibold text-white">Save signal</button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Bundled sample watchlist (Phase 1 feature, preserved) ───────
-
-function BundledWatchlist() {
-  const founders = useMemo(loadStealthFounders, []);
-  const [vertical, setVertical] = useState<'all' | VerticalId>('all');
-  const rows = founders
-    .filter((f) => vertical === 'all' || f.likelyVertical === vertical)
-    .sort((a, b) => ORDER[a.confidence] - ORDER[b.confidence]);
-
-  return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <select
-          value={vertical}
-          onChange={(e) => setVertical(e.target.value as 'all' | VerticalId)}
-          className="rounded-sm border border-line bg-panel px-2 py-1.5 text-xs"
-          aria-label="Filter by likely vertical"
-        >
-          <option value="all">All likely verticals</option>
-          {(['health', 'fintech', 'fow', 'sustainability', 'aoi'] as VerticalId[]).map((v) => (
-            <option key={v} value={v}>{verticalById(v).name}</option>
-          ))}
-        </select>
-        <span className="ml-auto font-mono text-[11px] text-slate-mid">{rows.length} founder(s) on sample watchlist</span>
-      </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        {rows.map((f) => (
-          <article key={f.id} className="rounded-md border border-line bg-panel p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-display text-base font-bold">{f.name}</h2>
-                <p className="text-xs text-slate-mid">{f.lastKnownRole}</p>
-              </div>
-              <ConfidenceMeter level={f.confidence} />
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-              <span className="rounded-sm bg-marigold-soft px-1.5 py-0.5 font-mono text-[11px] font-semibold text-marigold">
-                {verticalById(f.likelyVertical).short} · {f.likelyFocus}
-              </span>
-              <span className="text-slate-mid">{f.city}, {f.state}</span>
-            </div>
-            <div className="mt-2"><IdentityChips founders={[f]} /></div>
-            <h3 className="mb-1 mt-3 font-mono text-[10px] uppercase tracking-widest text-slate-mid">
-              Signals ({f.signals.length})
-            </h3>
-            <ul className="space-y-1.5">
-              {f.signals.map((s) => (
-                <li key={s.url} className="text-xs">
-                  <span className="text-ink">{s.signal}</span>{' '}
-                  <a href={s.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{s.source}</a>{' '}
-                  <span className="font-mono text-[10px] text-slate-mid">{s.date}</span>
-                </li>
-              ))}
-            </ul>
-          </article>
-        ))}
       </div>
     </div>
   );

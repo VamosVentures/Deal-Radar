@@ -2,6 +2,13 @@ import { z } from 'zod';
 import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { portfolioCompanySchema } from '../../shared/integrations';
+import {
+  addPossibleDuplicate, clearCompanies, listCompanies, matchRecords, saveCompany,
+} from '../db/repos/companies';
+import { saveScore } from '../db/repos/operations';
+import { matchCompany } from '../sourcing/identity';
+import { scoreCompany } from '../../src/lib/scoring';
+import type { Company } from '../../src/types';
 
 /**
  * Local CSV import. Rows pass the SAME guardrails as bundled data:
@@ -41,6 +48,11 @@ export const importedCompanySchema = z.object({
     type: z.enum(EVIDENCE_TYPES),
   })).min(1, 'Every imported company needs at least one sourced evidence item'),
   flags: z.array(z.enum(['defi-adjacent', 'hardware-heavy', 'outside-thesis'])).default([]),
+  /** Recorded facts only — absent means unknown, never guessed. */
+  raising: z.string().min(1).optional(),
+  accelerator: z.string().min(1).optional(),
+  lastFundingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  lastRefreshed: z.string().optional(),
   imported: z.literal(true).default(true),
 });
 export type ImportedCompany = z.infer<typeof importedCompanySchema>;
@@ -84,11 +96,13 @@ export interface ImportReport {
   imported: number;
   skipped: { row: number; issues: string[] }[];
   total: number;
+  /** Rows imported but flagged as possible duplicates awaiting human review. */
+  possibleDuplicates: number;
 }
 
 export function importCompaniesCsv(csvText: string): ImportReport {
   const rows = parseCsv(csvText);
-  const report: ImportReport = { imported: 0, skipped: [], total: rows.length };
+  const report: ImportReport = { imported: 0, skipped: [], total: rows.length, possibleDuplicates: 0 };
   // Identity/demographic columns are refused outright — see module docs.
   const forbidden = ['identity', 'latinoLed', 'femaleLed', 'demographics', 'ethnicity', 'gender', 'race'];
   const header = rows[0] ? Object.keys(rows[0]) : [];
@@ -113,6 +127,9 @@ export function importCompaniesCsv(csvText: string): ImportReport {
       foundedYear: row.foundedYear,
       teamSize: row.teamSize,
       website: row.website || undefined,
+      raising: row.raising || undefined,
+      accelerator: row.accelerator || undefined,
+      lastFundingDate: row.lastFundingDate || undefined,
       traction: { level: row.tractionLevel, note: row.tractionNote },
       founders: [{ name: row.founderName, role: row.founderRole, background: row.founderBackground }],
       evidence: [{
@@ -130,16 +147,33 @@ export function importCompaniesCsv(csvText: string): ImportReport {
       });
       return;
     }
-    // Upsert by id so re-importing the same file doesn't duplicate.
-    store.raw.importedCompanies = [
-      ...store.raw.importedCompanies.filter((c) => (c as { id?: string }).id !== parsed.data.id),
-      parsed.data,
-    ];
+    // Deduplicate against everything already persisted. Exact matches
+    // (domain / external id / hubspot id / normalized name) update the
+    // existing record; possible matches import as NEW records and open
+    // a possible-duplicate review item — never auto-merged.
+    const match = matchCompany(
+      { name: parsed.data.name, domain: parsed.data.website ?? null },
+      matchRecords(),
+    );
+    const record = match.kind === 'exact' && match.record
+      ? { ...parsed.data, id: match.record.id }
+      : parsed.data;
+    saveCompany(record, { origin: 'user-entered', source: 'local-csv', reviewStatus: 'New' });
+    saveScore(record.id, scoreCompany(record as unknown as Company), record.evidence.map((e) => e.url));
+    if (match.kind === 'possible' && match.record) {
+      addPossibleDuplicate({
+        companyId: record.id,
+        otherCompanyId: match.record.id,
+        matchedBy: match.matchedBy!,
+        similarity: match.similarity,
+        detail: `CSV row "${record.name}" resembles existing "${match.record.name}" (${match.matchedBy}, similarity ${match.similarity.toFixed(2)}). Review before treating them as one company.`,
+      });
+      report.possibleDuplicates += 1;
+    }
     report.imported += 1;
   });
-  store.save();
   audit({
-    provider: 'system', mode: 'mock', action: 'csv-import', subject: 'local-csv',
+    provider: 'system', mode: 'local', action: 'csv-import', subject: 'local-csv',
     outcome: report.skipped.length === 0 ? 'ok' : 'blocked',
     detail: `${report.imported}/${report.total} rows imported; ${report.skipped.length} rejected by validation`,
   });
@@ -147,19 +181,18 @@ export function importCompaniesCsv(csvText: string): ImportReport {
 }
 
 export function importedCompanies(): ImportedCompany[] {
-  return z.array(importedCompanySchema).catch([]).parse(store.raw.importedCompanies);
+  return listCompanies();
 }
 
 export function clearImportedCompanies(): void {
-  store.raw.importedCompanies = [];
-  store.save();
+  clearCompanies();
 }
 
 export function savePortfolio(raw: unknown): { count: number } {
   const portfolio = z.array(portfolioCompanySchema).min(1).parse(raw);
   store.raw.portfolio = portfolio;
   store.save();
-  audit({ provider: 'system', mode: 'mock', action: 'portfolio-upload', subject: 'local-portfolio', outcome: 'ok', detail: `${portfolio.length} portfolio companies loaded` });
+  audit({ provider: 'system', mode: 'local', action: 'portfolio-upload', subject: 'local-portfolio', outcome: 'ok', detail: `${portfolio.length} portfolio companies loaded` });
   return { count: portfolio.length };
 }
 

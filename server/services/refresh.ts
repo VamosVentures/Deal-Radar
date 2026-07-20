@@ -1,9 +1,11 @@
 import { z } from 'zod';
-import { modes } from '../env';
-import { store, type ConnectorState, type RefreshLogEntry } from '../lib/store';
+import { aiConfigured } from '../env';
+import { store, type RefreshLogEntry } from '../lib/store';
 import { audit } from '../lib/guard';
-import { fetchWithTimeout } from '../lib/http';
-import { hubspotMode, hubspotService } from './hubspot';
+import { companyMetaView, listCompanies, markRefreshed } from '../db/repos/companies';
+import { getConfig, setConfig } from '../db/repos/operations';
+import { fetchWithTimeout, isSafeExternalUrlResolved } from '../lib/http';
+import { hubspotServiceIfAvailable } from './hubspot';
 import { outlookService } from './outlook';
 import { verifyAiConnection } from './analysis';
 
@@ -27,8 +29,8 @@ export interface ConnectorMeta {
 }
 
 export const CONNECTORS: ConnectorMeta[] = [
-  { id: 'hubspot', name: 'HubSpot CRM', what: 'Verifies the CRM connection and counts synced Deal Radar records.', needs: 'HUBSPOT_ACCESS_TOKEN or a completed HubSpot OAuth connection (live). None for Local Mode.', setup: 'Data Sources → Integrations → HubSpot. Private app: set HUBSPOT_ACCESS_TOKEN. OAuth: set HUBSPOT_CLIENT_ID/SECRET/REDIRECT_URI and click Connect.', kind: 'integration' },
-  { id: 'outlook', name: 'Microsoft Outlook', what: 'Verifies the mailbox connection and checks statuses of drafts this app created.', needs: 'MICROSOFT_CLIENT_ID/SECRET/REDIRECT_URI + SESSION_SECRET and a completed sign-in (live). None for Local Mode.', setup: 'Data Sources → Integrations → Outlook → Connect Outlook.', kind: 'integration' },
+  { id: 'hubspot', name: 'HubSpot CRM', what: 'Verifies the CRM connection and counts synced Deal Radar records.', needs: 'HUBSPOT_ACCESS_TOKEN or a completed HubSpot OAuth connection. Fails honestly when not connected.', setup: 'Data Sources → Integrations → HubSpot. Private app: set HUBSPOT_ACCESS_TOKEN. OAuth: set HUBSPOT_CLIENT_ID/SECRET/REDIRECT_URI and click Connect.', kind: 'integration' },
+  { id: 'outlook', name: 'Microsoft Outlook', what: 'Verifies the mailbox connection and checks statuses of drafts this app created.', needs: 'MICROSOFT_CLIENT_ID/SECRET/REDIRECT_URI + SESSION_SECRET and a completed sign-in. Fails honestly when not connected.', setup: 'Data Sources → Integrations → Outlook → Connect Outlook.', kind: 'integration' },
   { id: 'ai', name: 'AI provider', what: 'Verifies the model API key used for outreach drafts and fit analysis.', needs: 'AI_PROVIDER + an API key (AI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY). None for local templates.', setup: 'Set the provider variables in .env; the local template generator needs nothing.', kind: 'integration' },
   { id: 'local-csv', name: 'Local CSV import', what: 'Imports companies from an uploaded CSV through the same validation guardrails as bundled data.', needs: 'Nothing — fully local.', setup: 'Upload a CSV on this card. Columns: name,oneLiner,vertical,subcategory,stage,city,state,foundedYear,teamSize,tractionLevel,tractionNote,founderName,founderRole,founderBackground,evidenceClaim,evidenceSource,evidenceUrl,evidenceDate,evidenceType.', kind: 'local' },
   { id: 'local-portfolio', name: 'Local portfolio file', what: 'Loads the fund portfolio (JSON) used by the AI portfolio-comparison analysis.', needs: 'Nothing — fully local.', setup: 'Upload a JSON array of {name, vertical, stage, status} on this card.', kind: 'local' },
@@ -38,10 +40,31 @@ export const CONNECTORS: ConnectorMeta[] = [
   { id: 'sec', name: 'SEC public data', what: 'Checks SEC EDGAR full-text search availability for Form D filings.', needs: 'Outbound network access to efts.sec.gov (SEC requires a User-Agent).', setup: 'Enable and run. Public filings only.', kind: 'public' },
 ];
 
+export const connectorStateSchema = z.object({
+  id: z.string(),
+  enabled: z.boolean(),
+  lastSyncAt: z.string().nullable(),
+  lastSyncMode: z.enum(['live', 'local', 'simulated', 'failed']).nullable(),
+  recordsImported: z.number(),
+  lastError: z.string().nullable(),
+});
+export type ConnectorState = z.infer<typeof connectorStateSchema>;
+
+const CONNECTOR_STATE_KEY = 'connector-state';
+const connectorStatesSchema = z.record(z.string(), connectorStateSchema);
+
+function allConnectorStates(): Record<string, ConnectorState> {
+  return getConfig(CONNECTOR_STATE_KEY, connectorStatesSchema, {});
+}
+
+function saveConnectorState(state: ConnectorState): void {
+  setConfig(CONNECTOR_STATE_KEY, { ...allConnectorStates(), [state.id]: state });
+}
+
 export function connectorState(id: string): ConnectorState {
-  const existing = store.raw.connectors[id];
+  const existing = allConnectorStates()[id];
   if (existing) return existing;
-  const fresh: ConnectorState = {
+  return {
     id,
     enabled: id === 'hubspot' || id === 'outlook' || id === 'ai' || id === 'local-csv' || id === 'local-portfolio',
     lastSyncAt: null,
@@ -49,8 +72,6 @@ export function connectorState(id: string): ConnectorState {
     recordsImported: 0,
     lastError: null,
   };
-  store.raw.connectors[id] = fresh;
-  return fresh;
 }
 
 export function listConnectors() {
@@ -58,9 +79,8 @@ export function listConnectors() {
 }
 
 export function setConnectorEnabled(id: string, enabled: boolean): ConnectorState {
-  const s = connectorState(id);
-  s.enabled = enabled;
-  store.save();
+  const s = { ...connectorState(id), enabled };
+  saveConnectorState(s);
   return s;
 }
 
@@ -83,40 +103,42 @@ export interface RefreshScope {
 
 const RUNNERS: Record<string, Runner> = {
   hubspot: async () => {
-    const live = hubspotMode() === 'live';
-    const verify = await hubspotService().verifyConnection();
+    const svc = hubspotServiceIfAvailable();
+    if (!svc) {
+      return { connector: 'hubspot', mode: 'failed', records: 0, detail: 'This integration is not connected. Add HubSpot credentials to .env to sync.' };
+    }
+    const verify = await svc.verifyConnection();
     if (!verify.ok) return { connector: 'hubspot', mode: 'failed', records: 0, detail: verify.detail };
-    const records = Object.values(store.raw.outreach).filter((r) => r.hubspotCompanyId).length;
+    const records = Object.values(companyMetaView()).filter((m) => m.hubspotCompanyId).length;
     return {
       connector: 'hubspot',
-      mode: live ? 'live' : 'simulated',
+      mode: svc.mode === 'live' ? 'live' : 'simulated', // 'simulated' only occurs via test fixtures
       records,
-      detail: live
-        ? `Connection verified; ${records} tracked record(s) have HubSpot ids.`
-        : `Local Mode: simulated store checked; ${records} tracked record(s) have simulated HubSpot ids.`,
+      detail: `Connection verified; ${records} tracked record(s) have HubSpot ids.`,
     };
   },
   outlook: async () => {
     const svc = outlookService();
+    if (svc.mode === 'disconnected') {
+      return { connector: 'outlook', mode: 'failed', records: 0, detail: 'This integration is not connected. Add Microsoft credentials to .env to check drafts.' };
+    }
     const verify = await svc.verifyConnection();
     if (!verify.ok) return { connector: 'outlook', mode: 'failed', records: 0, detail: verify.detail };
     const drafts = store.raw.drafts.length;
     return {
       connector: 'outlook',
-      mode: svc.mode === 'live' ? 'live' : 'simulated',
+      mode: svc.mode === 'live' ? 'live' : 'simulated', // 'simulated' only occurs via test fixtures
       records: drafts,
-      detail: svc.mode === 'live'
-        ? `Connection verified; ${drafts} draft(s) created by this app are on record.`
-        : `Local Mode: simulated mailbox checked; ${drafts} simulated draft(s) on record.`,
+      detail: `Connection verified; ${drafts} draft(s) created by this app are on record.`,
     };
   },
   ai: async () => {
     const verify = await verifyAiConnection();
     if (!verify.ok) return { connector: 'ai', mode: 'failed', records: 0, detail: verify.detail };
-    return { connector: 'ai', mode: modes.ai() === 'live' ? 'live' : 'local', records: 0, detail: verify.detail };
+    return { connector: 'ai', mode: aiConfigured() ? 'live' : 'local', records: 0, detail: verify.detail };
   },
   'local-csv': async () => {
-    const n = store.raw.importedCompanies.length;
+    const n = listCompanies().length;
     return { connector: 'local-csv', mode: 'local', records: n, detail: `${n} imported compan${n === 1 ? 'y' : 'ies'} on record (validated at upload time).` };
   },
   'local-portfolio': async () => {
@@ -124,14 +146,20 @@ const RUNNERS: Record<string, Runner> = {
     return { connector: 'local-portfolio', mode: 'local', records: n, detail: n > 0 ? `${n} portfolio compan${n === 1 ? 'y' : 'ies'} loaded.` : 'No portfolio file uploaded yet.' };
   },
   websites: async (scope) => {
-    // HEAD-check recorded websites; sample data uses fictional domains,
-    // so failures here are expected and reported honestly.
+    // HEAD-check recorded websites. Stored URLs are not fully trusted:
+    // reject anything that isn't a plain public http(s) host, checked
+    // by literal AND by resolved address (SSRF guard) — rejected
+    // entries are reported, not fetched.
     const sites = scopedCompanyWebsites(scope);
     if (sites.length === 0) return { connector: 'websites', mode: 'local', records: 0, detail: 'No recorded websites in scope.' };
     const cap = Math.min(scope.maxRecords, 10);
     let ok = 0;
     const failures: string[] = [];
     for (const site of sites.slice(0, cap)) {
+      if (!(await isSafeExternalUrlResolved(site))) {
+        failures.push(`${site} → refused (not a public http(s) address)`);
+        continue;
+      }
       try {
         const res = await fetchWithTimeout(site, { method: 'HEAD' }, 5000);
         if (res.ok) ok += 1;
@@ -180,10 +208,8 @@ const RUNNERS: Record<string, Runner> = {
 };
 
 function scopedCompanyWebsites(scope: RefreshScope): string[] {
-  // Websites recorded on tracked outreach records + imported companies.
-  const imported = z.array(z.object({ id: z.string().optional(), website: z.string().optional() }).loose())
-    .catch([]).parse(store.raw.importedCompanies);
-  const sites = imported.map((c) => c.website).filter((w): w is string => !!w);
+  // Websites recorded on persisted companies.
+  const sites = listCompanies().map((c) => c.website).filter((w): w is string => !!w);
   void scope;
   return Array.from(new Set(sites));
 }
@@ -223,20 +249,19 @@ export async function runRefresh(rawReq: unknown): Promise<RefreshLogEntry> {
       result = { connector: meta.id, mode: 'failed', records: 0, detail: (e as Error).message };
     }
     results.push(result);
-    const state = connectorState(meta.id);
-    state.lastSyncAt = new Date().toISOString();
-    state.lastSyncMode = result.mode;
-    state.recordsImported = result.records;
-    state.lastError = result.mode === 'failed' ? result.detail : null;
+    saveConnectorState({
+      ...connectorState(meta.id),
+      lastSyncAt: new Date().toISOString(),
+      lastSyncMode: result.mode,
+      recordsImported: result.records,
+      lastError: result.mode === 'failed' ? result.detail : null,
+    });
   }
 
-  // Update verification dates for in-scope tracked companies (bundled
-  // sample data is read-only; the refresh date lives in companyMeta).
+  // Stamp verification dates on in-scope persisted companies.
   const today = new Date().toISOString().slice(0, 10);
-  const trackedIds = (req.companyIds ?? Object.keys(store.raw.outreach)).slice(0, req.maxRecords);
-  for (const id of trackedIds) {
-    store.raw.companyMeta[id] = { ...store.raw.companyMeta[id], lastRefreshed: today };
-  }
+  const trackedIds = (req.companyIds ?? listCompanies().map((c) => c.id)).slice(0, req.maxRecords);
+  markRefreshed(trackedIds, today);
 
   const anyFailed = results.some((r) => r.mode === 'failed');
   const allFailed = results.length > 0 && results.every((r) => r.mode === 'failed');
@@ -252,7 +277,7 @@ export async function runRefresh(rawReq: unknown): Promise<RefreshLogEntry> {
   store.raw.refreshLog = store.raw.refreshLog.slice(0, 50);
   store.save();
   audit({
-    provider: 'system', mode: 'mock', action: 'refresh',
+    provider: 'system', mode: 'local', action: 'refresh',
     subject: entry.scope, outcome: entry.status === 'ok' ? 'ok' : entry.status === 'failed' ? 'error' : 'blocked',
     detail: `${results.length} connector(s): ${results.map((r) => `${r.connector}=${r.mode}`).join(', ')}${cancelled ? ' (cancelled)' : ''}`,
   });

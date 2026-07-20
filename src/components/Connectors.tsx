@@ -10,7 +10,7 @@ import { btnGhost, btnPrimary, ErrorNote } from './Modal';
  * requirements, setup instructions, and last error. Refreshes run
  * only when manually triggered — schedules are configuration only
  * (this backend has no job runner), and the log distinguishes
- * live / local / simulated / failed work per connector.
+ * live / local / failed work per connector.
  */
 export function ConnectorPanel() {
   const [connectors, setConnectors] = useState<ConnectorInfo[]>([]);
@@ -77,8 +77,8 @@ export function ConnectorPanel() {
       </div>
       <p className="mb-3 max-w-3xl text-xs text-slate-mid">
         Refreshes run only when you trigger them — there is no background scheduler in this backend, so the per-connector
-        schedule below is stored as configuration only. Each run reports per-connector results as live, local, simulated,
-        or failed; one failing connector never discards the others&rsquo; work.
+        schedule below is stored as configuration only. Each run reports per-connector results as live, local, or failed —
+        integrations that are not connected fail honestly; one failing connector never discards the others&rsquo; work.
       </p>
 
       <div className="mb-4 flex flex-wrap items-end gap-3 rounded-md border border-line bg-panel px-3 py-2.5 text-xs">
@@ -90,7 +90,7 @@ export function ConnectorPanel() {
             <option value="fintech">FinTech</option>
             <option value="fow">Future of Work</option>
             <option value="sustainability">Sustainability</option>
-            <option value="aoi">Areas of Interest</option>
+            <option value="aoi">Other Industries</option>
           </select>
         </label>
         <label className="flex flex-col gap-1">
@@ -241,7 +241,7 @@ function CsvUpload({ onDone }: { onDone: () => Promise<void> }) {
       {report && <p className="mt-1.5 text-[11px] text-slate-mid">{report}</p>}
       {error && <div className="mt-1.5"><ErrorNote message={error.message} issues={error.issues} /></div>}
       <p className="mt-1.5 text-[10px] leading-relaxed text-slate-mid">
-        Rows pass the same guardrails as bundled data (sourced evidence required). Identity/demographic columns are
+        Rows pass the same validation guardrails as every other source (sourced evidence required). Identity/demographic columns are
         refused — those fields require verified sources and can&rsquo;t come from a bulk file.
       </p>
     </div>

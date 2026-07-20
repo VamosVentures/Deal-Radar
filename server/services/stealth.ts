@@ -16,77 +16,28 @@ import {
  * languages, or networks to infer sensitive traits.
  */
 
-const today = () => new Date().toISOString().slice(0, 10);
-
-const SEEDED: Omit<StealthSignal, 'id'>[] = [
-  {
-    founderName: 'J. Almeida (fictional)',
-    previousRole: 'Staff engineer, payments team',
-    previousEmployer: 'Large fintech (simulated)',
-    knownSkills: ['payments infrastructure', 'ledger systems'],
-    priorStartups: [],
-    education: 'Unknown',
-    signalType: 'New GitHub organization/repository',
-    signalDate: '2026-06-20',
-    sourceName: 'Simulated: GitHub public activity',
-    sourceUrl: 'https://example.com/sim/github/almeida-labs',
-    dateAccessed: today(),
-    possibleVertical: 'fintech',
-    possibleTheme: 'ledger tooling',
-    evidenceSummary: 'Simulated fixture: new public org "almeida-labs" with two ledger-related repositories created in June 2026.',
-    confidence: 'Medium',
-    verificationStatus: 'Not verified',
-    alternativeExplanation: 'Could be a personal side project or open-source contribution unrelated to a company.',
-    suggestedNextStep: 'Watch repo activity for org growth; check for a public company announcement before any outreach.',
-    assignedTo: null,
-    outreachStatus: 'None',
-    simulated: true,
-  },
-  {
-    founderName: 'S. Quintero (fictional)',
-    previousRole: 'Clinical operations lead',
-    previousEmployer: 'Regional health system (simulated)',
-    knownSkills: ['care coordination', 'clinical ops'],
-    priorStartups: ['One prior founded company (simulated bio)'],
-    education: 'Unknown',
-    signalType: 'Public bio states building/founder/stealth',
-    signalDate: '2026-07-01',
-    sourceName: 'Simulated: conference speaker bio',
-    sourceUrl: 'https://example.com/sim/conf/quintero',
-    dateAccessed: today(),
-    possibleVertical: 'health',
-    possibleTheme: 'care navigation',
-    evidenceSummary: 'Simulated fixture: public speaker bio reads "building something new in care navigation".',
-    confidence: 'High',
-    verificationStatus: 'Not verified',
-    alternativeExplanation: 'The phrase may describe an internal initiative at the current employer rather than a new company.',
-    suggestedNextStep: 'Look for an incorporation filing or website; verify the bio is current.',
-    assignedTo: null,
-    outreachStatus: 'Research queue',
-    simulated: true,
-  },
-];
-
+/**
+ * No seeded or simulated signals: the feed starts empty and only ever
+ * contains records from authorized sources or explicit user entry.
+ * Any legacy simulated records left over from earlier builds are
+ * filtered out on read.
+ */
 export function listSignals(): StealthSignal[] {
-  let signals = z.array(stealthSignalSchema).catch([]).parse(store.raw.stealthSignals);
-  if (signals.length === 0 && store.raw.stealthSignals.length === 0) {
-    signals = SEEDED.map((s) => ({ ...s, id: store.nextId('sig') }));
-    store.raw.stealthSignals = signals;
-    store.save();
-  }
-  return signals;
+  return z
+    .array(stealthSignalSchema)
+    .catch([])
+    .parse(store.raw.stealthSignals)
+    .filter((s) => !s.simulated);
 }
 
-const signalInputSchema = stealthSignalSchema.omit({ id: true }).extend({
-  simulated: z.boolean().default(false), // manual entries are real user-provided records
-});
+const signalInputSchema = stealthSignalSchema.omit({ id: true, simulated: true });
 
 export function addSignal(raw: unknown): StealthSignal {
   const parsed = signalInputSchema.parse(raw);
-  const signal: StealthSignal = { ...parsed, id: store.nextId('sig') };
+  const signal: StealthSignal = { ...parsed, simulated: false, id: store.nextId('sig') };
   store.raw.stealthSignals = [...listSignals(), signal];
   store.save();
-  audit({ provider: 'system', mode: 'mock', action: 'stealth-signal-add', subject: signal.id, outcome: 'ok', detail: `${signal.signalType} — source ${signal.sourceName}` });
+  audit({ provider: 'system', mode: 'local', action: 'stealth-signal-add', subject: signal.id, outcome: 'ok', detail: `${signal.signalType} — source ${signal.sourceName}` });
   return signal;
 }
 
@@ -169,6 +120,6 @@ export function generateHypothesis(signalId: string): FounderHypothesis {
     missingInformation: missing,
     demo: true, // deterministic template — no model call
   });
-  audit({ provider: 'system', mode: 'mock', action: 'stealth-hypothesis', subject: signalId, outcome: 'ok', detail: `band ${inp.confidence}; labeled hypothesis/unverified/requires-human-review` });
+  audit({ provider: 'system', mode: 'local', action: 'stealth-hypothesis', subject: signalId, outcome: 'ok', detail: `band ${inp.confidence}; labeled hypothesis/unverified/requires-human-review` });
   return hypothesis;
 }

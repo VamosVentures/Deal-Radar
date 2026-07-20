@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '../lib/store';
 import { buildDraftPayload, outlookService } from '../services/outlook';
+import { MockOutlook } from './mocks/outlook';
 
 beforeEach(() => store.resetForTests());
 
@@ -33,30 +34,45 @@ describe('Outlook draft payload', () => {
   });
 });
 
-describe('mock Outlook', () => {
-  it('requires a connection before creating a draft (failed auth)', async () => {
+describe('production path (not configured)', () => {
+  it('reports an honest not-connected status and refuses drafts', async () => {
     const svc = outlookService();
+    expect(svc.mode).toBe('disconnected');
+    const status = await svc.status();
+    expect(status.connected).toBe(false);
+    expect(status.detail).toMatch(/not connected/i);
+    await expect(
+      svc.createDraft({ to: 'a@b.co', subject: 'Hello', body: 'Body text' }),
+    ).rejects.toMatchObject({ status: 503 });
+    const conn = await svc.beginConnect();
+    expect(conn.authUrl).toBeNull();
+    expect(conn.message).toMatch(/not configured/i);
+  });
+});
+
+describe('fixture Outlook (tests only)', () => {
+  it('requires a connection before creating a draft (failed auth)', async () => {
+    const svc = new MockOutlook();
     await expect(
       svc.createDraft({ to: 'a@b.co', subject: 'Hello', body: 'Body text' }),
     ).rejects.toMatchObject({ status: 401 });
   });
 
-  it('simulates connect + draft and labels it Demo Mode', async () => {
-    const svc = outlookService();
+  it('simulates connect + draft and labels it as a fixture', async () => {
+    const svc = new MockOutlook();
     const conn = await svc.beginConnect();
-    expect(conn.demo).toBe(true);
-    expect(conn.message).toContain('Demo Mode');
+    expect(conn.message).toContain('Test fixture');
     expect(conn.message.toLowerCase()).toContain('no real');
     const draft = await svc.createDraft({ to: 'a@b.co', subject: 'Hello', body: 'Body text' });
     expect(draft.demo).toBe(true);
     expect(draft.webLink).toBeNull(); // no fake Outlook links
     const status = await svc.status();
     expect(status.connected).toBe(true);
-    expect(status.account).toContain('demo');
+    expect(status.account).toContain('test-fixture');
   });
 
   it('disconnect removes the simulated connection', async () => {
-    const svc = outlookService();
+    const svc = new MockOutlook();
     await svc.beginConnect();
     await svc.disconnect();
     expect((await svc.status()).connected).toBe(false);
@@ -66,7 +82,6 @@ describe('mock Outlook', () => {
 describe('live Outlook token handling (no network — fails before any request)', () => {
   async function liveOutlook() {
     vi.resetModules();
-    process.env.INTEGRATION_MODE = 'auto';
     process.env.MICROSOFT_CLIENT_ID = 'test-client';
     process.env.MICROSOFT_CLIENT_SECRET = 'test-secret';
     process.env.MICROSOFT_REDIRECT_URI = 'http://localhost:8787/api/outlook/callback';
@@ -95,8 +110,7 @@ describe('live Outlook token handling (no network — fails before any request)'
     await expect(
       svc.createDraft({ to: 'a@b.co', subject: 'Hello', body: 'Body' }),
     ).rejects.toThrow(/reconnect/i);
-    // restore mock env for other suites
-    process.env.INTEGRATION_MODE = 'mock';
+    // restore env for other suites
     delete process.env.MICROSOFT_CLIENT_ID;
     delete process.env.MICROSOFT_CLIENT_SECRET;
     delete process.env.MICROSOFT_REDIRECT_URI;
@@ -105,7 +119,6 @@ describe('live Outlook token handling (no network — fails before any request)'
 
   it('rejects an OAuth callback with an unknown state', async () => {
     vi.resetModules();
-    process.env.INTEGRATION_MODE = 'auto';
     process.env.MICROSOFT_CLIENT_ID = 'test-client';
     process.env.MICROSOFT_CLIENT_SECRET = 'test-secret';
     process.env.MICROSOFT_REDIRECT_URI = 'http://localhost:8787/api/outlook/callback';
@@ -115,7 +128,6 @@ describe('live Outlook token handling (no network — fails before any request)'
     storeMod.store.resetForTests();
     await expect(mod.outlookService().handleCallback('code', 'forged-state'))
       .rejects.toThrow(/state is invalid or expired/i);
-    process.env.INTEGRATION_MODE = 'mock';
     delete process.env.MICROSOFT_CLIENT_ID;
     delete process.env.MICROSOFT_CLIENT_SECRET;
     delete process.env.MICROSOFT_REDIRECT_URI;

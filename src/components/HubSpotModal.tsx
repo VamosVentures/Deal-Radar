@@ -5,7 +5,7 @@ import { companyToHubSpot, dealToHubSpot, founderToHubSpot, recommendationFor } 
 import { api, ApiError } from '../lib/api';
 import { useIntegrations } from '../store/integrations';
 import { ExceptionBadge, ScoreGauge } from './ui';
-import { btnGhost, btnPrimary, DemoBadge, ErrorNote, Field, Modal } from './Modal';
+import { btnGhost, btnPrimary, ErrorNote, Field, Modal } from './Modal';
 import {
   normalizeDomain,
   RADAR_HUBSPOT_STAGES,
@@ -40,7 +40,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
   const [matches, setMatches] = useState<DuplicateMatch[]>([]);
   const [result, setResult] = useState<SyncResult | null>(null);
 
-  const demo = status?.hubspot.mode !== 'live';
+  const hubspotNotConnected = status ? status.hubspot.mode !== 'live' : false;
 
   const setCompanyField = (k: keyof typeof company) => (v: string) =>
     setCompany((prev) => ({ ...prev, [k]: v || null }));
@@ -49,7 +49,12 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
     setBusy(true);
     setError(null);
     try {
-      const { matches } = await api.hubspot.checkDuplicate(company.name, company.domain);
+      const { matches } = await api.hubspot.checkDuplicate({
+        name: company.name,
+        domain: company.domain,
+        founderEmails: contacts.map((ct) => ct.email).filter((e): e is string => !!e),
+        dealRadarId: c.id,
+      });
       setMatches(matches);
       if (matches.length === 0) {
         await submit('create-new', null);
@@ -67,11 +72,11 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
     setBusy(true);
     setError(null);
     try {
+      const reviewer = owner === 'Unassigned' ? null : owner;
+      const base = dealToHubSpot(c, reviewer, nextAction, reviewer);
       const deal = {
-        ...dealToHubSpot(c, owner === 'Unassigned' ? null : owner, nextAction),
-        rationale: notes
-          ? `${notes} — ${dealToHubSpot(c, null, nextAction).rationale}`
-          : dealToHubSpot(c, null, nextAction).rationale,
+        ...base,
+        rationale: notes ? `${notes} — ${base.rationale}` : base.rationale,
       };
       const res = await api.hubspot.syncCompany({
         company: { ...company, domain: normalizeDomain(company.website) },
@@ -107,10 +112,14 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
               <div className="text-sm font-semibold">{recommendationFor(fit.score)}</div>
               <div className="text-xs text-slate-mid">Vamos Fit Score {fit.score.toFixed(1)} / 10 · {c.stage} · {c.city}, {c.state}</div>
             </div>
-            <div className="ml-auto flex items-center gap-2">
-              <DemoBadge show={demo} />
-            </div>
           </div>
+
+          {hubspotNotConnected && (
+            <ErrorNote
+              message="This integration is not connected."
+              hint="Add HubSpot credentials to the backend .env (see .env.example), then reload. Nothing can sync until then."
+            />
+          )}
 
           {fit.exceptions.length > 0 && (
             <div className="space-y-1.5">
@@ -203,8 +212,8 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
 
           <footer className="flex items-center justify-end gap-2 border-t border-line pt-3">
             <button className={btnGhost} onClick={onClose}>Cancel</button>
-            <button className={btnPrimary} onClick={runDuplicateCheck} disabled={busy || !company.name.trim()}>
-              {busy ? 'Checking for duplicates…' : demo ? 'Check duplicates & add (Demo Mode)' : 'Check duplicates & add to HubSpot'}
+            <button className={btnPrimary} onClick={runDuplicateCheck} disabled={busy || !company.name.trim() || hubspotNotConnected}>
+              {busy ? 'Checking for duplicates…' : 'Check duplicates & add to HubSpot'}
             </button>
           </footer>
         </div>
@@ -226,7 +235,6 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                     {m.domain ?? 'no domain'} · matched on {m.matchedOn} · id {m.recordId}
                   </div>
                 </div>
-                <DemoBadge show={m.demo} />
                 {m.url && <a href={m.url} target="_blank" rel="noreferrer" className="text-xs text-verde underline">View in HubSpot</a>}
                 <button className={btnPrimary} onClick={() => submit('update-existing', m.recordId)} disabled={busy}>
                   Update this record
@@ -247,10 +255,9 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
 
       {step === 'done' && result && (
         <div className="space-y-3">
-          <div className={`rounded-sm px-3 py-2 text-sm ${result.demo ? 'bg-marigold-soft text-ink' : 'bg-verde-soft text-verde'}`}>
+          <div className="rounded-sm bg-verde-soft px-3 py-2 text-sm text-verde">
             <div className="flex items-center gap-2 font-semibold">
-              {result.demo ? 'Simulated' : 'Saved'} — company {result.action}, {result.contactIds.length} contact{result.contactIds.length === 1 ? '' : 's'}, 1 deal
-              <DemoBadge show={result.demo} />
+              Saved — company {result.action}, {result.contactIds.length} contact{result.contactIds.length === 1 ? '' : 's'}, 1 deal
             </div>
             <p className="mt-1 text-xs text-ink/80">{result.message}</p>
           </div>

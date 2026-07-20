@@ -1,4 +1,4 @@
-import { env, modes } from '../env';
+import { env, notConnected, outlookConfigured } from '../env';
 import { store, type TokenRecord } from '../lib/store';
 import { audit } from '../lib/guard';
 import { decrypt, encrypt, randomToken } from '../lib/crypto';
@@ -10,12 +10,18 @@ import { fetchWithRetry } from '../lib/http';
  * NEVER sent to the browser or stored in localStorage. The only
  * mail action supported anywhere in this codebase is creating a
  * DRAFT — there is intentionally no send path.
+ *
+ * There is no mock mailbox: when Outlook is not configured, every
+ * mail action fails with an honest "not connected" error.
  */
 
 const SCOPES = ['offline_access', 'Mail.ReadWrite', 'User.Read'];
 
+const OUTLOOK_NOT_CONNECTED_HINT =
+  'Add MICROSOFT_CLIENT_ID/SECRET/REDIRECT_URI and SESSION_SECRET to .env, then use Connect Outlook under Data Sources & Refresh.';
+
 export interface OutlookStatus {
-  mode: 'mock' | 'live';
+  mode: 'mock' | 'live' | 'disconnected';
   connected: boolean;
   account: string | null;
   permissions: string[];
@@ -48,116 +54,50 @@ export function buildDraftPayload(args: {
   };
 }
 
-export interface MessageStatus {
-  found: boolean;
-  isDraft: boolean;
-  sentAt: string | null;
-  demo: boolean;
-  detail: string;
-}
-
 export interface OutlookService {
-  mode: 'mock' | 'live';
+  mode: 'mock' | 'live' | 'disconnected';
   status(): Promise<OutlookStatus>;
   /** Cheap real call that proves the connection works. */
   verifyConnection(): Promise<{ ok: boolean; detail: string }>;
-  beginConnect(): Promise<{ authUrl: string | null; demo: boolean; message: string }>;
+  beginConnect(): Promise<{ authUrl: string | null; message: string }>;
   handleCallback(code: string, state: string): Promise<{ account: string }>;
   createDraft(args: { to: string; subject: string; body: string }): Promise<DraftResult>;
-  /** Read the status of a message this app created (drafts only). */
-  getMessageStatus(messageId: string): Promise<MessageStatus>;
   disconnect(): Promise<void>;
 }
 
-// ── Mock ─────────────────────────────────────────────────────────
+// ── Not configured: honest errors, no simulation ─────────────────
 
-class MockOutlook implements OutlookService {
-  mode = 'mock' as const;
-
-  private token(): TokenRecord | undefined {
-    return store.raw.tokens.find((t) => t.provider === 'outlook');
-  }
+class DisconnectedOutlook implements OutlookService {
+  mode = 'disconnected' as const;
 
   async status(): Promise<OutlookStatus> {
-    const t = this.token();
     return {
-      mode: 'mock',
-      connected: !!t,
-      account: t?.account ?? null,
-      permissions: t ? SCOPES : [],
-      lastConnectedAt: t?.connectedAt ?? null,
-      detail: t
-        ? 'Demo Mode: simulated mailbox. No real Microsoft account is connected.'
-        : 'Demo Mode: add Microsoft credentials to .env to connect a real mailbox.',
+      mode: 'disconnected',
+      connected: false,
+      account: null,
+      permissions: [],
+      lastConnectedAt: null,
+      detail: 'This integration is not connected. Add Microsoft credentials to .env to connect a mailbox.',
     };
   }
 
+  async verifyConnection() {
+    return { ok: false, detail: 'Outlook is not connected — no Microsoft credentials are configured.' };
+  }
+
   async beginConnect() {
-    const now = new Date().toISOString();
-    const existing = this.token();
-    if (!existing) {
-      store.raw.tokens.push({
-        provider: 'outlook',
-        account: 'demo-user@vamosventures.example',
-        scopes: SCOPES,
-        cipher: encrypt('demo-token-not-real'),
-        refreshCipher: null,
-        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-        connectedAt: now,
-      });
-      store.save();
-    }
-    audit({
-      provider: 'outlook', mode: 'mock', action: 'connect',
-      subject: 'demo-user@vamosventures.example', outcome: 'ok',
-      detail: 'Demo Mode: simulated Outlook connection',
-    });
     return {
       authUrl: null,
-      demo: true,
-      message: 'Demo Mode: simulated an Outlook connection. No real Microsoft sign-in occurred.',
+      message: 'Outlook is not configured. Set MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_REDIRECT_URI, and SESSION_SECRET in .env first.',
     };
   }
 
   async handleCallback(): Promise<{ account: string }> {
-    throw Object.assign(new Error('OAuth callbacks are not used in Demo Mode.'), { status: 400 });
+    throw notConnected('Outlook', OUTLOOK_NOT_CONNECTED_HINT);
   }
 
-  async verifyConnection() {
-    const t = this.token();
-    return {
-      ok: !!t,
-      detail: t
-        ? 'Local Mode: simulated mailbox responded. No real Microsoft connection was verified.'
-        : 'Not connected (Local Mode). Use Connect Outlook to simulate a connection, or add Microsoft credentials for a real one.',
-    };
-  }
-
-  async getMessageStatus(messageId: string): Promise<MessageStatus> {
-    const known = store.raw.drafts.some((d) => d.outlookDraftId === messageId);
-    return {
-      found: known,
-      isDraft: true,
-      sentAt: null,
-      demo: true,
-      detail: known
-        ? 'Local Mode: simulated draft — still unsent (simulated mailboxes cannot send).'
-        : 'Local Mode: no simulated draft with that id exists.',
-    };
-  }
-
-  async createDraft(args: { to: string; subject: string; body: string }): Promise<DraftResult> {
-    buildDraftPayload(args); // same validation as live
-    if (!this.token()) {
-      throw Object.assign(new Error('Connect Outlook first (Demo Mode connection is available under Data Sources).'), { status: 401 });
-    }
-    const id = store.nextId('mock-draft');
-    audit({
-      provider: 'outlook', mode: 'mock', action: 'create-draft',
-      subject: args.to, outcome: 'ok',
-      detail: `Demo Mode: simulated Outlook draft "${args.subject.slice(0, 60)}"`,
-    });
-    return { draftId: id, webLink: null, demo: true };
+  async createDraft(): Promise<DraftResult> {
+    throw notConnected('Outlook', OUTLOOK_NOT_CONNECTED_HINT);
   }
 
   async disconnect() {
@@ -210,7 +150,6 @@ class LiveOutlook implements OutlookService {
     });
     return {
       authUrl: `${this.authority()}/oauth2/v2.0/authorize?${params}`,
-      demo: false,
       message: 'Redirecting to Microsoft sign-in.',
     };
   }
@@ -279,7 +218,7 @@ class LiveOutlook implements OutlookService {
   private async accessToken(): Promise<string> {
     const t = this.token();
     if (!t) {
-      throw Object.assign(new Error('Outlook is not connected. Use Connect Outlook under Data Sources.'), { status: 401 });
+      throw notConnected('Outlook', 'Use Connect Outlook under Data Sources & Refresh to sign in.');
     }
     if (new Date(t.expiresAt).getTime() - Date.now() > 60_000) {
       return decrypt(t.cipher);
@@ -308,31 +247,6 @@ class LiveOutlook implements OutlookService {
     }
   }
 
-  async getMessageStatus(messageId: string): Promise<MessageStatus> {
-    const token = await this.accessToken();
-    try {
-      const msg = await this.graph<{ isDraft: boolean; sentDateTime?: string }>(
-        `/me/messages/${encodeURIComponent(messageId)}?$select=isDraft,sentDateTime`,
-        token,
-      );
-      const sent = !msg.isDraft && !!msg.sentDateTime;
-      return {
-        found: true,
-        isDraft: msg.isDraft,
-        sentAt: sent ? msg.sentDateTime! : null,
-        demo: false,
-        detail: sent
-          ? `Outlook reports this message was sent ${msg.sentDateTime}.`
-          : 'Outlook reports this message is still a draft.',
-      };
-    } catch (e) {
-      const status = (e as { status?: number }).status;
-      if (status === 404) {
-        return { found: false, isDraft: false, sentAt: null, demo: false, detail: 'Outlook has no message with that id — it may have been deleted.' };
-      }
-      throw e;
-    }
-  }
 
   private async graph<T>(path: string, token: string, init?: RequestInit): Promise<T> {
     const res = await fetchWithRetry(`${GRAPH}${path}`, {
@@ -378,6 +292,15 @@ class LiveOutlook implements OutlookService {
   }
 }
 
+// ── Service resolution ───────────────────────────────────────────
+
+/** Test-only override so automated tests can inject an in-memory fixture. */
+let serviceOverride: OutlookService | null = null;
+export function __setOutlookServiceForTests(svc: OutlookService | null): void {
+  serviceOverride = svc;
+}
+
 export function outlookService(): OutlookService {
-  return modes.outlook() === 'live' ? new LiveOutlook() : new MockOutlook();
+  if (serviceOverride) return serviceOverride;
+  return outlookConfigured() ? new LiveOutlook() : new DisconnectedOutlook();
 }

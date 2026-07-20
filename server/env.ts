@@ -2,13 +2,13 @@ import { z } from 'zod';
 import crypto from 'node:crypto';
 
 /**
- * Environment validation. The app must boot with ZERO credentials —
- * every integration falls back to Mock Mode independently. Setting
- * INTEGRATION_MODE=mock forces Demo Mode even when secrets exist.
+ * Environment validation. The app boots with ZERO credentials — every
+ * integration is then simply "not connected" and reports that honestly.
+ * There is no demo/mock mode: an integration is live when (and only
+ * when) its credentials are configured.
  */
 const envSchema = z.object({
   PORT: z.coerce.number().default(8787),
-  APP_BASE_URL: z.string().default('http://localhost:8787'),
   FRONTEND_URL: z.string().default('http://localhost:5173'),
 
   HUBSPOT_ACCESS_TOKEN: z.string().optional(),
@@ -28,13 +28,41 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   AI_MODEL: z.string().optional(),
 
+  /** Optional GitHub token — raises API rate limits; public data only. */
+  GITHUB_TOKEN: z.string().optional(),
+  /** SEC EDGAR asks automated clients to identify themselves with contact info in the User-Agent. */
+  SEC_CONTACT_EMAIL: z.string().optional(),
+  /** Comma-separated public RSS feed URLs for the funding-news source (overrides defaults). */
+  FUNDING_NEWS_FEEDS: z.string().optional(),
+  /** Product Hunt developer token — required for the producthunt source; refuses to run without it. */
+  PRODUCTHUNT_TOKEN: z.string().optional(),
+
   RUN_SCHEDULER: z.enum(['true', 'false']).default('false'),
-  INTEGRATION_MODE: z.enum(['mock', 'auto']).default('mock'),
   SESSION_SECRET: z.string().min(16).optional(),
-  DATA_FILE: z.string().optional(), // ':memory:' in tests
+  /** SQLite database location (':memory:' in tests). Defaults to server/.data/deal-radar.db */
+  DATABASE_FILE: z.string().optional(),
+  DATA_FILE: z.string().optional(), // legacy alias, honored for ':memory:' test setups
+
+  /**
+   * Shared administrator password gating Settings' admin-only actions
+   * (scheduled sourcing config/run-now, connector enable/disable,
+   * refresh runs, HubSpot/Outlook connect-disconnect). Unset means
+   * those actions are entirely unusable (fail closed), not open —
+   * see requireAdmin() in server/lib/auth.ts.
+   */
+  ADMIN_PASSWORD: z.string().optional(),
 });
 
-const parsed = envSchema.safeParse(process.env);
+/**
+ * A freshly-copied .env.example ships every key present but blank
+ * (e.g. `AI_PROVIDER=`) — once .env is actually loaded (via
+ * --env-file-if-exists, see package.json), that arrives as an empty
+ * string, which fails `.optional()` validation (undefined ≠ "").
+ * Treat blank as unset so "boots fine with zero credentials" holds
+ * for a literal copy of the example file, not just a hand-trimmed one.
+ */
+const cleanedEnv = Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== ''));
+const parsed = envSchema.safeParse(cleanedEnv);
 if (!parsed.success) {
   // Fail loudly on malformed values; never print the values themselves.
   const fields = parsed.error.issues.map((i) => i.path.join('.')).join(', ');
@@ -42,12 +70,6 @@ if (!parsed.success) {
 }
 
 export const env = parsed.data;
-
-export type ProviderMode = 'mock' | 'live';
-
-function forceMock(): boolean {
-  return env.INTEGRATION_MODE === 'mock';
-}
 
 /** Resolve the AI key: AI_API_KEY wins, else the provider-specific var. */
 export function aiKey(): string | undefined {
@@ -62,39 +84,52 @@ export function hubspotOAuthConfigured(): boolean {
   return !!(env.HUBSPOT_CLIENT_ID && env.HUBSPOT_CLIENT_SECRET && env.HUBSPOT_REDIRECT_URI);
 }
 
-export function integrationModeForcedMock(): boolean {
-  return forceMock();
-}
-
 export function schedulerEnabled(): boolean {
   return env.RUN_SCHEDULER === 'true';
 }
 
-export const modes = {
-  /**
-   * HubSpot is live with a private-app token; an OAuth connection can
-   * also enable live mode — that check needs the token store, so the
-   * HubSpot service exposes hubspotMode() which layers it on top.
-   */
-  hubspot: (): ProviderMode =>
-    !forceMock() && env.HUBSPOT_ACCESS_TOKEN ? 'live' : 'mock',
-  outlook: (): ProviderMode =>
-    !forceMock() &&
+/** Outlook is configured when the Entra app + token-encryption secret exist. */
+export function outlookConfigured(): boolean {
+  return !!(
     env.MICROSOFT_CLIENT_ID &&
     env.MICROSOFT_CLIENT_SECRET &&
     env.MICROSOFT_REDIRECT_URI &&
     env.SESSION_SECRET
-      ? 'live'
-      : 'mock',
-  ai: (): ProviderMode =>
-    !forceMock() && env.AI_PROVIDER && aiKey() ? 'live' : 'mock',
-};
+  );
+}
+
+/** AI is live when a provider and key are configured; otherwise the local template answers. */
+export function aiConfigured(): boolean {
+  return !!(env.AI_PROVIDER && aiKey());
+}
+
+/**
+ * A route hit an integration that is not connected. Rendered as a 503
+ * with a clear, honest message — never simulated.
+ */
+export function notConnected(name: string, hint: string): Error {
+  return Object.assign(new Error(`${name} is not connected.`), { status: 503, hint });
+}
 
 /**
  * Encryption key for tokens at rest. Live Outlook requires a real
- * SESSION_SECRET; in Demo Mode an ephemeral key is fine because no
- * real tokens ever exist.
+ * SESSION_SECRET; without one, no tokens are ever stored, so an
+ * ephemeral key is harmless.
  */
 export const encryptionKey: Buffer = env.SESSION_SECRET
   ? crypto.scryptSync(env.SESSION_SECRET, 'vamos-deal-radar', 32)
   : crypto.randomBytes(32);
+
+/**
+ * Signs admin session cookies. Ephemeral (random per process start) when
+ * SESSION_SECRET isn't set — a restart invalidates every session and
+ * requires re-login, which is acceptable for a single-admin internal
+ * tool and strictly safer than a fixed fallback key.
+ */
+export const adminSessionKey: Buffer = env.SESSION_SECRET
+  ? crypto.scryptSync(env.SESSION_SECRET, 'vamos-deal-radar-admin-session', 32)
+  : crypto.randomBytes(32);
+
+export function adminAuthConfigured(): boolean {
+  return !!env.ADMIN_PASSWORD;
+}

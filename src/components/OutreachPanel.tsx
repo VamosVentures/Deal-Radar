@@ -3,7 +3,7 @@ import type { Company, Founder } from '../types';
 import { outreachContext } from '../lib/crm';
 import { api, ApiError } from '../lib/api';
 import { useIntegrations } from '../store/integrations';
-import { btnGhost, btnPrimary, DemoBadge, ErrorNote, Field, Modal } from './Modal';
+import { btnGhost, btnPrimary, ErrorNote, Field, LocalBadge, Modal } from './Modal';
 import { OUTREACH_TONES, type EmailGenContext, type GeneratedEmail, type OutreachTone } from '../../shared/integrations';
 
 /**
@@ -38,7 +38,7 @@ export function OutreachPanel({ c, onClose, onSaved }: { c: Company; onClose: ()
   const [error, setError] = useState<ApiError | null>(null);
   const [saved, setSaved] = useState<{ demo: boolean; message: string; webLink: string | null } | null>(null);
 
-  const outlookDemo = status?.outlook.mode !== 'live';
+  const outlookNotConnected = status ? !status.outlook.connected : false;
 
   function contextWithTone(): EmailGenContext {
     return { ...baseContext, tone, customInstructions, meetingAsk };
@@ -86,14 +86,14 @@ export function OutreachPanel({ c, onClose, onSaved }: { c: Company; onClose: ()
     <Modal title={`Founder outreach — ${c.name}`} eyebrow="Generate · review · save as draft" onClose={onClose} wide>
       {saved ? (
         <div className="space-y-3">
-          <div className={`rounded-sm px-3 py-2 text-sm ${saved.demo ? 'bg-marigold-soft' : 'bg-verde-soft text-verde'}`}>
+          <div className="rounded-sm bg-verde-soft px-3 py-2 text-sm text-verde">
             <div className="flex items-center gap-2 font-semibold">
-              Draft saved <DemoBadge show={saved.demo} />
+              Draft saved
             </div>
             <p className="mt-1 text-xs text-ink/80">{saved.message}</p>
             <p className="mt-1 text-xs text-ink/80">
               Outreach status is now <span className="font-semibold">Saved to Outlook</span>. The email has NOT been sent —
-              open Outlook, review once more, and send it yourself. Then mark it as sent in the Outreach Pipeline.
+              open Outlook, review once more, and send it yourself. Relationship tracking continues in HubSpot.
             </p>
           </div>
           {saved.webLink && (
@@ -147,7 +147,7 @@ export function OutreachPanel({ c, onClose, onSaved }: { c: Company; onClose: ()
             <Chip ok={!!baseContext.recentMilestone} label="Recent milestone" />
             <Chip ok={!!baseContext.acceleratorOrFunding} label="Accelerator / funding" />
             <Chip ok={baseContext.sourceLinks.length > 0} label={`${baseContext.sourceLinks.length} sources`} />
-            <span className="ml-auto"><DemoBadge show={status?.ai.mode !== 'live'} /></span>
+            <span className="ml-auto"><LocalBadge show={status?.ai.mode !== 'live'} label="Local template — no AI model" /></span>
           </div>
 
           {!email && (
@@ -200,15 +200,20 @@ export function OutreachPanel({ c, onClose, onSaved }: { c: Company; onClose: ()
                 <button
                   className={btnPrimary}
                   onClick={saveDraft}
-                  disabled={busy !== null || !to || !subject.trim() || !body.trim()}
-                  title={!to ? 'Add a verified recipient email first' : undefined}
+                  disabled={busy !== null || !to || !subject.trim() || !body.trim() || outlookNotConnected}
+                  title={outlookNotConnected ? 'Outlook is not connected — configure Microsoft credentials under Data Sources & Refresh' : !to ? 'Add a verified recipient email first' : undefined}
                 >
-                  {busy === 'save' ? 'Saving…' : outlookDemo ? 'Save to Outlook Drafts (Demo Mode)' : 'Save to Outlook Drafts'}
+                  {busy === 'save' ? 'Saving…' : 'Save to Outlook Drafts'}
                 </button>
               </footer>
               <p className="text-right font-mono text-[10px] text-slate-mid">
                 Saving creates a DRAFT only. Sending always happens manually, by you, from Outlook.
               </p>
+              {outlookNotConnected && (
+                <p className="text-right text-[11px] text-alerta">
+                  Outlook is not connected. Connect it under Data Sources &amp; Refresh to save drafts.
+                </p>
+              )}
             </div>
           )}
 

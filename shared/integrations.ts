@@ -7,11 +7,11 @@ import { z } from 'zod';
 
 // ── Modes & connection status ────────────────────────────────────
 
-export type IntegrationMode = 'mock' | 'live';
+export type IntegrationMode = 'disconnected' | 'live';
 
 export const integrationConnectionSchema = z.object({
   provider: z.enum(['hubspot', 'outlook', 'ai']),
-  mode: z.enum(['mock', 'live']),
+  mode: z.enum(['disconnected', 'live']),
   connected: z.boolean(),
   account: z.string().nullable(), // portal id / mailbox / model name
   detail: z.string(), // human-readable status line
@@ -112,6 +112,13 @@ export const hubspotDealRecordSchema = z.object({
   relationshipOwner: z.string().nullable(),
   dealRadarId: z.string(),
   dealRadarUrl: z.string(),
+  /** Plain-language scoring explanation (model version + strongest/weakest components). */
+  scoreExplanation: z.string().default(''),
+  /** Who approved the sync and when — recorded on the HubSpot deal. */
+  approvedBy: z.string().nullable().default(null),
+  approvalDate: z.string().nullable().default(null),
+  /** Evidence source URLs backing the recommendation. */
+  sourceUrls: z.array(z.string()).default([]),
 });
 export type HubSpotDealRecord = z.infer<typeof hubspotDealRecordSchema>;
 
@@ -144,6 +151,57 @@ export interface HubSpotPipelineInfo {
   stages: { id: string; label: string }[];
 }
 
+// ── Company review status (internal — distinct from HubSpot stages) ─
+// A deliberately small lifecycle for the review queue itself. This is
+// NOT the HubSpot pipeline (RADAR_HUBSPOT_STAGES above maps to that
+// external CRM); it is Deal Radar's own screening status. 'Stale' is
+// never stored here — it is a computed overlay (see companyMetaView)
+// based on how long a non-terminal company has gone unreviewed.
+
+export const COMPANY_STATUSES = [
+  'New',
+  'Awaiting Review',
+  'Research Needed',
+  'Approved for HubSpot',
+  'Synced to HubSpot',
+  'Monitor',
+  'Passed',
+] as const;
+export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
+
+/** Statuses for which staleness no longer matters — the review is done. */
+export const TERMINAL_COMPANY_STATUSES: readonly CompanyStatus[] = ['Passed', 'Synced to HubSpot'];
+
+/** Default age (days) after which a non-terminal company is flagged Stale. */
+export const DEFAULT_STALE_AFTER_DAYS = 30;
+
+/**
+ * Administrator-configurable stale-record settings (Phase 10). Stored via
+ * the generic sourcing_config key/value store (getConfig/setConfig) under
+ * key STALE_SETTINGS_KEY — no server restart or code change needed to
+ * change how staleness is computed. Distinct from (and not to be confused
+ * with): a schedule job's "refresh age" (drives the stale-record-refresh
+ * job type) and a discovery query's evidence-recency filter (drops
+ * candidates by evidence age, not company display status).
+ */
+export const staleSettingsSchema = z.object({
+  /** Days since last_refreshed/discoveredAt/createdAt before a non-terminal company is flagged Stale. */
+  staleAfterDays: z.number().int().min(1).max(365).default(DEFAULT_STALE_AFTER_DAYS),
+  /** Whether a company in 'Monitor' status can be flagged Stale. */
+  monitorGoesStale: z.boolean().default(true),
+  /** Whether a company in 'Research Needed' status can be flagged Stale. */
+  researchNeededGoesStale: z.boolean().default(true),
+  /** Whether the Overview page shows the Stale-companies metric/list at all. */
+  showStaleOnOverview: z.boolean().default(true),
+  /** Cap on how many stale companies Overview will enumerate/link to (the count itself is never capped). */
+  maxStaleOnOverview: z.number().int().min(1).max(500).default(50),
+  /** Whether the Companies page's stale filter is pre-selected when the page loads. */
+  defaultStaleFilter: z.enum(['all', 'stale-only', 'exclude-stale']).default('all'),
+});
+export type StaleSettings = z.infer<typeof staleSettingsSchema>;
+export const DEFAULT_STALE_SETTINGS: StaleSettings = staleSettingsSchema.parse({});
+export const STALE_SETTINGS_KEY = 'stale-settings';
+
 // ── Sync request / result ────────────────────────────────────────
 
 export const companySyncRequestSchema = z.object({
@@ -160,7 +218,8 @@ export interface DuplicateMatch {
   recordId: string;
   name: string;
   domain: string | null;
-  matchedOn: 'domain' | 'name';
+  /** What matched: existing radar link, Vamos property, domain, name, or founder email. */
+  matchedOn: 'radar-id' | 'domain' | 'name' | 'founder-email';
   url: string | null; // link into HubSpot when live
   demo: boolean;
 }
@@ -225,22 +284,6 @@ export type GeneratedEmail = z.infer<typeof generatedEmailSchema>;
 
 // ── Outreach records, drafts, activity, follow-ups ───────────────
 
-export const OUTREACH_STATUSES = [
-  'Not Reviewed',
-  'Approved for Tracking',
-  'Added to HubSpot',
-  'Outreach Approved',
-  'Draft Generated',
-  'Saved to Outlook',
-  'Manually Marked Sent',
-  'Replied',
-  'Meeting Scheduled',
-  'Follow-Up Needed',
-  'Monitor',
-  'Closed',
-] as const;
-export type OutreachStatus = (typeof OUTREACH_STATUSES)[number];
-
 export const outreachDraftSchema = z.object({
   id: z.string(),
   companyId: z.string(),
@@ -256,67 +299,13 @@ export const outreachDraftSchema = z.object({
 });
 export type OutreachDraft = z.infer<typeof outreachDraftSchema>;
 
-export const outreachActivitySchema = z.object({
-  id: z.string(),
-  companyId: z.string(),
-  kind: z.enum([
-    'company-added',
-    'outreach-approved',
-    'draft-created',
-    'marked-sent',
-    'follow-up-set',
-    'meeting-scheduled',
-    'note',
-  ]),
-  detail: z.string(),
-  actor: z.string(),
-  at: z.string(),
-  hubspotNoteId: z.string().nullable(),
-});
-export type OutreachActivity = z.infer<typeof outreachActivitySchema>;
-
-export const followUpTaskSchema = z.object({
-  companyId: z.string(),
-  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  note: z.string(),
-  done: z.boolean(),
-});
-export type FollowUpTask = z.infer<typeof followUpTaskSchema>;
-
-export interface OutreachRecord {
-  companyId: string;
-  companyName: string;
-  founderName: string;
-  founderEmail: string | null;
-  owner: string;
-  vertical: string;
-  companyStage: string;
-  fitScore: number;
-  policyException: string | null;
-  sourceQuality: number; // evidence-quality points 0–10
-  hubspotStatus: 'Not added' | 'Added' | 'Updated';
-  hubspotCompanyId: string | null;
-  hubspotUrl: string | null;
-  outreachStatus: OutreachStatus;
-  draftCreatedAt: string | null;
-  draftSubject: string | null;
-  outlookDraftId: string | null;
-  outlookWebLink: string | null;
-  emailSentAt: string | null;
-  lastResponseAt: string | null;
-  meetingStatus: 'None' | 'Requested' | 'Scheduled' | 'Held';
-  followUp: FollowUpTask | null;
-  nextAction: string;
-  activities: OutreachActivity[];
-}
-
 // ── Audit log & errors ───────────────────────────────────────────
 
 export const integrationAuditLogSchema = z.object({
   id: z.string(),
   at: z.string(),
   provider: z.enum(['hubspot', 'outlook', 'ai', 'system']),
-  mode: z.enum(['mock', 'live']),
+  mode: z.enum(['live', 'local']),
   action: z.string(),
   subject: z.string(), // e.g. company id — never bodies or tokens
   outcome: z.enum(['ok', 'blocked', 'error']),

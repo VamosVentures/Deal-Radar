@@ -46,11 +46,11 @@ export function Modal({
   );
 }
 
-export function DemoBadge({ show }: { show: boolean }) {
+export function LocalBadge({ show, label }: { show: boolean; label: string }) {
   if (!show) return null;
   return (
     <span className="rounded-sm bg-marigold-soft px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-marigold">
-      Demo Mode
+      {label}
     </span>
   );
 }

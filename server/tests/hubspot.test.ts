@@ -6,6 +6,7 @@ import {
   buildDealProperties,
   hubspotService,
 } from '../services/hubspot';
+import { MockHubSpot } from './mocks/hubspot';
 import {
   hubspotContactRecordSchema,
   normalizeCompanyName,
@@ -50,6 +51,9 @@ const deal = (over: Partial<HubSpotDealRecord> = {}): HubSpotDealRecord => ({
   sourcingStatus: 'Surfaced by Deal Radar', dateSurfaced: '2026-04-12',
   nextAction: 'Approve outreach', relationshipOwner: 'DR',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
+  scoreExplanation: 'Vamos Fit Score 8.7/10 (test fixture explanation).',
+  approvedBy: 'DR', approvalDate: '2026-07-18',
+  sourceUrls: ['https://example.com/solcare-pilot'],
   ...over,
 });
 
@@ -68,38 +72,38 @@ describe('normalization', () => {
   });
 });
 
-describe('duplicate detection (mock HubSpot)', () => {
+describe('duplicate detection (in-memory fixture)', () => {
   it('matches by normalized domain first', async () => {
-    const svc = hubspotService();
+    const svc = new MockHubSpot();
     await svc.syncCompany({
       company: company(), contacts: [], deal: deal(),
       stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
     });
-    const matches = await svc.checkDuplicate('Totally Different Name', 'https://WWW.solcarehealth.example.com/');
+    const matches = await svc.checkDuplicate({ name: 'Totally Different Name', domain: 'https://WWW.solcarehealth.example.com/' });
     expect(matches).toHaveLength(1);
     expect(matches[0].matchedOn).toBe('domain');
     expect(matches[0].demo).toBe(true);
-    expect(matches[0].url).toBeNull(); // never fabricate a HubSpot link in Demo Mode
+    expect(matches[0].url).toBeNull(); // fixtures never fabricate a HubSpot link
   });
 
   it('falls back to normalized name when no domain matches', async () => {
-    const svc = hubspotService();
+    const svc = new MockHubSpot();
     await svc.syncCompany({
       company: company({ domain: null, website: null }), contacts: [], deal: deal(),
       stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
     });
-    const matches = await svc.checkDuplicate('solcare health, inc', null);
+    const matches = await svc.checkDuplicate({ name: 'solcare health, inc', domain: null });
     expect(matches).toHaveLength(1);
     expect(matches[0].matchedOn).toBe('name');
   });
 
   it('returns no matches for an unknown company', async () => {
-    const matches = await hubspotService().checkDuplicate('Nunca Vista', 'nuncavista.example.com');
+    const matches = await new MockHubSpot().checkDuplicate({ name: 'Nunca Vista', domain: 'nuncavista.example.com' });
     expect(matches).toHaveLength(0);
   });
 
   it('update-existing updates the record instead of creating a duplicate', async () => {
-    const svc = hubspotService();
+    const svc = new MockHubSpot();
     const first = await svc.syncCompany({
       company: company(), contacts: [], deal: deal(),
       stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
@@ -155,6 +159,14 @@ describe('payload builders', () => {
     expect(p.vamos_score_breakdown).toContain('Thesis / vertical fit: 25/25');
     expect(p.vamos_policy_exception).toContain('Hardware-heavy');
   });
+
+  it('records reviewer, approval date, score explanation, and source URLs on the deal', () => {
+    const p = buildDealProperties(deal(), 's', 'p');
+    expect(p.vamos_reviewer).toBe('DR');
+    expect(p.vamos_approval_date).toBe('2026-07-18');
+    expect(p.vamos_score_explanation).toContain('Vamos Fit Score');
+    expect(p.vamos_source_urls).toContain('https://example.com/solcare-pilot');
+  });
 });
 
 describe('identity guardrails', () => {
@@ -206,20 +218,32 @@ describe('identity guardrails', () => {
   });
 });
 
-describe('mock mode behavior', () => {
+describe('service resolution (production path)', () => {
+  it('throws an honest not-connected error when no credentials exist', () => {
+    expect(() => hubspotService()).toThrowError(/not connected/i);
+    try {
+      hubspotService();
+    } catch (e) {
+      expect((e as { status?: number }).status).toBe(503);
+      expect((e as { hint?: string }).hint).toMatch(/HUBSPOT_ACCESS_TOKEN/);
+    }
+  });
+});
+
+describe('fixture behavior (tests only)', () => {
   it('labels results as demo and never claims a real action', async () => {
-    const res = await hubspotService().syncCompany({
+    const res = await new MockHubSpot().syncCompany({
       company: company(), contacts: [contact()], deal: deal(),
       stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
     });
     expect(res.demo).toBe(true);
-    expect(res.message).toContain('Demo Mode');
+    expect(res.message).toContain('Test fixture');
     expect(res.message.toLowerCase()).toContain('no real');
     expect(res.companyUrl).toBeNull();
   });
 
   it('deduplicates mock contacts by email across syncs', async () => {
-    const svc = hubspotService();
+    const svc = new MockHubSpot();
     const args = {
       company: company(), contacts: [contact()], deal: deal(),
       stageId: 's', pipelineId: 'p', resolution: 'create-new' as const, existingRecordId: null,
@@ -230,7 +254,7 @@ describe('mock mode behavior', () => {
   });
 
   it('associates the deal with company and contacts', async () => {
-    const res = await hubspotService().syncCompany({
+    const res = await new MockHubSpot().syncCompany({
       company: company(), contacts: [contact()], deal: deal(),
       stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
     });

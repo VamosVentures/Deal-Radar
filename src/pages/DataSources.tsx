@@ -1,16 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/ui';
+import { SystemStatus } from '../components/SystemStatus';
 import { IntegrationCards } from '../components/IntegrationCards';
 import { ConnectorPanel } from '../components/Connectors';
+import { SchedulePanel } from '../components/Schedule';
 import { PortfolioPanel } from '../components/Portfolio';
+import { AdminLogin } from '../components/AdminLogin';
+import { StaleSettingsPanel } from '../components/StaleSettingsPanel';
+import { SourceAnalyticsPanel } from '../components/SourceAnalytics';
+import { BackupPanel } from '../components/BackupPanel';
 import { useIntegrations } from '../store/integrations';
+import { api } from '../lib/api';
 
 
 export function DataSources() {
   const [params, setParams] = useSearchParams();
   const { refresh } = useIntegrations();
   const [connectedBanner, setConnectedBanner] = useState<string | null>(null);
+  const [auth, setAuth] = useState<{ configured: boolean; authenticated: boolean } | null>(null);
+
+  const loadAuth = useCallback(() => {
+    api.auth.status().then(setAuth).catch(() => setAuth({ configured: false, authenticated: false }));
+  }, []);
+  useEffect(loadAuth, [loadAuth]);
+
+  const logout = async () => {
+    await api.auth.logout().catch(() => {});
+    loadAuth();
+  };
 
   // Handle OAuth callback redirects (?outlook=connected / ?hubspot=connected)
   useEffect(() => {
@@ -32,17 +50,46 @@ export function DataSources() {
     <div>
       <PageHeader
         eyebrow="Configuration"
-        title="Data Sources & Refresh Settings"
-        blurb="What feeds the radar, how often it refreshes, and the rules every source must follow. The MVP ships with a bundled sample dataset; live connectors validate through the same Zod schemas in src/data/loader.ts."
+        title="Settings — Admin Only"
+        blurb="What feeds the radar, how often it refreshes, and the rules every source must follow. Nothing is pre-populated: companies enter only through validated CSV imports or Deal Discovery, and integrations that are not connected say so."
       />
+
+      <div className="mb-4 flex items-start justify-between gap-3 rounded-md border border-alerta/40 bg-alerta-soft px-4 py-3 text-sm">
+        <div>
+          <span className="font-semibold text-alerta">Administrators only.</span>{' '}
+          Changes to these settings may affect live sourcing, scoring, integrations, and data quality.
+          Do not modify without administrator approval. Enforced by a real sign-in below, not just this label.
+        </div>
+        {auth?.authenticated && (
+          <button onClick={logout} className="shrink-0 rounded-sm border border-line bg-panel px-2 py-1 text-xs font-semibold hover:border-marigold hover:text-marigold">
+            Sign out
+          </button>
+        )}
+      </div>
 
       {connectedBanner && (
         <div className="mb-4 rounded-sm bg-verde-soft px-3 py-2 text-sm text-verde">{connectedBanner}</div>
       )}
 
-      <IntegrationCards />
+      {auth === null ? null : !auth.authenticated ? (
+        <AdminLogin configured={auth.configured} onAuthenticated={loadAuth} />
+      ) : (
+        <>
+          <SystemStatus />
 
-      <ConnectorPanel />
+          <IntegrationCards />
+
+          <ConnectorPanel />
+
+          <SchedulePanel />
+
+          <SourceAnalyticsPanel />
+
+          <BackupPanel />
+
+          <StaleSettingsPanel />
+        </>
+      )}
 
       <PortfolioPanel />
 
@@ -60,7 +107,7 @@ export function DataSources() {
         <div className="rounded-md border border-line bg-panel p-4">
           <h2 className="font-display text-sm font-bold">Wiring live data</h2>
           <p className="mt-2 text-xs leading-relaxed text-slate-mid">
-            The app runs on a local data layer by default. To go live: (1) add Supabase credentials to <code className="rounded-sm bg-paper px-1 font-mono">.env</code> as <code className="rounded-sm bg-paper px-1 font-mono">VITE_SUPABASE_URL</code> / <code className="rounded-sm bg-paper px-1 font-mono">VITE_SUPABASE_ANON_KEY</code>, (2) point <code className="rounded-sm bg-paper px-1 font-mono">loadCompanies()</code> in <code className="rounded-sm bg-paper px-1 font-mono">src/data/loader.ts</code> at your tables, keeping the existing schemas as the validation gate, (3) swap the pipeline store's localStorage persistence for the same table so the team shares one pipeline. Scoring weights live in <code className="rounded-sm bg-paper px-1 font-mono">src/lib/scoring.ts</code> and can be tuned without touching the UI.
+            Companies enter through the Local CSV connector or Deal Discovery — both validate server-side with the same guardrails (sourced evidence required, identity columns refused). Integrations go live by adding credentials to the backend <code className="rounded-sm bg-paper px-1 font-mono">.env</code> (see <code className="rounded-sm bg-paper px-1 font-mono">.env.example</code>); until then every card reports an honest not-connected state. Scoring weights live in <code className="rounded-sm bg-paper px-1 font-mono">src/lib/scoring.ts</code> and can be tuned without touching the UI.
           </p>
         </div>
       </section>

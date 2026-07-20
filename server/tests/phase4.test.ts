@@ -4,18 +4,25 @@ import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
 import {
-  cancelDiscovery, detectDuplicate, existingCandidates, importCandidates, runDiscovery,
+  cancelDiscovery, detectDuplicate, discoveryRuns, existingCandidates, importCandidates, runDiscovery,
 } from '../services/discovery';
 import { discoveryCandidateSchema } from '../../shared/discovery';
 import { generateHypothesis, listSignals, patchSignal } from '../services/stealth';
+import { adminAgent } from './testAuth';
 import { comparePortfolio } from '../services/analysis';
 import { listJobs, saveJob, schedulerStatus, tickScheduler } from '../services/schedule';
-import { importCompaniesCsv } from '../services/imports';
+import { importCompaniesCsv, importedCompanies } from '../services/imports';
+import { companyMetaView } from '../db/repos/companies';
+import { addSignal } from '../services/stealth';
+import { installFixtureSources, uninstallFixtureSources } from './fixtures/sources';
+import { afterAll } from 'vitest';
 
 beforeEach(() => {
   store.resetForTests();
   resetIdempotencyForTests();
+  installFixtureSources();
 });
+afterAll(() => uninstallFixtureSources());
 
 const BASE_QUERY = {
   sources: ['yc', 'funding-news', 'accelerators', 'grants'],
@@ -23,7 +30,7 @@ const BASE_QUERY = {
   maxApiCalls: 10,
 };
 
-describe('discovery pipeline (simulated sources — no network in tests)', () => {
+describe('discovery pipeline (fixture sources injected — no network in tests)', () => {
   it('runs sources, normalizes, validates, and labels everything simulated', async () => {
     const run = await runDiscovery(BASE_QUERY, 'tester');
     expect(run.status).toBe('Simulated');
@@ -103,23 +110,27 @@ describe('discovery pipeline (simulated sources — no network in tests)', () =>
 });
 
 describe('duplicate detection & evidence merge', () => {
-  it('detects exact duplicates by domain against bundled data', async () => {
-    // SolCare Health is bundled with a website in the enrichment layer.
+  const DUP_HEADER = `${'name,oneLiner,vertical,subcategory,stage,city,state,foundedYear,teamSize,tractionLevel,tractionNote,founderName,founderRole,founderBackground,evidenceClaim,evidenceSource,evidenceUrl,evidenceDate,evidenceType'},website`;
+  const DUP_ROW = 'Nueva Salud,Bilingual telehealth,health,Personalized care,Seed,El Paso,TX,2025,9,6,Two pilots,Ana Ruiz,CEO,Clinic director,Pilot announced,Local news,https://example.com/nueva,2026-05-01,News,https://nuevasalud.example.com';
+
+  it('detects exact duplicates by domain against previously imported companies', async () => {
+    importCompaniesCsv([DUP_HEADER, DUP_ROW].join('\n'));
     const probe = discoveryCandidateSchema.parse({
       id: 'probe-1', runId: 'r', discoveredAt: new Date().toISOString(), sourceId: 'yc', simulated: true,
-      companyName: 'Totally Different Name', website: 'https://solcarehealth.example.com',
+      companyName: 'Totally Different Name', website: 'https://www.nuevasalud.example.com',
       evidence: [{ claim: 'listed in a directory', source: 'directory', url: 'https://example.com/e', dateAccessed: '2026-07-01' }],
       confidence: 0.5,
     });
     const dup = detectDuplicate(probe);
     expect(dup.duplicateStatus).toBe('exact');
-    expect(dup.duplicateOfName).toBe('SolCare Health');
+    expect(dup.duplicateOfName).toBe('Nueva Salud');
   });
 
   it('detects likely duplicates by normalized name', async () => {
+    importCompaniesCsv([DUP_HEADER, DUP_ROW].join('\n'));
     const probe = discoveryCandidateSchema.parse({
       id: 'probe-2', runId: 'r', discoveredAt: new Date().toISOString(), sourceId: 'yc', simulated: true,
-      companyName: 'SolCare Health, Inc.',
+      companyName: 'Nueva Salud, Inc.',
       evidence: [{ claim: 'name match probe', source: 'directory', url: 'https://example.com/e2', dateAccessed: '2026-07-01' }],
       confidence: 0.5,
     });
@@ -130,7 +141,7 @@ describe('duplicate detection & evidence merge', () => {
     const CSV_HEADER = 'name,oneLiner,vertical,subcategory,stage,city,state,foundedYear,teamSize,tractionLevel,tractionNote,founderName,founderRole,founderBackground,evidenceClaim,evidenceSource,evidenceUrl,evidenceDate,evidenceType';
     const ROW = 'Nueva Salud,Bilingual telehealth,health,Personalized care,Seed,El Paso,TX,2025,9,6,Two pilots,Ana Ruiz,CEO,Clinic director,Team size is 9,Local news,https://example.com/a,2026-05-01,News';
     importCompaniesCsv([CSV_HEADER, ROW].join('\n'));
-    const existingId = (store.raw.importedCompanies[0] as { id: string }).id;
+    const existingId = importedCompanies()[0].id;
 
     await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
     const cand = existingCandidates()[0];
@@ -143,15 +154,15 @@ describe('duplicate detection & evidence merge', () => {
 
     const outcome = importCandidates({ candidateIds: [cand.id], duplicateAction: 'merge-evidence' });
     expect(outcome.merged).toHaveLength(1);
-    const merged = store.raw.importedCompanies[0] as { evidence: { claim: string }[] };
+    const merged = importedCompanies().find((c) => c.id === existingId)!;
     const claims = merged.evidence.map((e) => e.claim);
     expect(claims).toContain('Team size is 9'); // original preserved
     expect(claims.join(' ')).toContain('Team size is 14'); // conflict added, not overwritten
   });
 });
 
-describe('selective import → Needs Review (human gates intact)', () => {
-  it('imports only selected candidates, places them in Needs Review, and triggers no outreach', async () => {
+describe('selective import → Awaiting Review (human gates intact)', () => {
+  it('imports only selected candidates, places them in Awaiting Review, and triggers no outreach', async () => {
     const run = await runDiscovery(BASE_QUERY, 'diego');
     const cands = existingCandidates().filter((c) => c.runId === run.id);
     const pick = cands.slice(0, 2).map((c) => c.id);
@@ -161,19 +172,11 @@ describe('selective import → Needs Review (human gates intact)', () => {
     // Unselected candidates stay pending.
     expect(existingCandidates().filter((c) => c.status === 'pending').length).toBe(cands.length - 2);
 
-    // Imported companies carry Needs Review meta + discovery source.
-    const meta = Object.values(store.raw.companyMeta);
-    expect(meta.filter((m) => m.reviewStatus === 'Needs Review')).toHaveLength(2);
+    // Imported companies carry Awaiting Review meta + discovery source.
+    const meta = Object.values(companyMetaView());
+    expect(meta.filter((m) => m.reviewStatus === 'Awaiting Review')).toHaveLength(2);
 
-    // Outreach records exist in the earliest state; nothing drafted, sent, approved, or synced.
-    const records = Object.values(store.raw.outreach);
-    expect(records).toHaveLength(2);
-    for (const r of records) {
-      expect(r.outreachStatus).toBe('Not Reviewed');
-      expect(r.hubspotCompanyId).toBeNull();
-      expect(r.draftCreatedAt).toBeNull();
-      expect(r.emailSentAt).toBeNull();
-    }
+    // Nothing was drafted, synced, or contacted — import only persists companies.
     expect(store.raw.drafts).toHaveLength(0);
     expect(store.raw.mockHubSpot).toHaveLength(0);
 
@@ -197,8 +200,8 @@ describe('selective import → Needs Review (human gates intact)', () => {
     await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
     const cand = existingCandidates()[0];
     cand.duplicateStatus = 'likely';
-    cand.duplicateOfId = 'c-solcare';
-    cand.duplicateOfName = 'SolCare Health';
+    cand.duplicateOfId = 'imported-nueva-salud';
+    cand.duplicateOfName = 'Nueva Salud';
     store.raw.discoveryCandidates = [cand];
     const outcome = importCandidates({ candidateIds: [cand.id] });
     expect(outcome.imported).toHaveLength(0);
@@ -207,18 +210,57 @@ describe('selective import → Needs Review (human gates intact)', () => {
 });
 
 describe('stealth radar & hypothesis guardrails', () => {
-  it('seeds simulated signals labeled simulated with alternatives and next steps', () => {
-    const signals = listSignals();
-    expect(signals.length).toBeGreaterThanOrEqual(2);
-    for (const s of signals) {
-      expect(s.simulated).toBe(true);
-      expect(s.alternativeExplanation.length).toBeGreaterThan(5);
-      expect(s.verificationStatus).not.toBe('Verified');
-    }
+  const SIGNAL_FIXTURE = {
+    founderName: 'J. Almeida (fictional)',
+    previousRole: 'Staff engineer, payments team',
+    previousEmployer: 'Unknown',
+    knownSkills: ['payments infrastructure', 'ledger systems'],
+    priorStartups: [],
+    education: 'Unknown',
+    signalType: 'New GitHub organization/repository',
+    signalDate: '2026-06-20',
+    sourceName: 'GitHub public activity',
+    sourceUrl: 'https://example.com/fix/github/almeida-labs',
+    dateAccessed: '2026-07-17',
+    possibleVertical: 'fintech',
+    possibleTheme: 'ledger tooling',
+    evidenceSummary: 'New public org "almeida-labs" with two ledger-related repositories created in June 2026.',
+    confidence: 'Medium',
+    verificationStatus: 'Not verified',
+    alternativeExplanation: 'Could be a personal side project or open-source contribution unrelated to a company.',
+    suggestedNextStep: 'Watch repo activity for org growth; check for a public announcement before any outreach.',
+    assignedTo: null,
+    outreachStatus: 'None',
+  };
+
+  it('starts empty — no seeded or simulated signals in the running app', () => {
+    expect(listSignals()).toHaveLength(0);
+  });
+
+  it('rejects a stealth lead without a real source URL or evidence reason', () => {
+    expect(() => addSignal({ ...SIGNAL_FIXTURE, sourceUrl: 'not-a-url' })).toThrow();
+    expect(() => addSignal({ ...SIGNAL_FIXTURE, sourceUrl: undefined })).toThrow();
+    expect(() => addSignal({ ...SIGNAL_FIXTURE, evidenceSummary: '' })).toThrow();
+    expect(() => addSignal({ ...SIGNAL_FIXTURE, signalDate: 'sometime' })).toThrow();
+    expect(listSignals()).toHaveLength(0); // nothing invalid was stored
+  });
+
+  it('records suspected geography and defaults honestly to Unknown', () => {
+    const withGeo = addSignal({ ...SIGNAL_FIXTURE, suspectedGeography: 'Brooklyn, NY' });
+    expect(withGeo.suspectedGeography).toBe('Brooklyn, NY');
+    const without = addSignal({ ...SIGNAL_FIXTURE, founderName: 'B. Second (fictional)' });
+    expect(without.suspectedGeography).toBe('Unknown'); // never guessed
+  });
+
+  it('accepts the newly permitted signal types', () => {
+    const hiring = addSignal({ ...SIGNAL_FIXTURE, founderName: 'C. Third (fictional)', signalType: 'Hiring announcement' });
+    expect(hiring.signalType).toBe('Hiring announcement');
+    const filing = addSignal({ ...SIGNAL_FIXTURE, founderName: 'D. Fourth (fictional)', signalType: 'Public filing' });
+    expect(filing.signalType).toBe('Public filing');
   });
 
   it('hypotheses are permanently labeled and always include alternatives + missing info', () => {
-    const s = listSignals()[0];
+    const s = addSignal(SIGNAL_FIXTURE);
     const h = generateHypothesis(s.id);
     expect(h.isHypothesis).toBe(true);
     expect(h.unverified).toBe(true);
@@ -229,7 +271,7 @@ describe('stealth radar & hypothesis guardrails', () => {
   });
 
   it('never infers sensitive traits — hypothesis text excludes the founder name and demographic language', () => {
-    const s = listSignals()[0];
+    const s = addSignal(SIGNAL_FIXTURE);
     const h = generateHypothesis(s.id);
     const text = JSON.stringify(h).toLowerCase();
     expect(text).not.toContain(s.founderName.toLowerCase());
@@ -239,6 +281,7 @@ describe('stealth radar & hypothesis guardrails', () => {
   });
 
   it('signals support assignment and research-queue status over HTTP', async () => {
+    addSignal(SIGNAL_FIXTURE);
     const app = createApp();
     const list = await request(app).get('/api/stealth/signals');
     const id = list.body.signals[0].id;
@@ -320,12 +363,13 @@ describe('scheduled sourcing (inactive by default)', () => {
     // The tick is a no-op while the scheduler is disabled — nothing runs.
     const ran = await tickScheduler();
     expect(ran).toBe(0);
-    expect(store.raw.discoveryRuns).toHaveLength(0);
+    expect(discoveryRuns()).toHaveLength(0);
   });
 
   it('exposes scheduler state over HTTP', async () => {
     const app = createApp();
-    const res = await request(app).get('/api/schedule');
+    const agent = await adminAgent(app);
+    const res = await agent.get('/api/schedule');
     expect(res.body.active).toBe(false);
     expect(res.body.label).toMatch(/RUN_SCHEDULER=false/);
   });

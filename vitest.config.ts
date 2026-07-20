@@ -5,9 +5,10 @@ export default defineConfig({
     include: ['server/tests/**/*.test.ts'],
     environment: 'node',
     env: {
+      DATABASE_FILE: ':memory:',
       DATA_FILE: ':memory:',
-      INTEGRATION_MODE: 'mock',
       NODE_ENV: 'test',
+      ADMIN_PASSWORD: 'test-admin-password',
     },
   },
 });
