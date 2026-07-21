@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PageHeader } from '../components/ui';
+import { PageHeader, SourceStateBadge } from '../components/ui';
 import { api } from '../lib/api';
 import { useCompanies } from '../store/companies';
 import type { DiscoveryCandidate, DiscoveryQuery, DiscoveryRun } from '../../shared/discovery';
@@ -18,20 +18,20 @@ const STAGES = ['Pre-seed', 'Seed', 'Series A'] as const;
 
 const statusChip: Record<string, string> = {
   Completed: 'bg-verde-soft text-verde',
-  'Completed with warnings': 'bg-amber-100 text-amber-800',
-  Simulated: 'bg-slate-100 text-slate-600',
-  Cancelled: 'bg-slate-200 text-slate-700',
-  Failed: 'bg-red-100 text-red-700',
-  'Configured but inactive': 'bg-slate-100 text-slate-500',
+  'Completed with warnings': 'bg-marigold-soft text-marigold',
+  Simulated: 'bg-paper text-slate-mid',
+  Cancelled: 'bg-line text-ink',
+  Failed: 'bg-alerta-soft text-alerta',
+  'Configured but inactive': 'bg-paper text-slate-mid',
 };
 
 const modeChip: Record<string, string> = {
   live: 'bg-verde-soft text-verde',
-  simulated: 'bg-slate-100 text-slate-600',
-  local: 'bg-slate-100 text-slate-600',
-  failed: 'bg-red-100 text-red-700',
-  skipped: 'bg-amber-50 text-amber-700',
-  mixed: 'bg-indigo-50 text-indigo-700',
+  simulated: 'bg-paper text-slate-mid',
+  local: 'bg-paper text-slate-mid',
+  failed: 'bg-alerta-soft text-alerta',
+  skipped: 'bg-marigold-soft text-marigold',
+  mixed: 'bg-line text-ink',
 };
 
 export function Discovery() {
@@ -139,8 +139,19 @@ export function Discovery() {
     return next;
   });
 
-  const input = 'w-full rounded-sm border border-slate-300 px-2 py-1.5 text-sm';
-  const label = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500';
+  const input = 'w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 text-sm transition-colors focus:border-marigold';
+  const label = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-mid';
+  const card = 'mb-5 border border-line bg-panel p-4';
+
+  const SectionHeading = ({ n, title }: { n: string; title: string }) => (
+    <h2 className="mb-3 flex items-center gap-2 font-display text-lg font-semibold text-ink">
+      <span className="font-mono text-sm text-marigold">{n}</span>
+      {title}
+    </h2>
+  );
+
+  const stateNote = (state: 'live' | 'credentials-required' | 'planned' | 'unavailable') =>
+    state === 'credentials-required' ? 'will be skipped until configured' : state === 'planned' ? 'no adapter built yet' : null;
 
   return (
     <div>
@@ -151,8 +162,8 @@ export function Discovery() {
       />
 
       {/* ── Search configuration ── */}
-      <section className="mb-4 rounded-sm border border-slate-200 bg-white p-4">
-        <h2 className="mb-3 text-sm font-bold text-slate-800">Search configuration</h2>
+      <section className={card}>
+        <SectionHeading n="01" title="Search configuration" />
         <div className="grid gap-3 md:grid-cols-4">
           <div>
             <label className={label}>Vertical</label>
@@ -182,7 +193,7 @@ export function Discovery() {
                   key={st}
                   type="button"
                   onClick={() => setStates((s) => (s.includes(st) ? s.filter((x) => x !== st) : [...s, st]))}
-                  className={`rounded-sm border px-2 py-0.5 text-xs ${states.includes(st) ? 'border-verde bg-verde-soft text-verde' : 'border-slate-300 text-slate-600'}`}
+                  className={`rounded-[2px] border px-2 py-0.5 text-xs transition-colors ${states.includes(st) ? 'border-verde bg-verde-soft text-verde' : 'border-line text-slate-mid hover:border-slate-mid'}`}
                 >
                   {st}
                 </button>
@@ -197,7 +208,7 @@ export function Discovery() {
                   key={st}
                   type="button"
                   onClick={() => setStages((s) => (s.includes(st) ? s.filter((x) => x !== st) : [...s, st]))}
-                  className={`rounded-sm border px-2 py-0.5 text-xs ${stages.includes(st) ? 'border-verde bg-verde-soft text-verde' : 'border-slate-300 text-slate-600'}`}
+                  className={`rounded-[2px] border px-2 py-0.5 text-xs transition-colors ${stages.includes(st) ? 'border-verde bg-verde-soft text-verde' : 'border-line text-slate-mid hover:border-slate-mid'}`}
                 >
                   {st}
                 </button>
@@ -222,7 +233,7 @@ export function Discovery() {
           </div>
           <div>
             <label className={label}>Min confidence ({minConfidence.toFixed(1)})</label>
-            <input type="range" min={0} max={1} step={0.1} className="w-full" value={minConfidence} onChange={(e) => setMinConfidence(Number(e.target.value))} />
+            <input type="range" min={0} max={1} step={0.1} className="w-full accent-verde" value={minConfidence} onChange={(e) => setMinConfidence(Number(e.target.value))} />
           </div>
         </div>
 
@@ -252,7 +263,7 @@ export function Discovery() {
             {sources.map((s) => {
               const disabled = s.state === 'planned' || s.state === 'unavailable';
               return (
-                <label key={s.id} className={`flex items-start gap-2 rounded-sm border border-slate-100 px-2 py-1 text-sm ${disabled ? 'opacity-60' : ''}`}>
+                <label key={s.id} className={`flex items-start gap-2 rounded-[2px] border border-line px-2 py-1 text-sm ${disabled ? 'opacity-60' : ''}`}>
                   <input
                     type="checkbox"
                     className="mt-0.5"
@@ -261,12 +272,10 @@ export function Discovery() {
                     onChange={() => setPicked((p) => (p.includes(s.id) ? p.filter((x) => x !== s.id) : [...p, s.id]))}
                   />
                   <span>
-                    <span className="font-medium text-slate-800">{s.name}</span>
-                    {s.state === 'live' && <span className="ml-1 rounded-sm bg-verde-soft px-1 text-[10px] text-verde">live</span>}
-                    {s.state === 'credentials-required' && <span className="ml-1 rounded-sm bg-marigold-soft px-1 text-[10px] text-marigold">credentials required — will be skipped</span>}
-                    {s.state === 'planned' && <span className="ml-1 rounded-sm bg-slate-100 px-1 text-[10px] text-slate-500">planned — no adapter yet</span>}
-                    {s.state === 'unavailable' && <span className="ml-1 rounded-sm bg-slate-100 px-1 text-[10px] text-slate-500">unavailable</span>}
-                    <span className="block text-[11px] text-slate-500">{s.needs}</span>
+                    <span className="font-medium text-ink">{s.name}</span>{' '}
+                    <SourceStateBadge state={s.state} />
+                    {stateNote(s.state) && <span className="ml-1 text-[10px] text-slate-mid">— {stateNote(s.state)}</span>}
+                    <span className="block text-[11px] text-slate-mid">{s.needs}</span>
                   </span>
                 </label>
               );
@@ -275,61 +284,65 @@ export function Discovery() {
         </div>
 
         {/* Estimate + run */}
-        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3">
-          <div className="text-sm text-slate-600">
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-3">
+          <div className="text-sm text-slate-mid">
             {estimate
-              ? <>Estimated ≤ {estimate.estimatedTokens.toLocaleString()} tokens ≈ ${estimate.estimatedCostUsd.toFixed(4)} <span className="text-[11px] text-slate-400">({estimate.note})</span></>
+              ? <>Estimated ≤ {estimate.estimatedTokens.toLocaleString()} tokens ≈ ${estimate.estimatedCostUsd.toFixed(4)} <span className="text-[11px] text-slate-mid/70">({estimate.note})</span></>
               : 'Select at least one source to estimate cost.'}
           </div>
           <div className="ml-auto flex gap-2">
             {running && (
-              <button onClick={cancel} className="rounded-sm border border-slate-300 px-3 py-1.5 text-sm text-slate-700">
+              <button onClick={cancel} className="rounded-[2px] border border-line px-3 py-1.5 text-sm text-ink transition-colors hover:border-alerta hover:text-alerta">
                 Cancel run
               </button>
             )}
             <button
               onClick={run}
               disabled={running || picked.length === 0}
-              className="rounded-sm bg-verde px-4 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+              className="rounded-[2px] bg-verde px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100"
             >
               {running ? 'Running sources…' : 'Run discovery'}
             </button>
           </div>
         </div>
-        {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+        {error && <p className="mt-2 text-sm text-alerta">{error}</p>}
       </section>
 
       {/* ── Last run summary ── */}
       {lastRun && (
-        <section className="mb-4 rounded-sm border border-slate-200 bg-white p-4">
+        <section className={card}>
+          <SectionHeading n="02" title="Last run summary" />
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className={`rounded-sm px-2 py-0.5 text-xs font-semibold ${statusChip[lastRun.status]}`}>{lastRun.status}</span>
-            <span className={`rounded-sm px-2 py-0.5 text-xs ${modeChip[lastRun.mode]}`}>{lastRun.mode}</span>
-            <span className="text-slate-700">
+            <span className={`rounded-[2px] px-2 py-0.5 text-xs font-semibold ${statusChip[lastRun.status]}`}>{lastRun.status}</span>
+            <span className={`rounded-[2px] px-2 py-0.5 text-xs ${modeChip[lastRun.mode]}`}>{lastRun.mode}</span>
+            <span className="text-ink">
               {lastRun.discovered} discovered · {lastRun.duplicatesSkipped} duplicates skipped · {lastRun.rejectedByValidation} rejected by validation · {lastRun.apiCalls} API calls · {(lastRun.durationMs / 1000).toFixed(1)}s
             </span>
           </div>
-          <ul className="mt-2 space-y-1 text-[12px] text-slate-500">
+          <ul className="mt-2 space-y-1 text-[12px] text-slate-mid">
             {lastRun.sourceResults.map((r) => (
               <li key={r.sourceId}>
-                <span className={`mr-1 rounded-sm px-1.5 py-0.5 text-[10px] ${modeChip[r.mode]}`}>{r.mode}</span>
-                <strong>{r.sourceId}</strong>: {r.found} found — {r.detail}
+                <span className={`mr-1 rounded-[2px] px-1.5 py-0.5 text-[10px] ${modeChip[r.mode]}`}>{r.mode}</span>
+                <strong className="text-ink">{r.sourceId}</strong>: {r.found} found — {r.detail}
               </li>
             ))}
           </ul>
           {lastRun.errors.length > 0 && (
-            <p className="mt-2 text-[12px] text-amber-700">Partial failures preserved: {lastRun.errors.join(' · ')}</p>
+            <p className="mt-2 text-[12px] text-marigold">Partial failures preserved: {lastRun.errors.join(' · ')}</p>
           )}
         </section>
       )}
 
       {/* ── Candidate preview ── */}
-      <section className="mb-4 rounded-sm border border-slate-200 bg-white p-4">
+      <section className={card}>
         <div className="mb-2 flex flex-wrap items-center gap-3">
-          <h2 className="text-sm font-bold text-slate-800">Candidate preview ({candidates.length} pending)</h2>
+          <h2 className="font-display text-lg font-semibold text-ink">
+            <span className="mr-2 font-mono text-sm text-marigold">03</span>
+            Candidate preview ({candidates.length} pending)
+          </h2>
           <div className="ml-auto flex items-center gap-2 text-sm">
-            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Duplicates:</label>
-            <select className="rounded-sm border border-slate-300 px-2 py-1 text-sm" value={dupAction} onChange={(e) => setDupAction(e.target.value as typeof dupAction)}>
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-mid">Duplicates:</label>
+            <select className="rounded-[2px] border border-line bg-panel px-2 py-1 text-sm transition-colors focus:border-marigold" value={dupAction} onChange={(e) => setDupAction(e.target.value as typeof dupAction)}>
               <option value="skip">Skip duplicates</option>
               <option value="merge-evidence">Merge evidence into existing record</option>
               <option value="import-anyway">Import anyway</option>
@@ -337,58 +350,58 @@ export function Discovery() {
             <button
               onClick={doImport}
               disabled={selected.size === 0}
-              className="rounded-sm bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
+              className="rounded-[2px] bg-ink px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-125 disabled:opacity-40 disabled:hover:brightness-100"
             >
               Import {selected.size > 0 ? `${selected.size} ` : ''}selected → Awaiting Review
             </button>
           </div>
         </div>
-        {importMsg && <p className="mb-2 rounded-sm bg-verde-soft px-2 py-1 text-sm text-verde">{importMsg}</p>}
+        {importMsg && <p className="mb-2 rounded-[2px] bg-verde-soft px-2 py-1 text-sm text-verde">{importMsg}</p>}
         {candidates.length === 0 ? (
-          <p className="text-sm text-slate-500">No pending candidates. Run a discovery search above — results wait here for human review before anything is imported.</p>
+          <p className="text-sm text-slate-mid">No pending candidates. Run a discovery search above — results wait here for human review before anything is imported.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto border border-line">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-500">
-                  <th className="py-1 pr-2"></th>
-                  <th className="py-1 pr-3">Company</th>
-                  <th className="py-1 pr-3">Vertical</th>
-                  <th className="py-1 pr-3">Stage</th>
-                  <th className="py-1 pr-3">State</th>
-                  <th className="py-1 pr-3">Confidence</th>
-                  <th className="py-1 pr-3">Duplicate</th>
-                  <th className="py-1 pr-3">Evidence</th>
+                <tr className="border-b border-line bg-ink text-white">
+                  <th className="py-2 pl-2 pr-2"></th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Company</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Vertical</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Stage</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">State</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Confidence</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Duplicate</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Evidence</th>
                 </tr>
               </thead>
               <tbody>
                 {candidates.map((c) => (
-                  <tr key={c.id} className="border-b border-slate-100 align-top">
+                  <tr key={c.id} className="border-b border-line align-top transition-colors hover:bg-paper/60">
                     <td className="py-1.5 pr-2">
                       <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggle(c.id)} />
                     </td>
                     <td className="py-1.5 pr-3">
-                      <div className="font-medium text-slate-800">{c.companyName}</div>
-                      <div className="text-[11px] text-slate-500">{c.pitch !== 'Unknown' ? c.pitch : '— pitch unknown —'}</div>
+                      <div className="font-medium text-ink">{c.companyName}</div>
+                      <div className="text-[11px] text-slate-mid">{c.pitch !== 'Unknown' ? c.pitch : '— pitch unknown —'}</div>
                       <div className="mt-0.5 flex gap-1">
-                        {c.simulated && <span className="rounded-sm bg-slate-100 px-1 text-[10px] text-slate-600">simulated</span>}
-                        <span className="rounded-sm bg-slate-100 px-1 text-[10px] text-slate-600">{c.sourceId}</span>
-                        <span className="rounded-sm bg-amber-50 px-1 text-[10px] text-amber-700">{c.verificationStatus}</span>
+                        {c.simulated && <span className="rounded-[2px] bg-paper px-1 text-[10px] text-slate-mid">simulated</span>}
+                        <span className="rounded-[2px] bg-paper px-1 text-[10px] text-slate-mid">{c.sourceId}</span>
+                        <span className="rounded-[2px] bg-marigold-soft px-1 text-[10px] text-marigold">{c.verificationStatus}</span>
                       </div>
                     </td>
                     <td className="py-1.5 pr-3">{c.vertical}</td>
                     <td className="py-1.5 pr-3">{c.stage}</td>
                     <td className="py-1.5 pr-3">{c.hqState}</td>
-                    <td className="py-1.5 pr-3">{(c.confidence * 100).toFixed(0)}%</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{(c.confidence * 100).toFixed(0)}%</td>
                     <td className="py-1.5 pr-3">
-                      {c.duplicateStatus === 'none' ? <span className="text-slate-400">—</span> : (
-                        <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold ${c.duplicateStatus === 'exact' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`}>
+                      {c.duplicateStatus === 'none' ? <span className="text-slate-mid">—</span> : (
+                        <span className={`rounded-[2px] px-1.5 py-0.5 text-[10px] font-semibold ${c.duplicateStatus === 'exact' ? 'bg-alerta-soft text-alerta' : 'bg-marigold-soft text-marigold'}`}>
                           {c.duplicateStatus} · {c.duplicateOfName}
                         </span>
                       )}
                     </td>
                     <td className="py-1.5 pr-3">
-                      <button onClick={() => setDrawer(c)} className="text-verde underline">
+                      <button onClick={() => setDrawer(c)} className="text-verde underline decoration-dotted">
                         {c.evidence.length} item{c.evidence.length === 1 ? '' : 's'}
                       </button>
                     </td>
@@ -402,22 +415,22 @@ export function Discovery() {
 
       {/* ── Evidence drawer + duplicate comparison ── */}
       {drawer && (
-        <div className="fixed inset-0 z-40 flex justify-end bg-black/30" onClick={() => setDrawer(null)}>
-          <div className="h-full w-full max-w-md overflow-y-auto bg-white p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-40 flex justify-end bg-ink/50 backdrop-blur-[2px]" onClick={() => setDrawer(null)}>
+          <div className="h-full w-full max-w-md overflow-y-auto bg-panel p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-800">{drawer.companyName} — evidence</h3>
-              <button className="text-slate-400" onClick={() => setDrawer(null)}>✕</button>
+              <h3 className="font-display text-base font-semibold text-ink">{drawer.companyName} — evidence</h3>
+              <button className="text-slate-mid transition-colors hover:text-ink" onClick={() => setDrawer(null)} aria-label="Close evidence drawer">✕</button>
             </div>
-            <p className="mb-3 text-[12px] text-slate-500">Suggested next step: {drawer.suggestedNextStep}</p>
+            <p className="mb-3 text-[12px] text-slate-mid">Suggested next step: {drawer.suggestedNextStep}</p>
             <ul className="space-y-2">
               {drawer.evidence.map((e, i) => (
-                <li key={i} className="rounded-sm border border-slate-200 p-2 text-sm">
-                  <div className="text-slate-800">{e.claim}</div>
-                  <div className="text-[11px] text-slate-500">
+                <li key={i} className="rounded-[2px] border border-line p-2 text-sm">
+                  <div className="text-ink">{e.claim}</div>
+                  <div className="text-[11px] text-slate-mid">
                     {e.source} · accessed {e.dateAccessed} · confidence {(e.confidence * 100).toFixed(0)}% · {e.verificationStatus}
                   </div>
                   <a href={e.url} target="_blank" rel="noreferrer" className="break-all text-[11px] text-verde underline">{e.url}</a>
-                  {e.notes && <div className="text-[11px] italic text-slate-400">{e.notes}</div>}
+                  {e.notes && <div className="text-[11px] italic text-slate-mid">{e.notes}</div>}
                 </li>
               ))}
             </ul>
@@ -427,38 +440,38 @@ export function Discovery() {
       )}
 
       {/* ── Run history ── */}
-      <section className="rounded-sm border border-slate-200 bg-white p-4">
-        <h2 className="mb-2 text-sm font-bold text-slate-800">Sourcing run history</h2>
+      <section className={`${card} mb-0`}>
+        <SectionHeading n="04" title="Sourcing run history" />
         {runs.length === 0 ? (
-          <p className="text-sm text-slate-500">No runs yet.</p>
+          <p className="text-sm text-slate-mid">No runs yet.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto border border-line">
             <table className="w-full text-left text-[13px]">
               <thead>
-                <tr className="border-b border-slate-200 text-[11px] uppercase tracking-wide text-slate-500">
-                  <th className="py-1 pr-3">When</th>
-                  <th className="py-1 pr-3">Type</th>
-                  <th className="py-1 pr-3">Mode</th>
-                  <th className="py-1 pr-3">Status</th>
-                  <th className="py-1 pr-3">Found</th>
-                  <th className="py-1 pr-3">Dup-skip</th>
-                  <th className="py-1 pr-3">Rejected</th>
-                  <th className="py-1 pr-3">Imported</th>
-                  <th className="py-1 pr-3">API</th>
-                  <th className="py-1 pr-3">Model</th>
-                  <th className="py-1 pr-3">~Tokens</th>
-                  <th className="py-1 pr-3">~Cost</th>
-                  <th className="py-1 pr-3">Time</th>
-                  <th className="py-1 pr-3">By</th>
+                <tr className="border-b border-line bg-ink text-white">
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">When</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Type</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Mode</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Status</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Found</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Dup-skip</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Rejected</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Imported</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">API</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Model</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">~Tokens</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">~Cost</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Time</th>
+                  <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">By</th>
                 </tr>
               </thead>
               <tbody>
                 {runs.map((r) => (
-                  <tr key={r.id} className="border-b border-slate-100">
+                  <tr key={r.id} className="border-b border-line transition-colors hover:bg-paper/60">
                     <td className="py-1 pr-3 whitespace-nowrap">{new Date(r.at).toLocaleString()}</td>
                     <td className="py-1 pr-3">{r.runType}</td>
-                    <td className="py-1 pr-3"><span className={`rounded-sm px-1.5 py-0.5 text-[10px] ${modeChip[r.mode]}`}>{r.mode}</span></td>
-                    <td className="py-1 pr-3"><span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold ${statusChip[r.status]}`}>{r.status}</span></td>
+                    <td className="py-1 pr-3"><span className={`rounded-[2px] px-1.5 py-0.5 text-[10px] ${modeChip[r.mode]}`}>{r.mode}</span></td>
+                    <td className="py-1 pr-3"><span className={`rounded-[2px] px-1.5 py-0.5 text-[10px] font-semibold ${statusChip[r.status]}`}>{r.status}</span></td>
                     <td className="py-1 pr-3">{r.discovered}</td>
                     <td className="py-1 pr-3">{r.duplicatesSkipped}</td>
                     <td className="py-1 pr-3">{r.rejectedByValidation}</td>
@@ -485,13 +498,13 @@ function DuplicateComparison({ cand }: { cand: DiscoveryCandidate }) {
   const { companies } = useCompanies();
   const existing = companies.find((c) => c.id === cand.duplicateOfId || c.name === cand.duplicateOfName);
   return (
-    <div className="mt-4 rounded-sm border border-amber-200 bg-amber-50 p-2">
-      <h4 className="mb-1 text-[12px] font-bold text-amber-800">
+    <div className="mt-4 border border-marigold/40 border-l-[3px] border-l-marigold bg-marigold-soft p-2">
+      <h4 className="mb-1 text-[12px] font-bold text-marigold">
         Possible duplicate ({cand.duplicateStatus}) of {cand.duplicateOfName}
       </h4>
       <table className="w-full text-[12px]">
         <thead>
-          <tr className="text-left text-[10px] uppercase text-amber-700">
+          <tr className="text-left text-[10px] uppercase text-marigold">
             <th className="pr-2"></th><th className="pr-2">Candidate</th><th>Existing record</th>
           </tr>
         </thead>
@@ -504,14 +517,14 @@ function DuplicateComparison({ cand }: { cand: DiscoveryCandidate }) {
             ['State', cand.hqState, existing?.state ?? '—'],
           ] as const).map(([k, a, b]) => (
             <tr key={k}>
-              <td className="pr-2 font-semibold text-amber-800">{k}</td>
-              <td className="pr-2">{a}</td>
-              <td>{b}</td>
+              <td className="pr-2 font-semibold text-ink">{k}</td>
+              <td className="pr-2 text-ink">{a}</td>
+              <td className="text-ink">{b}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="mt-1 text-[11px] text-amber-700">
+      <p className="mt-1 text-[11px] text-marigold">
         Choose "Merge evidence" to append this candidate's sourced evidence to the existing record (conflicts are kept side by side, never overwritten).
       </p>
     </div>

@@ -33,11 +33,11 @@ export function StealthRadar() {
         blurb="Operators who may be building before it's public — from authorized public signals only (GitHub activity, filings, conference bios, grants, public announcements, or a profile URL a user pastes in). LinkedIn is never scraped, hypotheses stay labeled as hypotheses, and no outreach ever happens without a human writing and approving it."
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
-        <span className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">
-          Signal feed ({feed.length})
-        </span>
-        <button onClick={() => setShowAdd(true)} className="ml-auto rounded-sm bg-ink px-3 py-1.5 text-sm font-semibold text-white">
+      <div className="mb-4 flex flex-wrap items-center gap-3 border border-line bg-ink px-4 py-2.5 text-sm text-white">
+        <span className="font-mono text-[11px] uppercase tracking-widest text-white/60">Signal feed</span>
+        <span className="font-mono text-lg font-bold tabular-nums text-marigold">{feed.length}</span>
+        <span className="text-xs text-white/50">unverified pre-company signals, strongest first</span>
+        <button onClick={() => setShowAdd(true)} className="ml-auto rounded-[2px] bg-marigold px-3 py-1.5 text-sm font-semibold text-ink shadow-sm transition-all hover:brightness-110">
           + Add signal manually
         </button>
       </div>
@@ -48,7 +48,7 @@ export function StealthRadar() {
           <SignalCard key={s.id} s={s} onChanged={load} onOutreach={(c) => setOutreachFor(c)} />
         ))}
         {feed.length === 0 && (
-          <p className="col-span-full rounded-md border border-line bg-panel px-4 py-6 text-sm text-slate-mid">
+          <p className="col-span-full border border-line bg-panel px-4 py-8 text-center text-sm text-slate-mid">
             No stealth signals are on record yet. Add one manually from an authorized public source (the button above),
             or record signals as they surface from filings, GitHub activity, or public announcements. Nothing is
             pre-populated or simulated.
@@ -59,7 +59,7 @@ export function StealthRadar() {
       {showAdd && <AddSignalForm onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load(); }} />}
       {outreachFor && <OutreachPanel c={outreachFor} onClose={() => setOutreachFor(null)} />}
 
-      <p className="mt-5 max-w-3xl rounded-md border border-line bg-panel px-4 py-3 text-xs leading-relaxed text-slate-mid">
+      <p className="mt-5 max-w-3xl border border-line border-l-[3px] border-l-marigold bg-panel px-4 py-3 text-xs leading-relaxed text-slate-mid">
         <span className="font-semibold text-ink">Ground rules.</span> Confidence reflects the strength of public signals, not certainty about anyone's plans. Hypotheses are generated only from the recorded signal fields — never from names, photos, schools, locations, or networks — and are permanently labeled Hypothesis · Unverified · Requires human review, always with alternatives. No automated outreach is ever sent: a team member reviews each record, decides whether contact is appropriate, and approves any draft personally.
       </p>
     </div>
@@ -100,11 +100,13 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
     };
   };
 
+  const confidenceTone = s.confidence === 'High' ? 'border-l-verde' : s.confidence === 'Medium' ? 'border-l-marigold' : 'border-l-slate-mid';
+
   return (
-    <article className="rounded-md border border-line bg-panel p-4">
+    <article className={`border border-line ${confidenceTone} border-l-[3px] bg-panel p-4 transition-shadow hover:shadow-[0_2px_16px_-6px_rgba(16,27,37,0.18)]`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="font-display text-base font-bold">{s.founderName}</h2>
+          <h2 className="font-display text-lg font-semibold text-ink">{s.founderName}</h2>
           <p className="text-xs text-slate-mid">
             {s.previousRole !== 'Unknown' ? s.previousRole : 'Previous role unknown'}
             {s.previousEmployer !== 'Unknown' ? ` · ${s.previousEmployer}` : ''}
@@ -114,13 +116,13 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span className="rounded-sm bg-marigold-soft px-1.5 py-0.5 font-mono font-semibold text-marigold">{s.signalType}</span>
-        <span className="rounded-sm bg-paper px-1.5 py-0.5 text-slate-mid">{s.possibleVertical === 'Unknown' ? 'vertical unknown' : verticalById(s.possibleVertical as VerticalId).short}</span>
-        <span className="rounded-sm bg-paper px-1.5 py-0.5 text-slate-mid">{s.suspectedGeography === 'Unknown' ? 'geography unknown' : s.suspectedGeography}</span>
-        <span className="rounded-sm bg-alerta-soft px-1.5 py-0.5 text-alerta">{s.verificationStatus}</span>
-        {s.simulated && <span className="rounded-sm bg-paper px-1.5 py-0.5 text-slate-mid">simulated</span>}
-        {s.outreachStatus !== 'None' && <span className="rounded-sm bg-paper px-1.5 py-0.5 font-semibold text-ink">{s.outreachStatus}</span>}
-        {s.assignedTo && <span className="rounded-sm bg-verde-soft px-1.5 py-0.5 text-verde">owner: {s.assignedTo}</span>}
+        <span className="rounded-[2px] bg-marigold-soft px-1.5 py-0.5 font-mono font-semibold text-marigold">{s.signalType}</span>
+        <span className="rounded-[2px] bg-paper px-1.5 py-0.5 text-slate-mid">{s.possibleVertical === 'Unknown' ? 'vertical unknown' : verticalById(s.possibleVertical as VerticalId).short}</span>
+        <span className="rounded-[2px] bg-paper px-1.5 py-0.5 text-slate-mid">{s.suspectedGeography === 'Unknown' ? 'geography unknown' : s.suspectedGeography}</span>
+        <span className="rounded-[2px] bg-alerta-soft px-1.5 py-0.5 text-alerta">{s.verificationStatus}</span>
+        {s.simulated && <span className="rounded-[2px] bg-paper px-1.5 py-0.5 text-slate-mid">simulated</span>}
+        {s.outreachStatus !== 'None' && <span className="rounded-[2px] bg-paper px-1.5 py-0.5 font-semibold text-ink">{s.outreachStatus}</span>}
+        {s.assignedTo && <span className="rounded-[2px] bg-verde-soft px-1.5 py-0.5 text-verde">owner: {s.assignedTo}</span>}
       </div>
 
       <p className="mt-2 text-xs text-ink">{s.evidenceSummary}</p>
@@ -129,12 +131,12 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
         {' '}· signal {s.signalDate} · accessed {s.dateAccessed}
       </p>
 
-      <button onClick={() => setOpen((o) => !o)} className="mt-2 text-xs text-verde underline">
+      <button onClick={() => setOpen((o) => !o)} className="mt-2 text-xs text-verde underline decoration-dotted">
         {open ? 'Hide detail' : 'Detail, hypothesis & actions'}
       </button>
 
       {open && (
-        <div className="mt-2 border-t border-line pt-2">
+        <div className="mt-3 border-t border-line pt-3">
           <h3 className="mb-1 font-mono text-[10px] uppercase tracking-widest text-slate-mid">Evidence timeline</h3>
           <ul className="space-y-1 text-xs">
             <li><span className="font-mono text-[10px] text-slate-mid">{s.signalDate}</span> — {s.signalType}: {s.evidenceSummary}</li>
@@ -152,7 +154,7 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
           )}
 
           <div className="mt-2">
-            <button onClick={genHypothesis} disabled={busy} className="rounded-sm border border-line px-2 py-1 text-xs disabled:opacity-50">
+            <button onClick={genHypothesis} disabled={busy} className="rounded-[2px] border border-line px-2 py-1 text-xs transition-colors hover:border-marigold hover:text-marigold disabled:opacity-50">
               {busy ? 'Generating…' : hypothesis ? 'Regenerate hypothesis' : 'Generate hypothesis'}
             </button>
             {hypothesis && <HypothesisView h={hypothesis} />}
@@ -163,7 +165,7 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
             <select
               value={s.assignedTo ?? ''}
               onChange={(e) => void patch({ assignedTo: e.target.value || null })}
-              className="rounded-sm border border-line bg-panel px-1.5 py-1"
+              className="rounded-[2px] border border-line bg-panel px-1.5 py-1 transition-colors focus:border-marigold"
             >
               <option value="">Unassigned</option>
               {OWNERS.map((o) => <option key={o}>{o}</option>)}
@@ -172,13 +174,13 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
             <select
               value={s.outreachStatus}
               onChange={(e) => void patch({ outreachStatus: e.target.value as StealthSignal['outreachStatus'] })}
-              className="rounded-sm border border-line bg-panel px-1.5 py-1"
+              className="rounded-[2px] border border-line bg-panel px-1.5 py-1 transition-colors focus:border-marigold"
             >
               {['None', 'Research queue', 'Outreach approved', 'Draft generated', 'Contacted'].map((o) => <option key={o}>{o}</option>)}
             </select>
             <button
               onClick={() => onOutreach(provisionalCompany())}
-              className="ml-auto rounded-sm bg-verde px-2 py-1 font-semibold text-white"
+              className="ml-auto rounded-[2px] bg-verde px-2 py-1 font-semibold text-white shadow-sm transition-all hover:brightness-110"
               title="Opens the standard human-approval outreach flow — nothing is sent automatically."
             >
               Generate outreach draft
@@ -209,12 +211,12 @@ function MissingInfo({ s }: { s: StealthSignal }) {
 
 function HypothesisView({ h }: { h: FounderHypothesis }) {
   return (
-    <div className="mt-2 rounded-sm border border-alerta/40 bg-alerta-soft p-2 text-xs">
+    <div className="mt-2 rounded-[2px] border border-alerta/40 bg-alerta-soft p-2 text-xs">
       <div className="mb-1 flex flex-wrap gap-1">
-        <span className="rounded-sm bg-alerta px-1.5 py-0.5 text-[10px] font-bold text-white">HYPOTHESIS</span>
-        <span className="rounded-sm bg-alerta px-1.5 py-0.5 text-[10px] font-bold text-white">UNVERIFIED</span>
-        <span className="rounded-sm bg-alerta px-1.5 py-0.5 text-[10px] font-bold text-white">REQUIRES HUMAN REVIEW</span>
-        <span className="rounded-sm bg-paper px-1.5 py-0.5 text-[10px] text-slate-mid">confidence band: {h.confidenceBand}</span>
+        <span className="rounded-[2px] bg-alerta px-1.5 py-0.5 text-[10px] font-bold text-white">HYPOTHESIS</span>
+        <span className="rounded-[2px] bg-alerta px-1.5 py-0.5 text-[10px] font-bold text-white">UNVERIFIED</span>
+        <span className="rounded-[2px] bg-alerta px-1.5 py-0.5 text-[10px] font-bold text-white">REQUIRES HUMAN REVIEW</span>
+        <span className="rounded-[2px] bg-paper px-1.5 py-0.5 text-[10px] text-slate-mid">confidence band: {h.confidenceBand}</span>
       </div>
       <p><strong>Likely vertical:</strong> {h.likelyVertical}</p>
       <p><strong>Possible product area:</strong> {h.possibleProductArea}</p>
@@ -279,11 +281,11 @@ function AddSignalForm({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     }
   };
 
-  const input = 'w-full rounded-sm border border-line px-2 py-1.5 text-sm';
+  const input = 'w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 text-sm transition-colors focus:border-marigold';
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-md bg-panel p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="mb-1 text-sm font-bold">Add stealth signal manually</h3>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-[2px]" onClick={onClose}>
+      <div className="w-full max-w-lg border border-line bg-panel p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-1 font-display text-lg font-semibold text-ink">Add stealth signal manually</h3>
         <p className="mb-3 text-[11px] text-slate-mid">
           Paste a public professional-profile URL or another authorized public source. The URL is stored as evidence for manual review — it is never crawled automatically, and restricted platforms are never scraped.
         </p>
@@ -311,9 +313,9 @@ function AddSignalForm({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           </div>
         </div>
         {err && <p className="mt-2 text-xs text-alerta">{err}</p>}
-        <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-sm border border-line px-3 py-1.5 text-sm">Cancel</button>
-          <button onClick={save} className="rounded-sm bg-verde px-3 py-1.5 text-sm font-semibold text-white">Save signal</button>
+        <div className="mt-3 flex justify-end gap-2 border-t border-line pt-3">
+          <button onClick={onClose} className="rounded-[2px] border border-line px-3 py-1.5 text-sm text-slate-mid transition-colors hover:border-marigold hover:text-marigold">Cancel</button>
+          <button onClick={save} className="rounded-[2px] bg-verde px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110">Save signal</button>
         </div>
       </div>
     </div>

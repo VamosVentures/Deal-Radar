@@ -20,7 +20,7 @@ export function IntegrationCards() {
   if (backendUp === false) {
     return (
       <section className="mt-6">
-        <h2 className="mb-2 font-display text-base font-bold">Integrations</h2>
+        <h2 className="mb-2 font-display text-base font-semibold text-ink">Integrations</h2>
         <ErrorNote
           message="The Deal Radar backend is not running."
           hint="Integration status, HubSpot sync, and Outlook drafts need the API. Start everything with `npm run dev`."
@@ -33,12 +33,12 @@ export function IntegrationCards() {
   return (
     <section className="mt-6">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="font-display text-base font-bold">Integrations</h2>
+        <h2 className="font-display text-base font-semibold text-ink">Integrations</h2>
       </div>
       <p className="mb-3 max-w-3xl text-xs text-slate-mid">
-        Credentials live only in the backend&rsquo;s <code className="rounded-sm bg-paper px-1 font-mono">.env</code> — the browser never sees tokens or keys, and this
+        Credentials live only in the backend&rsquo;s <code className="rounded-[2px] bg-paper px-1 font-mono">.env</code> — the browser never sees tokens or keys, and this
         page never displays saved secrets. Each integration goes live independently once its credentials exist; until then
-        it is simply not connected and every action fails with an honest error. See <code className="rounded-sm bg-paper px-1 font-mono">.env.example</code>.
+        it is simply not connected and every action fails with an honest error. See <code className="rounded-[2px] bg-paper px-1 font-mono">.env.example</code>.
       </p>
       <div className="grid gap-4 xl:grid-cols-3">
         <HubSpotCard conn={status.hubspot} refreshAll={refresh} />
@@ -51,10 +51,10 @@ export function IntegrationCards() {
 
 function CardShell({ title, conn, children }: { title: string; conn: IntegrationConnection; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col rounded-md border border-line bg-panel p-4">
+    <div className="flex flex-col border border-line bg-panel p-4">
       <div className="flex items-center gap-2">
-        <h3 className="font-display text-sm font-bold">{title}</h3>
-        <span className={`ml-auto rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${conn.connected ? 'bg-verde-soft text-verde' : 'bg-marigold-soft text-marigold'}`}>
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        <span className={`ml-auto rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${conn.connected ? 'bg-verde-soft text-verde' : 'bg-marigold-soft text-marigold'}`}>
           {conn.mode === 'live' ? (conn.connected ? 'Connected' : 'Configured · not connected') : 'Implemented — credentials required'}
         </span>
       </div>
@@ -67,7 +67,7 @@ function CardShell({ title, conn, children }: { title: string; conn: Integration
       {conn.permissions.length > 0 && (
         <div className="mt-1.5 flex flex-wrap gap-1">
           {conn.permissions.map((p) => (
-            <span key={p} className="rounded-sm bg-paper px-1.5 py-0.5 font-mono text-[10px] text-slate-mid">{p}</span>
+            <span key={p} className="rounded-[2px] bg-paper px-1.5 py-0.5 font-mono text-[10px] text-slate-mid">{p}</span>
           ))}
         </div>
       )}
@@ -139,7 +139,7 @@ function HubSpotCard({ conn, refreshAll }: { conn: IntegrationConnection; refres
             {showMapping ? 'Hide pipeline mapping' : 'Pipeline mapping'}
           </button>
         </div>
-        {testResult && <div className="rounded-sm bg-paper px-2 py-1.5">{testResult}</div>}
+        {testResult && <div className="rounded-[2px] bg-paper px-2 py-1.5">{testResult}</div>}
         {error && <ErrorNote message={error.message} hint={error.hint} />}
         {showMapping && <PipelineMappingEditor />}
         <HubSpotSearch />
@@ -176,10 +176,10 @@ function HubSpotSearch() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') void search(); }}
           placeholder={type === 'companies' ? 'Company name or domain' : 'Name or email'}
-          className="min-w-40 flex-1 rounded-sm border border-line bg-panel px-2 py-1"
+          className="min-w-40 flex-1 rounded-[2px] border border-line bg-panel px-2 py-1"
           aria-label="HubSpot search query"
         />
-        <select value={type} onChange={(e) => setType(e.target.value as 'companies' | 'contacts' | 'deals')} className="rounded-sm border border-line bg-panel px-1.5 py-1" aria-label="Record type">
+        <select value={type} onChange={(e) => setType(e.target.value as 'companies' | 'contacts' | 'deals')} className="rounded-[2px] border border-line bg-panel px-1.5 py-1" aria-label="Record type">
           <option value="companies">Companies</option>
           <option value="contacts">Contacts</option>
           <option value="deals">Deals</option>
@@ -188,7 +188,7 @@ function HubSpotSearch() {
       </div>
       {error && <div className="mt-1.5"><ErrorNote message={error.message} hint={error.hint} /></div>}
       {hits && (
-        <ul className="mt-1.5 divide-y divide-line rounded-sm border border-line">
+        <ul className="mt-1.5 divide-y divide-line rounded-[2px] border border-line">
           {hits.length === 0 && <li className="px-2 py-1.5">No matches.</li>}
           {hits.map((h) => (
             <li key={`${h.type}-${h.recordId}`} className="flex items-center gap-2 px-2 py-1.5">
@@ -273,7 +273,7 @@ function PipelineMappingEditor() {
   const pipeline = pipelines.find((p) => p.id === mapping.pipelineId);
 
   return (
-    <div className="rounded-sm border border-line bg-paper p-3">
+    <div className="rounded-[2px] border border-line bg-paper p-3">
       <p className="mb-2 leading-relaxed">
         Map each Deal Radar status to an existing HubSpot stage. Submissions are blocked for any status without a
         mapping — the app never guesses stage IDs.
@@ -286,7 +286,7 @@ function PipelineMappingEditor() {
             const p = pipelines.find((x) => x.id === e.target.value);
             setMapping({ pipelineId: e.target.value, pipelineLabel: p?.label ?? '', stages: {} });
           }}
-          className="mt-0.5 w-full rounded-sm border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case"
+          className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case"
         >
           {pipelines.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
         </select>
@@ -305,7 +305,7 @@ function PipelineMappingEditor() {
                     : Object.fromEntries(Object.entries(mapping.stages).filter(([k]) => k !== rs)),
                 })
               }
-              className="rounded-sm border border-line bg-panel px-2 py-1 text-xs"
+              className="rounded-[2px] border border-line bg-panel px-2 py-1 text-xs"
               aria-label={`HubSpot stage for ${rs}`}
             >
               <option value="">— not mapped —</option>
@@ -386,8 +386,8 @@ function OutlookCard({ conn, refreshAll }: { conn: IntegrationConnection; refres
       const res = await api.outlook.saveDraft({
         companyId: 'connection-test',
         to: conn.account && conn.account.includes('@') ? conn.account : 'you@example.com',
-        subject: 'Vamos Deal Radar — connection test draft',
-        body: 'This is a test draft created from Vamos Deal Radar settings. It was saved as a draft only and will never be sent automatically. You can delete it.',
+        subject: 'VamosVentures Deal Radar — connection test draft',
+        body: 'This is a test draft created from VamosVentures Deal Radar settings. It was saved as a draft only and will never be sent automatically. You can delete it.',
         senderName: 'Connection test',
         tone: '—',
       });
@@ -413,7 +413,7 @@ function OutlookCard({ conn, refreshAll }: { conn: IntegrationConnection; refres
             </>
           )}
         </div>
-        {message && <div className="rounded-sm bg-paper px-2 py-1.5">{message}</div>}
+        {message && <div className="rounded-[2px] bg-paper px-2 py-1.5">{message}</div>}
         {error && <ErrorNote message={error.message} hint={error.hint} />}
       </div>
     </CardShell>
@@ -474,7 +474,7 @@ function AiCard({ conn }: { conn: IntegrationConnection }) {
             {busy ? 'Generating…' : 'Test generation'}
           </button>
         </div>
-        {sample && <div className="rounded-sm bg-paper px-2 py-1.5 font-mono text-[11px]">{sample}</div>}
+        {sample && <div className="rounded-[2px] bg-paper px-2 py-1.5 font-mono text-[11px]">{sample}</div>}
         {error && <ErrorNote message={error.message} hint={error.hint} issues={error.issues} />}
       </div>
     </CardShell>

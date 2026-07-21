@@ -33,22 +33,22 @@ export function BackupPanel() {
   };
 
   return (
-    <section className="mt-6 rounded-md border border-line bg-panel p-4">
+    <section className="mt-6 border border-line bg-panel p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="font-display text-sm font-bold">Database backups</h2>
-        <button onClick={createNow} disabled={busy} className="ml-auto rounded-sm border border-line bg-panel px-3 py-1.5 text-xs font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50">
+        <h2 className="font-display text-base font-semibold text-ink">Database backups</h2>
+        <button onClick={createNow} disabled={busy} className="ml-auto rounded-[2px] border border-line bg-panel px-3 py-1.5 text-xs font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50">
           {busy ? 'Backing up…' : 'Create backup now'}
         </button>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-slate-mid">
         Timestamped, consistent SQLite snapshots (VACUUM INTO), stored outside the active database path.
         {settings && ` Retention: max ${settings.maxBackups} files or ${settings.maxBackupAgeDays} days, whichever is reached first.`}
-        {' '}Restoring is deliberately a server-side/CLI command only (<code className="rounded-sm bg-paper px-1 font-mono">npm run db:restore</code>) — never a browser button.
+        {' '}Restoring is deliberately a server-side/CLI command only (<code className="rounded-[2px] bg-paper px-1 font-mono">npm run db:restore</code>) — never a browser button.
       </p>
       {err && <p className="mt-2 text-xs text-alerta">{err}</p>}
       {backups && (
         backups.length === 0 ? (
-          <p className="mt-2 text-xs text-slate-mid">No backups yet — click "Create backup now" or run <code className="rounded-sm bg-paper px-1 font-mono">npm run db:backup</code>.</p>
+          <p className="mt-2 text-xs text-slate-mid">No backups yet — click "Create backup now" or run <code className="rounded-[2px] bg-paper px-1 font-mono">npm run db:backup</code>.</p>
         ) : (
           <table className="mt-3 w-full text-left text-xs">
             <thead>

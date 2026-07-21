@@ -4,7 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { useCompanies } from '../store/companies';
 import { scoreCompany } from '../lib/scoring';
 import { VERTICALS } from '../data/taxonomy';
-import { PageHeader, StatCard } from '../components/ui';
+import { PageHeader, PriorityStat, PriorityStrip } from '../components/ui';
 import { Ranking } from '../components/Ranking';
 import { api } from '../lib/api';
 import { DEFAULT_STALE_SETTINGS, type StaleSettings } from '../../shared/integrations';
@@ -58,47 +58,52 @@ export function Overview() {
       />
 
       {loadError && (
-        <div className="mb-4 rounded-md border border-alerta/40 bg-alerta-soft px-4 py-3 text-sm">
+        <div className="mb-5 border border-alerta/40 border-l-[3px] border-l-alerta bg-alerta-soft px-4 py-3 text-sm">
           <span className="font-semibold text-alerta">Company data unavailable.</span>{' '}
-          {loadError} Start the API with <code className="rounded-sm bg-paper px-1 font-mono text-xs">npm run dev</code>.
+          {loadError} Start the API with <code className="rounded-[2px] bg-paper px-1 font-mono text-xs">npm run dev</code>.
         </div>
       )}
       {loaded && !loadError && companies.length === 0 && (
-        <div className="mb-4 rounded-md border border-line bg-panel px-4 py-3 text-sm text-slate-mid">
+        <div className="mb-5 border border-line bg-panel px-4 py-3 text-sm text-slate-mid">
           <span className="font-semibold text-ink">No companies are on record yet.</span>{' '}
           Run Deal Discovery against live public sources, or import a CSV under Settings.
           Nothing is pre-populated: every record here comes from a real import you can audit.
         </div>
       )}
 
-      <div className={`mb-6 grid grid-cols-2 gap-3 ${staleSettings.showStaleOnOverview ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
-        <StatCard
+      <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-slate-mid">What needs attention</div>
+      <PriorityStrip>
+        <PriorityStat
           label="Discovered this week"
           value={discoveredThisWeek}
           sub={discoveredThisWeek === 1 ? '1 company imported in the last 7 days' : `${discoveredThisWeek} companies imported in the last 7 days`}
+          tone="ink"
         />
-        <StatCard
+        <PriorityStat
           label="High-fit companies"
           value={highFit}
           sub={`${highFit === 1 ? '1 company' : `${highFit} companies`} scored ${HIGH_FIT_THRESHOLD.toFixed(1)} or higher`}
+          tone="verde"
         />
-        <StatCard
+        <PriorityStat
           label="Awaiting review"
           value={awaitingReview}
           sub={`${awaitingReview === 1 ? '1 company needs' : `${awaitingReview} companies need`} a first review`}
+          tone="marigold"
         />
         {staleSettings.showStaleOnOverview && (
-          <StatCard
+          <PriorityStat
             label="Stale companies"
             value={stale}
             sub={`${stale === 1 ? '1 company' : `${stale} companies`} not refreshed in ${staleSettings.staleAfterDays}+ days`}
+            tone="alerta"
           />
         )}
-      </div>
+      </PriorityStrip>
 
       {staleSettings.showStaleOnOverview && staleCompanies.length > 0 && (
-        <div className="mb-6 rounded-md border border-line bg-panel px-4 py-3 text-xs">
-          <span className="font-mono uppercase tracking-widest text-slate-mid">
+        <div className="mt-4 border border-alerta/30 border-l-[3px] border-l-alerta bg-panel px-4 py-3 text-xs">
+          <span className="font-mono uppercase tracking-widest text-alerta">
             Stale companies{staleCompanies.length > staleSettings.maxStaleOnOverview ? ` (showing ${staleSettings.maxStaleOnOverview} of ${staleCompanies.length})` : ''}
           </span>
           <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
@@ -111,18 +116,18 @@ export function Overview() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+      <div className="mt-8 grid gap-8 xl:grid-cols-[1fr_320px]">
         <Ranking />
 
         <section>
           <h2 className="mb-2 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Coverage by sector</h2>
-          <div className="rounded-md border border-line bg-panel p-3">
+          <div className="border border-line bg-panel p-3.5">
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={mix} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 11, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fontFamily: 'JetBrains Mono' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip cursor={{ fill: 'var(--color-marigold-soft)' }} contentStyle={{ fontSize: 12, borderRadius: 6, borderColor: 'var(--color-line)' }} />
-                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                <XAxis dataKey="name" tick={{ fontSize: 11, fontFamily: 'JetBrains Mono', fill: 'var(--color-slate-mid)' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fontFamily: 'JetBrains Mono', fill: 'var(--color-slate-mid)' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip cursor={{ fill: 'var(--color-marigold-soft)' }} contentStyle={{ fontSize: 12, borderRadius: 2, borderColor: 'var(--color-line)', fontFamily: 'Inter' }} />
+                <Bar dataKey="count" radius={[1, 1, 0, 0]}>
                   {mix.map((m) => (
                     <Cell key={m.name} fill={m.core ? 'var(--color-verde)' : 'var(--color-marigold)'} />
                   ))}

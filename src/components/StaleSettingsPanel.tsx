@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { DEFAULT_STALE_SETTINGS, type StaleSettings } from '../../shared/integrations';
 
-const input = 'rounded-sm border border-line bg-panel px-2 py-1';
+const input = 'rounded-[2px] border border-line bg-panel px-2 py-1';
 
 /**
  * Administrator-configurable stale-record settings. Distinct from a
@@ -38,8 +38,8 @@ export function StaleSettingsPanel() {
   };
 
   return (
-    <section className="mt-6 rounded-md border border-line bg-panel p-4">
-      <h2 className="font-display text-sm font-bold">Stale-record settings</h2>
+    <section className="mt-6 border border-line bg-panel p-4">
+      <h2 className="font-display text-base font-semibold text-ink">Stale-record settings</h2>
       <p className="mt-1 text-xs leading-relaxed text-slate-mid">
         Controls when the Companies/Overview UI flags an existing company "Stale" — separate from a
         schedule's refresh age and from discovery's evidence-recency filter.
@@ -99,7 +99,7 @@ export function StaleSettingsPanel() {
         <button
           onClick={save}
           disabled={busy}
-          className="rounded-sm border border-line bg-panel px-3 py-1.5 text-xs font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
+          className="rounded-[2px] border border-line bg-panel px-3 py-1.5 text-xs font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
         >
           {busy ? 'Saving…' : 'Save stale settings'}
         </button>

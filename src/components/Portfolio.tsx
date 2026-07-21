@@ -35,24 +35,24 @@ export function PortfolioPanel() {
   };
 
   return (
-    <section className="mt-6 rounded-md border border-line bg-panel p-4">
+    <section className="mt-6 border border-line bg-panel p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="font-display text-sm font-bold">Vamos portfolio ({portfolio.length})</h2>
+        <h2 className="font-display text-base font-semibold text-ink">Vamos portfolio ({portfolio.length})</h2>
         <span className="text-[11px] text-slate-mid">powers portfolio comparison — themes and evidence come only from what you record here</span>
         <div className="ml-auto flex gap-2">
-          <label className="cursor-pointer rounded-sm border border-line px-2 py-1 text-xs">
+          <label className="cursor-pointer rounded-[2px] border border-line px-2 py-1 text-xs">
             Import CSV
             <input type="file" accept=".csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void onCsv(f); e.target.value = ''; }} />
           </label>
-          <button className="rounded-sm bg-ink px-2 py-1 text-xs font-semibold text-white" onClick={() => setShowAdd((s) => !s)}>
+          <button className="rounded-[2px] bg-ink px-2 py-1 text-xs font-semibold text-white" onClick={() => setShowAdd((s) => !s)}>
             {showAdd ? 'Close form' : '+ Add company'}
           </button>
         </div>
       </div>
       <p className="mt-1 text-[10px] text-slate-mid">
-        CSV columns: name, vertical, stage, status, website, publicDescription, investmentDate, themes, partnershipThemes, competitiveOverlapThemes, evidenceUrls (lists pipe-separated, e.g. <code className="rounded-sm bg-paper px-1 font-mono">payments|inclusion</code>).
+        CSV columns: name, vertical, stage, status, website, publicDescription, investmentDate, themes, partnershipThemes, competitiveOverlapThemes, evidenceUrls (lists pipe-separated, e.g. <code className="rounded-[2px] bg-paper px-1 font-mono">payments|inclusion</code>).
       </p>
-      {csvMsg && <p className="mt-2 rounded-sm bg-verde-soft px-2 py-1 text-xs text-verde">{csvMsg}</p>}
+      {csvMsg && <p className="mt-2 rounded-[2px] bg-verde-soft px-2 py-1 text-xs text-verde">{csvMsg}</p>}
       {error && <p className="mt-2 text-xs text-alerta">{error}</p>}
 
       {showAdd && <AddPortfolioForm onSaved={() => { setShowAdd(false); load(); }} />}
@@ -122,9 +122,9 @@ function AddPortfolioForm({ onSaved }: { onSaved: () => void }) {
     }
   };
 
-  const input = 'rounded-sm border border-line px-2 py-1 text-xs';
+  const input = 'rounded-[2px] border border-line px-2 py-1 text-xs';
   return (
-    <div className="mt-3 grid gap-1.5 rounded-sm border border-line bg-paper p-2 md:grid-cols-3">
+    <div className="mt-3 grid gap-1.5 rounded-[2px] border border-line bg-paper p-2 md:grid-cols-3">
       <input className={input} placeholder="Name *" value={f.name} onChange={set('name')} />
       <input className={input} placeholder="Vertical *" value={f.vertical} onChange={set('vertical')} />
       <input className={input} placeholder="Stage *" value={f.stage} onChange={set('stage')} />
@@ -138,7 +138,7 @@ function AddPortfolioForm({ onSaved }: { onSaved: () => void }) {
       <input className={input + ' md:col-span-3'} placeholder="Evidence URLs (url|url)" value={f.evidenceUrls} onChange={set('evidenceUrls')} />
       {err && <p className="text-xs text-alerta md:col-span-3">{err}</p>}
       <div className="md:col-span-3">
-        <button onClick={save} className="rounded-sm bg-verde px-3 py-1 text-xs font-semibold text-white">Save (upserts by name)</button>
+        <button onClick={save} className="rounded-[2px] bg-verde px-3 py-1 text-xs font-semibold text-white">Save (upserts by name)</button>
       </div>
     </div>
   );

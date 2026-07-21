@@ -40,15 +40,15 @@ export function Ranking() {
     : show === 'highFit' ? filtered.filter((x) => x.fit.score >= 8)
     : filtered;
 
-  const sel = 'rounded-sm border border-line bg-panel px-2 py-1 text-xs';
+  const sel = 'rounded-[2px] border border-line bg-panel px-2 py-1 text-xs transition-colors focus:border-marigold';
 
   return (
     <section>
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">Vamos Fit ranking</h2>
-        <div className="ml-auto flex flex-wrap gap-1">
+        <div className="ml-auto flex flex-wrap gap-1 border border-line bg-panel p-0.5">
           {([['top10', 'Top 10'], ['highFit', 'Scored 8.0 or higher'], ['all', 'All']] as const).map(([id, label]) => (
-            <button key={id} onClick={() => setShow(id)} className={`rounded-sm border px-2 py-1 text-xs ${show === id ? 'border-verde bg-verde-soft font-semibold text-verde' : 'border-line text-slate-mid'}`}>{label}</button>
+            <button key={id} onClick={() => setShow(id)} className={`rounded-[1px] px-2 py-1 text-xs transition-colors ${show === id ? 'bg-verde-soft font-semibold text-verde' : 'text-slate-mid hover:text-ink'}`}>{label}</button>
           ))}
         </div>
       </div>
@@ -76,30 +76,30 @@ export function Ranking() {
       </div>
 
       {limited.length === 0 ? (
-        <p className="rounded-md border border-line bg-panel px-4 py-6 text-sm text-slate-mid">
+        <p className="border border-line bg-panel px-4 py-6 text-sm text-slate-mid">
           No companies match. Clear a filter, run Deal Discovery, or import a CSV under Settings.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-md border border-line bg-panel">
+        <div className="overflow-x-auto border border-line bg-panel">
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead>
-              <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wider text-slate-mid">
-                <th className="px-3 py-2">#</th>
-                <th className="px-3 py-2">Score</th>
-                <th className="px-3 py-2">Company</th>
-                <th className="px-3 py-2">Vertical / stage</th>
-                <th className="px-3 py-2">State</th>
-                <th className="px-3 py-2">Founders</th>
-                <th className="px-3 py-2">Status</th>
+              <tr className="border-b border-line bg-ink text-white">
+                <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">#</th>
+                <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Score</th>
+                <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Company</th>
+                <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Vertical / stage</th>
+                <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">State</th>
+                <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Founders</th>
+                <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Status</th>
               </tr>
             </thead>
             <tbody>
               {limited.map(({ c, fit, m }, i) => (
-                <tr key={c.id} className="border-b border-line align-top">
-                  <td className="px-3 py-2.5 font-mono text-xs text-slate-mid">{i + 1}</td>
+                <tr key={c.id} className="border-b border-line align-top transition-colors hover:bg-paper/60">
+                  <td className="px-3 py-2.5 font-mono text-xs tabular-nums text-slate-mid">{i + 1}</td>
                   <td className="px-3 py-2.5"><ScoreGauge score={fit.score} /></td>
                   <td className="px-3 py-2.5">
-                    <Link to={`/companies?c=${c.id}`} className="font-semibold hover:underline">{c.name}</Link>
+                    <Link to={`/companies?c=${c.id}`} className="font-semibold text-ink hover:underline">{c.name}</Link>
                     <div className="max-w-xs text-xs text-slate-mid">{c.oneLiner}</div>
                   </td>
                   <td className="px-3 py-2.5 text-xs">{c.vertical} · {c.stage}</td>
@@ -109,10 +109,10 @@ export function Ranking() {
                     <div className="flex flex-wrap gap-1">
                       {fit.exceptions.map((e) => <ExceptionBadge key={e.flag} flag={e.flag} compact />)}
                       {(m?.reviewStatus === 'New' || m?.reviewStatus === 'Awaiting Review') && (
-                        <span className="rounded-sm bg-marigold-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-marigold">{m.reviewStatus}</span>
+                        <span className="rounded-[2px] bg-marigold-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-marigold">{m.reviewStatus}</span>
                       )}
-                      {m?.stale && <span className="rounded-sm bg-alerta-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-alerta">Stale</span>}
-                      {m?.discoverySource && <span className="rounded-sm bg-paper px-1.5 py-0.5 font-mono text-[10px] text-slate-mid">via {m.discoverySource}</span>}
+                      {m?.stale && <span className="rounded-[2px] bg-alerta-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-alerta">Stale</span>}
+                      {m?.discoverySource && <span className="rounded-[2px] bg-paper px-1.5 py-0.5 font-mono text-[10px] text-slate-mid">via {m.discoverySource}</span>}
                     </div>
                   </td>
                 </tr>

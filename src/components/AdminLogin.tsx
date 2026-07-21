@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api, ApiError } from '../lib/api';
 
-const input = 'rounded-sm border border-line bg-panel px-2 py-1';
+const input = 'rounded-[2px] border border-line bg-panel px-2 py-1';
 
 /**
  * Real server-side gate for Settings' admin-only actions — previously
@@ -17,10 +17,10 @@ export function AdminLogin({ configured, onAuthenticated }: { configured: boolea
 
   if (!configured) {
     return (
-      <div className="rounded-md border border-alerta/40 bg-alerta-soft px-4 py-3 text-sm">
+      <div className="border border-alerta/40 bg-alerta-soft px-4 py-3 text-sm">
         <span className="font-semibold text-alerta">Administrator sign-in is not enabled.</span>{' '}
-        Set <code className="rounded-sm bg-paper px-1 font-mono">ADMIN_PASSWORD</code> in the backend's{' '}
-        <code className="rounded-sm bg-paper px-1 font-mono">.env</code> to unlock scheduled sourcing,
+        Set <code className="rounded-[2px] bg-paper px-1 font-mono">ADMIN_PASSWORD</code> in the backend's{' '}
+        <code className="rounded-[2px] bg-paper px-1 font-mono">.env</code> to unlock scheduled sourcing,
         connector management, and HubSpot/Outlook connect actions. Until then, these admin-only actions
         are unusable — not open.
       </div>
@@ -43,8 +43,8 @@ export function AdminLogin({ configured, onAuthenticated }: { configured: boolea
   };
 
   return (
-    <form onSubmit={submit} className="rounded-md border border-line bg-panel p-4">
-      <h2 className="font-display text-sm font-bold">Administrator sign-in required</h2>
+    <form onSubmit={submit} className="border border-line bg-panel p-4 shadow-sm">
+      <h2 className="font-display text-base font-semibold text-ink">Administrator sign-in required</h2>
       <p className="mt-1 text-xs leading-relaxed text-slate-mid">
         Scheduled sourcing, connector management, and integration connect/disconnect are gated behind a
         real server-side session — not just this page's label. Sign in to continue.
@@ -63,7 +63,7 @@ export function AdminLogin({ configured, onAuthenticated }: { configured: boolea
         <button
           type="submit"
           disabled={busy || password.length === 0}
-          className="rounded-sm border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
+          className="rounded-[2px] border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
         >
           {busy ? 'Signing in…' : 'Sign in'}
         </button>

@@ -1,23 +1,72 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #16232e;
-  --color-ink-soft: #24384a;
-  --color-paper: #fafbf9;
+  /* The Committee Console: graphite command chrome + a cool, precise
+     data canvas. Ink is deliberately dual-use — near-black graphite
+     works as both the dark chrome background (bg-ink) and primary
+     body text on the light canvas (text-ink). Token names are
+     unchanged from prior passes so utilities keep working; the values
+     now commit to a much bolder register. */
+  --color-ink: #0c0d0f;
+  --color-ink-soft: #1b1c1f;
+  --color-paper: #f2f3f5;
   --color-panel: #ffffff;
-  --color-line: #e3e7e2;
-  --color-marigold: #d98815;
-  --color-marigold-soft: #fdf3e0;
-  --color-verde: #16766c;
-  --color-verde-soft: #e4f2ef;
-  --color-alerta: #c14f3d;
-  --color-alerta-soft: #fbebe7;
-  --color-slate-mid: #5d6f7d;
+  --color-line: #dfe1e5;
+  --color-marigold: #c6820c;
+  --color-marigold-soft: #f7e9cd;
+  --color-verde: #0c6b52;
+  --color-verde-soft: #d9efe7;
+  --color-alerta: #9e3320;
+  --color-alerta-soft: #f5e1db;
+  --color-slate-mid: #5f6469;
 
-  --font-display: "Archivo", system-ui, sans-serif;
+  /* Fraunces is reserved for judgment — a company's name, a verdict, a
+     recommendation — never for chrome. JetBrains Mono carries every
+     unit of evidence: scores, timestamps, ids, financials. Inter runs
+     the interface itself. */
+  --font-display: "Fraunces", "Iowan Old Style", ui-serif, serif;
   --font-body: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
-html { font-family: var(--font-body); }
-body { background: var(--color-paper); color: var(--color-ink); }
+html {
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: var(--color-marigold-soft);
+  color: var(--color-ink);
+}
+
+/* Visible, deliberate keyboard focus everywhere — no invisible-focus dead ends. */
+:focus-visible {
+  outline: 2px solid var(--color-marigold);
+  outline-offset: 2px;
+  border-radius: 1px;
+}
+
+/* A hairline scrollbar that reads as instrumentation, not chrome. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-line); border-radius: 999px; border: 2px solid var(--color-paper); }
+::-webkit-scrollbar-thumb:hover { background: var(--color-slate-mid); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

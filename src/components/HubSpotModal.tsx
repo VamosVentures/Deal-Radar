@@ -124,7 +124,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           {fit.exceptions.length > 0 && (
             <div className="space-y-1.5">
               {fit.exceptions.map((e) => (
-                <div key={e.flag} className="rounded-sm border border-alerta/40 bg-alerta-soft px-3 py-2 text-xs">
+                <div key={e.flag} className="rounded-[2px] border border-alerta/40 bg-alerta-soft px-3 py-2 text-xs">
                   <ExceptionBadge flag={e.flag} /> <span className="mt-1 block text-ink/80">{e.message}</span>
                 </div>
               ))}
@@ -150,13 +150,13 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
               Suggested HubSpot stage
-              <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-0.5 w-full rounded-sm border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+              <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
                 {RADAR_HUBSPOT_STAGES.map((s) => <option key={s}>{s}</option>)}
               </select>
             </label>
             <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
               Relationship owner
-              <select value={owner} onChange={(e) => setOwner(e.target.value)} className="mt-0.5 w-full rounded-sm border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+              <select value={owner} onChange={(e) => setOwner(e.target.value)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
                 {OWNERS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </label>
@@ -167,7 +167,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
             <h3 className="mb-1.5 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Founder contacts ({contacts.length})</h3>
             <div className="space-y-2">
               {contacts.map((ct, i) => (
-                <div key={i} className="grid gap-2 rounded-sm border border-line bg-paper p-2.5 sm:grid-cols-3">
+                <div key={i} className="grid gap-2 rounded-[2px] border border-line bg-paper p-2.5 sm:grid-cols-3">
                   <Field label="Name" value={`${ct.firstName} ${ct.lastName}`.trim()} onChange={(v) => {
                     const [firstName, ...rest] = v.split(' ');
                     setContacts((prev) => prev.map((x, j) => j === i ? { ...x, firstName, lastName: rest.join(' ') } : x));
@@ -183,7 +183,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                     <span>· source: {ct.infoSource}</span>
                     <span>· {ct.verificationStatus}</span>
                     {ct.demographics.length > 0 ? (
-                      <span className="rounded-sm bg-verde-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-verde" title={ct.demographics.map((d) => `${d.indicator}: ${d.basis} — ${d.sourceName}`).join('\n')}>
+                      <span className="rounded-[2px] bg-verde-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-verde" title={ct.demographics.map((d) => `${d.indicator}: ${d.basis} — ${d.sourceName}`).join('\n')}>
                         {ct.demographics.map((d) => d.indicator).join(', ')} ✓ verified
                       </span>
                     ) : (
@@ -228,7 +228,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           </p>
           <div className="space-y-2">
             {matches.map((m) => (
-              <div key={m.recordId} className="flex flex-wrap items-center gap-2 rounded-sm border border-line bg-paper px-3 py-2 text-sm">
+              <div key={m.recordId} className="flex flex-wrap items-center gap-2 rounded-[2px] border border-line bg-paper px-3 py-2 text-sm">
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold">{m.name}</div>
                   <div className="font-mono text-[11px] text-slate-mid">
@@ -255,7 +255,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
 
       {step === 'done' && result && (
         <div className="space-y-3">
-          <div className="rounded-sm bg-verde-soft px-3 py-2 text-sm text-verde">
+          <div className="rounded-[2px] bg-verde-soft px-3 py-2 text-sm text-verde">
             <div className="flex items-center gap-2 font-semibold">
               Saved — company {result.action}, {result.contactIds.length} contact{result.contactIds.length === 1 ? '' : 's'}, 1 deal
             </div>

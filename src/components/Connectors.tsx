@@ -51,7 +51,7 @@ export function ConnectorPanel() {
   if (error && connectors.length === 0) {
     return (
       <section className="mt-8">
-        <h2 className="mb-2 font-display text-base font-bold">Refresh connectors</h2>
+        <h2 className="mb-2 font-display text-base font-semibold text-ink">Refresh connectors</h2>
         <ErrorNote message={error.message} hint={error.hint} />
       </section>
     );
@@ -60,7 +60,7 @@ export function ConnectorPanel() {
   return (
     <section className="mt-8">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <h2 className="font-display text-base font-bold">Refresh connectors</h2>
+        <h2 className="font-display text-base font-semibold text-ink">Refresh connectors</h2>
         <div className="ml-auto flex gap-2">
           <button className={btnPrimary} disabled={running} onClick={() => run(null)}>
             {running ? 'Refreshing…' : 'Run refresh (all enabled)'}
@@ -81,10 +81,10 @@ export function ConnectorPanel() {
         integrations that are not connected fail honestly; one failing connector never discards the others&rsquo; work.
       </p>
 
-      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-md border border-line bg-panel px-3 py-2.5 text-xs">
+      <div className="mb-4 flex flex-wrap items-end gap-3 border border-line bg-panel px-3 py-2.5 text-xs">
         <label className="flex flex-col gap-1">
           <span className="font-mono text-[10px] uppercase text-slate-mid">Vertical scope</span>
-          <select value={vertical} onChange={(e) => setVertical(e.target.value)} className="rounded-sm border border-line bg-panel px-2 py-1">
+          <select value={vertical} onChange={(e) => setVertical(e.target.value)} className="rounded-[2px] border border-line bg-panel px-2 py-1">
             <option value="">All verticals</option>
             <option value="health">Health &amp; Wellness</option>
             <option value="fintech">FinTech</option>
@@ -98,7 +98,7 @@ export function ConnectorPanel() {
           <input
             type="number" min={1} max={500} value={maxRecords}
             onChange={(e) => setMaxRecords(Math.max(1, Math.min(500, Number(e.target.value) || 25)))}
-            className="w-24 rounded-sm border border-line bg-panel px-2 py-1"
+            className="w-24 rounded-[2px] border border-line bg-panel px-2 py-1"
           />
         </label>
         <label className="flex items-center gap-1.5 pb-1">
@@ -127,7 +127,7 @@ function ModeChip({ mode }: { mode: 'live' | 'local' | 'simulated' | 'failed' | 
     mode === 'live' ? 'bg-verde-soft text-verde'
     : mode === 'failed' ? 'bg-alerta-soft text-alerta'
     : 'bg-marigold-soft text-marigold';
-  return <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${cls}`}>{mode}</span>;
+  return <span className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${cls}`}>{mode}</span>;
 }
 
 const SCHEDULE_KEY = 'vamos-deal-radar:connector-schedules:v1';
@@ -144,12 +144,12 @@ function ConnectorCard({ c, running, onRun, onChanged }: {
   const [showSetup, setShowSetup] = useState(false);
   const [schedule, setSchedule] = useState(() => loadSchedules()[c.meta.id] ?? 'Manual');
   return (
-    <div className="flex flex-col rounded-md border border-line bg-panel p-3.5">
+    <div className="flex flex-col border border-line bg-panel p-3.5">
       <div className="flex items-center gap-2">
-        <h3 className="font-display text-sm font-bold">{c.meta.name}</h3>
-        <span className="rounded-sm bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-mid">{c.meta.kind}</span>
+        <h3 className="text-sm font-semibold text-ink">{c.meta.name}</h3>
+        <span className="rounded-[2px] bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-mid">{c.meta.kind}</span>
         <span className="ml-auto flex items-center gap-1.5">
-          {!c.state.enabled && <span className="rounded-sm bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-mid">disabled</span>}
+          {!c.state.enabled && <span className="rounded-[2px] bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-mid">disabled</span>}
           <ModeChip mode={c.state.lastSyncMode} />
         </span>
       </div>
@@ -158,7 +158,7 @@ function ConnectorCard({ c, running, onRun, onChanged }: {
         {c.state.lastSyncAt ? <>Last sync {c.state.lastSyncAt.slice(0, 16).replace('T', ' ')} · {c.state.recordsImported} record{c.state.recordsImported === 1 ? '' : 's'}</> : 'Not synced yet'}
       </div>
       {c.state.lastError && (
-        <div className="mt-1.5 rounded-sm border border-alerta/40 bg-alerta-soft px-2 py-1.5 text-[11px] text-alerta">{c.state.lastError}</div>
+        <div className="mt-1.5 rounded-[2px] border border-alerta/40 bg-alerta-soft px-2 py-1.5 text-[11px] text-alerta">{c.state.lastError}</div>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button className={btnGhost} disabled={running || !c.state.enabled} onClick={onRun}>Run sync</button>
@@ -179,7 +179,7 @@ function ConnectorCard({ c, running, onRun, onChanged }: {
             all[c.meta.id] = e.target.value;
             try { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(all)); } catch { /* non-fatal */ }
           }}
-          className="ml-auto rounded-sm border border-line bg-panel px-1.5 py-0.5 font-mono text-[10px]"
+          className="ml-auto rounded-[2px] border border-line bg-panel px-1.5 py-0.5 font-mono text-[10px]"
           title="Stored as configuration only — no scheduler runs in this backend"
           aria-label={`Schedule for ${c.meta.name} (configuration only)`}
         >
@@ -187,7 +187,7 @@ function ConnectorCard({ c, running, onRun, onChanged }: {
         </select>
       </div>
       {showSetup && (
-        <div className="mt-2 rounded-sm bg-paper px-2 py-1.5 text-[11px] leading-relaxed text-slate-mid">
+        <div className="mt-2 rounded-[2px] bg-paper px-2 py-1.5 text-[11px] leading-relaxed text-slate-mid">
           <div><span className="font-semibold text-ink">Needs:</span> {c.meta.needs}</div>
           <div className="mt-1"><span className="font-semibold text-ink">Setup:</span> {c.meta.setup}</div>
         </div>
@@ -287,7 +287,7 @@ function RefreshLog({ log }: { log: RefreshLogEntry[] }) {
     return <p className="mt-4 text-xs text-slate-mid">No refresh has been run yet — trigger one above to populate the log.</p>;
   }
   return (
-    <div className="mt-4 rounded-md border border-line bg-panel">
+    <div className="mt-4 border border-line bg-panel">
       <h3 className="border-b border-line px-3 py-2 font-mono text-[11px] uppercase tracking-widest text-slate-mid">
         Refresh log (latest {log.length})
       </h3>
@@ -296,7 +296,7 @@ function RefreshLog({ log }: { log: RefreshLogEntry[] }) {
           <li key={entry.id} className="px-3 py-2.5">
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="font-mono text-[10px] text-slate-mid">{entry.at.slice(0, 16).replace('T', ' ')}</span>
-              <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${
+              <span className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${
                 entry.status === 'ok' ? 'bg-verde-soft text-verde'
                 : entry.status === 'partial' ? 'bg-marigold-soft text-marigold'
                 : 'bg-alerta-soft text-alerta'

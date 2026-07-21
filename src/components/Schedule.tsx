@@ -86,14 +86,14 @@ export function SchedulePanel() {
   const toggleStage = (s: string) =>
     setStages((p) => (p.includes(s) ? p.filter((x) => x !== s) : [...p, s]));
 
-  const input = 'rounded-sm border border-line bg-panel px-2 py-1';
+  const input = 'rounded-[2px] border border-line bg-panel px-2 py-1';
 
   return (
-    <section className="mb-4 rounded-sm border border-line bg-panel p-4">
+    <section className="mb-4 border border-line bg-panel p-4 shadow-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-sm font-bold text-ink">Scheduled sourcing</h2>
+        <h2 className="font-display text-base font-semibold text-ink">Scheduled sourcing</h2>
         {state && (
-          <span className={`rounded-sm px-2 py-0.5 font-mono text-[10px] font-semibold ${state.active ? 'bg-verde-soft text-verde' : 'bg-paper text-slate-mid'}`}>
+          <span className={`rounded-[2px] px-2 py-0.5 font-mono text-[10px] font-semibold ${state.active ? 'bg-verde-soft text-verde' : 'bg-paper text-slate-mid'}`}>
             {state.active ? 'Active' : 'Configured but inactive'}
           </span>
         )}
@@ -105,7 +105,7 @@ export function SchedulePanel() {
         founders, send email, approve/reject deals, or change HubSpot stages.
       </p>
 
-      <div className="mt-3 grid gap-2 rounded-sm border border-line bg-paper p-3 text-xs">
+      <div className="mt-3 grid gap-2 rounded-[2px] border border-line bg-paper p-3 text-xs">
         <div className="grid gap-2 sm:grid-cols-3">
           <label className="flex flex-col gap-1">
             <span className="font-mono text-[10px] uppercase text-slate-mid">Frequency</span>
@@ -174,7 +174,7 @@ export function SchedulePanel() {
               return (
                 <label
                   key={s.id}
-                  className={`rounded-sm border px-1.5 py-0.5 ${disabled ? 'cursor-not-allowed opacity-50 border-line text-slate-mid' : 'cursor-pointer'} ${!disabled && picked.includes(s.id) ? 'border-verde bg-verde-soft text-verde' : !disabled ? 'border-line text-slate-mid' : ''}`}
+                  className={`rounded-[2px] border px-1.5 py-0.5 ${disabled ? 'cursor-not-allowed opacity-50 border-line text-slate-mid' : 'cursor-pointer'} ${!disabled && picked.includes(s.id) ? 'border-verde bg-verde-soft text-verde' : !disabled ? 'border-line text-slate-mid' : ''}`}
                   title={
                     s.state === 'credentials-required' ? 'Credentials required — this source will be skipped until configured.'
                     : s.state === 'planned' ? 'Planned — no adapter built yet.'
@@ -194,7 +194,7 @@ export function SchedulePanel() {
           <span className="mb-1 block font-mono text-[10px] uppercase text-slate-mid">Stage focus</span>
           <div className="flex flex-wrap gap-1.5">
             {STAGES.map((s) => (
-              <label key={s} className={`cursor-pointer rounded-sm border px-1.5 py-0.5 ${stages.includes(s) ? 'border-verde bg-verde-soft text-verde' : 'border-line text-slate-mid'}`}>
+              <label key={s} className={`cursor-pointer rounded-[2px] border px-1.5 py-0.5 ${stages.includes(s) ? 'border-verde bg-verde-soft text-verde' : 'border-line text-slate-mid'}`}>
                 <input type="checkbox" className="mr-1 align-middle" checked={stages.includes(s)} onChange={() => toggleStage(s)} />
                 {s}
               </label>
@@ -202,7 +202,7 @@ export function SchedulePanel() {
           </div>
         </div>
 
-        <button onClick={add} className="mt-1 w-fit rounded-sm border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold">
+        <button onClick={add} className="mt-1 w-fit rounded-[2px] border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold">
           Save schedule
         </button>
       </div>
@@ -212,7 +212,7 @@ export function SchedulePanel() {
       {state && state.jobs.length > 0 && (
         <ul className="mt-3 space-y-1 text-xs">
           {state.jobs.map((j) => (
-            <li key={j.id} className="flex flex-wrap items-center gap-2 rounded-sm border border-line px-2 py-1">
+            <li key={j.id} className="flex flex-wrap items-center gap-2 rounded-[2px] border border-line px-2 py-1">
               <span className="font-mono text-[10px] uppercase text-slate-mid">{j.cadence}</span>
               <span className="font-semibold">{j.jobType}</span>
               <span className="text-slate-mid">
@@ -221,7 +221,7 @@ export function SchedulePanel() {
               <button
                 onClick={() => runNow(j.id)}
                 disabled={runningId === j.id}
-                className="ml-auto rounded-sm border border-marigold px-2 py-0.5 font-mono text-[10px] font-semibold text-marigold hover:bg-marigold-soft disabled:opacity-40"
+                className="ml-auto rounded-[2px] border border-marigold px-2 py-0.5 font-mono text-[10px] font-semibold text-marigold hover:bg-marigold-soft disabled:opacity-40"
                 title="Administrator-only: run this schedule's search immediately, outside its normal cadence."
               >
                 {runningId === j.id ? 'Running…' : 'Run sourcing now'}

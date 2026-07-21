@@ -1,4 +1,4 @@
-// ── Vamos Deal Radar: domain types ───────────────────────────────
+// ── VamosVentures Deal Radar: domain types ───────────────────────
 
 export type VerticalId =
   | 'health'

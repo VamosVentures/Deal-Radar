@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import type { Company } from '../types';
 import { scoreCompany } from '../lib/scoring';
 import { verticalById, VERTICALS } from '../data/taxonomy';
-import { ExceptionBadge, FounderLine, IdentityChips, ScoreGauge } from './ui';
+import { ExceptionBadge, FounderLine, IdentityChips, ProvenanceTag, ScoreGauge, type ProvenanceKind } from './ui';
 import { HubSpotModal } from './HubSpotModal';
 import { OutreachPanel } from './OutreachPanel';
 import { AiAnalysis } from './AiAnalysis';
@@ -27,6 +27,19 @@ function daysSince(iso: string | undefined): number | null {
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return null;
   return (Date.now() - t) / 86_400_000;
+}
+
+/** A compact, table-row version of the same call the detail view makes in full — the next thing a reviewer should do, at a glance. */
+function nextActionTag(
+  fit: ReturnType<typeof scoreCompany>,
+  m: { reviewStatus?: string; stale?: boolean } | undefined,
+): { label: string; cls: string } {
+  if (fit.exceptions.length > 0) return { label: 'Partner review', cls: 'border-alerta/30 bg-alerta-soft text-alerta' };
+  if (m?.stale) return { label: 'Refresh — stale', cls: 'border-alerta/30 bg-alerta-soft text-alerta' };
+  if (!m?.reviewStatus || m.reviewStatus === 'New' || m.reviewStatus === 'Awaiting Review') return { label: 'First review', cls: 'border-marigold/30 bg-marigold-soft text-marigold' };
+  if (fit.score >= 8) return { label: 'Prioritize', cls: 'border-verde/30 bg-verde-soft text-verde' };
+  if (fit.score >= 6.5) return { label: 'Track', cls: 'border-line bg-paper text-ink' };
+  return { label: 'Monitor watchlist', cls: 'border-line bg-paper text-slate-mid' };
 }
 
 /**
@@ -108,7 +121,7 @@ export function CompanyTable({
     return filtered;
   }, [companies, vertical, stage, state, q, sortMode, possibleDuplicateOnly, missingInfoOnly, minEvidenceConfidence, notReviewedDays, duplicateCompanyIds, meta]);
 
-  const select = 'rounded-sm border border-line bg-panel px-2 py-1.5 text-xs';
+  const select = 'rounded-[2px] border border-line bg-panel px-2 py-1.5 text-xs transition-colors focus:border-marigold';
   const allVisibleSelected = rows.length > 0 && rows.every(({ c }) => selected.has(c.id));
 
   const toggleSelectAll = () => {
@@ -140,67 +153,69 @@ export function CompanyTable({
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search company, founder, website, keyword…"
-          className={`${select} w-64`}
-          aria-label="Search companies"
-        />
-        {showVertical && (
-          <select className={select} value={vertical} onChange={(e) => setVertical(e.target.value)} aria-label="Filter by vertical">
-            <option value="all">All verticals</option>
-            {VERTICALS.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </select>
-        )}
-        <select className={select} value={stage} onChange={(e) => setStage(e.target.value)} aria-label="Filter by stage">
-          <option value="all">All stages</option>
-          {['Pre-seed', 'Seed', 'Series A', 'Stealth'].map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select className={select} value={state} onChange={(e) => setState(e.target.value)} aria-label="Filter by state">
-          <option value="all">All states</option>
-          {states.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select className={select} value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)} aria-label="Sort by">
-          <option value="fit">Sort: Vamos Fit Score</option>
-          <option value="evidence-recency">Sort: Evidence recency</option>
-          <option value="discovery-date">Sort: Discovery date</option>
-        </select>
-        <span className="ml-auto font-mono text-[11px] text-slate-mid">{rows.length} compan{rows.length === 1 ? 'y' : 'ies'}</span>
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-center gap-3 text-xs">
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" checked={possibleDuplicateOnly} onChange={(e) => setPossibleDuplicateOnly(e.target.checked)} />
-          Possible duplicate only
-        </label>
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" checked={missingInfoOnly} onChange={(e) => setMissingInfoOnly(e.target.checked)} />
-          Missing information only
-        </label>
-        <label className="flex items-center gap-1.5">
-          Min. evidence confidence
+      <div className="mb-3 border border-line bg-panel p-3">
+        <div className="flex flex-wrap items-center gap-2">
           <input
-            type="number" min={0} max={100} step={5} className={`${select} w-16`}
-            value={Math.round(minEvidenceConfidence * 100)}
-            onChange={(e) => setMinEvidenceConfidence(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
-          />%
-        </label>
-        <label className="flex items-center gap-1.5">
-          Not reviewed in
-          <input
-            type="number" min={0} className={`${select} w-16`} placeholder="—"
-            value={notReviewedDays}
-            onChange={(e) => setNotReviewedDays(e.target.value === '' ? '' : Number(e.target.value))}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search company, founder, website, keyword…"
+            className={`${select} w-64`}
+            aria-label="Search companies"
           />
-          days
-        </label>
+          {showVertical && (
+            <select className={select} value={vertical} onChange={(e) => setVertical(e.target.value)} aria-label="Filter by vertical">
+              <option value="all">All verticals</option>
+              {VERTICALS.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          )}
+          <select className={select} value={stage} onChange={(e) => setStage(e.target.value)} aria-label="Filter by stage">
+            <option value="all">All stages</option>
+            {['Pre-seed', 'Seed', 'Series A', 'Stealth'].map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <select className={select} value={state} onChange={(e) => setState(e.target.value)} aria-label="Filter by state">
+            <option value="all">All states</option>
+            {states.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <select className={select} value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)} aria-label="Sort by">
+            <option value="fit">Sort: Vamos Fit Score</option>
+            <option value="evidence-recency">Sort: Evidence recency</option>
+            <option value="discovery-date">Sort: Discovery date</option>
+          </select>
+          <span className="ml-auto font-mono text-[11px] tabular-nums text-slate-mid">{rows.length} compan{rows.length === 1 ? 'y' : 'ies'}</span>
+        </div>
+
+        <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line pt-2.5 text-xs text-slate-mid">
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={possibleDuplicateOnly} onChange={(e) => setPossibleDuplicateOnly(e.target.checked)} />
+            Possible duplicate only
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={missingInfoOnly} onChange={(e) => setMissingInfoOnly(e.target.checked)} />
+            Missing information only
+          </label>
+          <label className="flex items-center gap-1.5">
+            Min. evidence confidence
+            <input
+              type="number" min={0} max={100} step={5} className={`${select} w-16`}
+              value={Math.round(minEvidenceConfidence * 100)}
+              onChange={(e) => setMinEvidenceConfidence(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
+            />%
+          </label>
+          <label className="flex items-center gap-1.5">
+            Not reviewed in
+            <input
+              type="number" min={0} className={`${select} w-16`} placeholder="—"
+              value={notReviewedDays}
+              onChange={(e) => setNotReviewedDays(e.target.value === '' ? '' : Number(e.target.value))}
+            />
+            days
+          </label>
+        </div>
       </div>
 
       {selected.size > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-sm border border-marigold/40 bg-marigold-soft/40 px-3 py-2 text-xs">
-          <span className="font-semibold">{selected.size} selected</span>
+        <div className="mb-3 flex flex-wrap items-center gap-2 border border-marigold/40 border-l-[3px] border-l-marigold bg-marigold-soft px-3 py-2.5 text-xs">
+          <span className="font-semibold text-ink">{selected.size} selected</span>
           {pendingBulkAction ? (
             <span className="flex items-center gap-2">
               Move {selected.size} compan{selected.size === 1 ? 'y' : 'ies'} to <strong>{pendingBulkAction}</strong>?
@@ -218,7 +233,7 @@ export function CompanyTable({
         </div>
       )}
       {bulkResult && (
-        <div className="mb-3 rounded-sm border border-line bg-panel px-3 py-2 text-xs">
+        <div className="mb-3 border border-line bg-panel px-3 py-2 text-xs">
           <span className="font-semibold">Bulk "{bulkResult.status}"</span>: {bulkResult.updated} updated
           {bulkResult.skipped.length > 0 && `, ${bulkResult.skipped.length} skipped (${bulkResult.skipped.map((s) => s.reason).join('; ')})`}.
           <button className="ml-2 text-slate-mid hover:text-ink" onClick={() => setBulkResult(null)}>Dismiss ✕</button>
@@ -226,7 +241,7 @@ export function CompanyTable({
       )}
 
       <div
-        className="overflow-x-auto rounded-md border border-line bg-panel"
+        className="overflow-x-auto border border-line bg-panel"
         tabIndex={-1}
         onKeyDown={(e) => {
           if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -238,47 +253,55 @@ export function CompanyTable({
         }}
         aria-label="Company review queue — arrow keys move between an expanded company and its neighbor"
       >
-        <table className="w-full min-w-[760px] text-left text-sm">
+        <table className="w-full min-w-[820px] text-left text-sm">
           <thead>
-            <tr className="border-b border-line font-mono text-[11px] uppercase tracking-wider text-slate-mid">
+            <tr className="border-b border-line bg-ink text-white">
               <th className="px-3 py-2"><input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAll} aria-label="Select all visible companies" /></th>
-              <th className="px-3 py-2">Fit</th>
-              <th className="px-3 py-2">Company</th>
-              {showVertical && <th className="px-3 py-2">Vertical</th>}
-              <th className="px-3 py-2">Subcategory</th>
-              <th className="px-3 py-2">Stage</th>
-              <th className="px-3 py-2">HQ</th>
-              <th className="px-3 py-2">Verified team</th>
+              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Fit</th>
+              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Company</th>
+              {showVertical && <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Vertical</th>}
+              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Subcategory</th>
+              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Stage</th>
+              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">HQ</th>
+              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Verified team</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={showVertical ? 8 : 7} className="px-3 py-8 text-center text-slate-mid">
-                  No companies are on record here. Clear a filter, run Deal Discovery, or import a CSV under Settings.
+                <td colSpan={showVertical ? 8 : 7} className="px-3 py-12 text-center text-slate-mid">
+                  <RadarEmptyGlyph />
+                  <p className="mt-3">No companies are on record here. Clear a filter, run Deal Discovery, or import a CSV under Settings.</p>
                 </td>
               </tr>
             )}
             {rows.map(({ c, fit }, i) => {
               const open = openId === c.id;
               const isDuplicate = duplicateCompanyIds.has(c.id);
+              const next = nextActionTag(fit, meta[c.id]);
               return (
                 <FragmentRow key={c.id}>
                   <tr
-                    className={`border-b border-line align-top transition-colors hover:bg-marigold-soft/40 ${open ? 'bg-marigold-soft/40' : ''}`}
+                    className={`border-b border-line align-top transition-colors hover:bg-marigold-soft/30 ${open ? 'bg-marigold-soft/30' : ''}`}
                     data-row-index={i}
                   >
                     <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelectOne(c.id)} aria-label={`Select ${c.name}`} />
                     </td>
-                    <td className="cursor-pointer px-3 py-2.5" onClick={() => setOpenId(open ? null : c.id)}><ScoreGauge score={fit.score} /></td>
                     <td className="cursor-pointer px-3 py-2.5" onClick={() => setOpenId(open ? null : c.id)}>
-                      <div className="font-semibold">{c.name}</div>
+                      <ScoreGauge score={fit.score} size={38} />
+                      <div className="mt-1 font-mono text-[9px] tabular-nums text-slate-mid" title="Evidence confidence — how well-sourced this record is">
+                        {Math.round(fit.evidenceConfidence * 100)}% ev.
+                      </div>
+                    </td>
+                    <td className="cursor-pointer px-3 py-2.5" onClick={() => setOpenId(open ? null : c.id)}>
+                      <div className="font-semibold text-ink">{c.name}</div>
                       <div className="max-w-xs text-xs text-slate-mid">{c.oneLiner}</div>
-                      <div className="mt-1 flex flex-wrap gap-1">
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        <span className={`rounded-[2px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide ${next.cls}`}>{next.label}</span>
                         {fit.exceptions.map((e) => <ExceptionBadge key={e.flag} flag={e.flag} />)}
                         {isDuplicate && (
-                          <span className="rounded-sm bg-alerta-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-alerta" title="A possible duplicate is pending review — see the expanded row.">
+                          <span className="rounded-[2px] border border-alerta/30 bg-alerta-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-alerta" title="A possible duplicate is pending review — see the expanded row.">
                             Possible duplicate
                           </span>
                         )}
@@ -292,7 +315,7 @@ export function CompanyTable({
                   </tr>
                   {open && (
                     <tr className="border-b border-line bg-paper">
-                      <td colSpan={showVertical ? 8 : 7} className="px-4 py-4">
+                      <td colSpan={showVertical ? 8 : 7} className="px-4 py-5">
                         <CompanyDetail c={c} duplicates={duplicates.filter((d) => d.companyId === c.id || d.otherCompanyId === c.id)} onDuplicatesChange={setDuplicates} />
                       </td>
                     </tr>
@@ -312,6 +335,64 @@ export function CompanyTable({
 function FragmentRow({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
+
+/** Empty-state glyph reusing the radar-sweep motif — an invitation, not a dead end. */
+function RadarEmptyGlyph() {
+  return (
+    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" className="mx-auto text-line" aria-hidden>
+      <circle cx="20" cy="20" r="17" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="20" cy="20" r="10.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="20" cy="20" r="4" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+/** One fact row: label, value (or an honest "Missing"), and its provenance — reused across memo sections. */
+function FactRow({ label, value, kind, href }: { label: string; value: string | null; kind?: ProvenanceKind | null; href?: string }) {
+  return (
+    <div className="flex items-baseline gap-2 py-1">
+      <span className="w-36 shrink-0 font-mono text-[10px] uppercase tracking-wider text-slate-mid">{label}</span>
+      {value ? (
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {href ? (
+            <a href={href} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{value.replace('https://', '')}</a>
+          ) : (
+            <span className={value.toLowerCase().includes('unknown') ? 'italic text-slate-mid' : 'text-ink'}>{value}</span>
+          )}
+          {kind && <ProvenanceTag kind={kind} />}
+        </span>
+      ) : (
+        <ProvenanceTag kind="missing" />
+      )}
+    </div>
+  );
+}
+
+/** A memo section: an id for the table of contents, a mono section number, and a title. */
+function MemoSection({ n, id, title, flag, children }: { n: string; id: string; title: string; flag?: boolean; children: ReactNode }) {
+  return (
+    <section id={id} className="scroll-mt-16 border-t border-line py-5 first:border-t-0 first:pt-0">
+      <h3 className="mb-3 flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-slate-mid">
+        <span className="text-marigold">{n}</span>
+        {title}
+        {flag && <span className="inline-block h-1.5 w-1.5 rounded-full bg-alerta" aria-hidden title="Needs attention" />}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+const TOC: { id: string; label: string }[] = [
+  { id: 'overview', label: 'Company overview' },
+  { id: 'thesis-fit', label: 'Thesis fit' },
+  { id: 'founders', label: 'Founders' },
+  { id: 'funding-traction', label: 'Funding & traction' },
+  { id: 'evidence', label: 'Evidence' },
+  { id: 'risks', label: 'Risks & open questions' },
+  { id: 'recommendation', label: 'Recommendation' },
+  { id: 'ai-analysis', label: 'AI analysis' },
+  { id: 'provenance', label: 'Review history' },
+];
 
 export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
   c: Company;
@@ -382,33 +463,29 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
     }
   };
 
-  const provenanceLabel: Record<string, string> = {
-    verified: 'Verified',
-    'user-entered': 'User-entered',
-    extracted: 'Extracted public info',
-    'ai-inferred': 'AI-inferred',
-    unverified: 'Unverified',
-    missing: 'Missing',
-  };
-  const origin = (field: string): string | null => {
+  const RECOGNIZED_KINDS = ['verified', 'user-entered', 'extracted', 'ai-inferred', 'unverified', 'missing'] as const;
+  const originKind = (field: string): ProvenanceKind | null => {
     const o = m?.provenance?.[field];
-    return o ? provenanceLabel[o] ?? o : null;
+    if (!o) return null;
+    return (RECOGNIZED_KINDS as readonly string[]).includes(o) ? (o as ProvenanceKind) : null;
   };
 
-  // ── The full fact sheet. Absent facts say Missing; nothing is guessed.
-  const facts: { label: string; value: string | null; field?: string; href?: string }[] = [
+  // ── Company overview — the facts a partner reads first.
+  const overviewFacts: { label: string; value: string | null; field?: string; href?: string }[] = [
     { label: 'Website', value: c.website ?? null, field: 'website', href: c.website },
     { label: 'Description', value: c.oneLiner, field: 'oneLiner' },
     { label: 'Stage', value: c.stage, field: 'stage' },
     { label: 'Geography', value: c.city !== 'Unknown' || c.state !== '??' ? `${c.city}, ${c.state}` : null, field: 'city' },
     { label: 'Vertical', value: `${verticalById(c.vertical).name} → ${c.subcategory}`, field: 'vertical' },
+  ];
+
+  // ── Funding & traction — separate from overview so both get real room.
+  const fundingFacts: { label: string; value: string | null; field?: string }[] = [
     { label: 'Funding', value: c.raising ?? null, field: 'raising' },
     { label: 'Last funding date', value: c.lastFundingDate ?? null, field: 'lastFundingDate' },
     { label: 'Accelerator', value: c.accelerator ?? null, field: 'accelerator' },
-    { label: 'Discovered', value: m?.discoveredAt ? `${m.discoveredAt}${m.discoverySource ? ` via ${m.discoverySource}` : ''}` : null },
-    { label: 'Last refreshed', value: c.lastRefreshed ?? m?.lastRefreshed ?? null },
-    { label: 'Review status', value: m?.reviewStatus ?? 'New' },
-    { label: 'HubSpot sync', value: m?.hubspotCompanyId ? `Synced — record ${m.hubspotCompanyId}` : 'Not synced' },
+    { label: 'Founded', value: String(c.foundedYear) },
+    { label: 'Team size', value: String(c.teamSize) },
   ];
 
   // ── Missing information: exactly what we do not know.
@@ -437,109 +514,13 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
     : fit.score >= 6.5 ? `Track actively and close the weakest evidence gap (${[...fit.components].sort((a, b) => a.points / a.max - b.points / b.max)[0].label.toLowerCase()}).`
     : 'Monitor; revisit when traction or evidence improves.';
 
+  const scoreTone = fit.score >= 7.5 ? 'border-l-verde' : fit.score >= 5.5 ? 'border-l-marigold' : 'border-l-slate-mid';
+  const hasOpenQuestions = missing.length > 0 || risks.length > 0 || duplicates.length > 0;
+
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center gap-3 rounded-sm border border-line bg-panel px-3 py-2.5">
-        <span className="font-display text-base font-bold">Vamos Fit Score: {fit.score.toFixed(1)}/10</span>
-        <span
-          className="cursor-help rounded-sm bg-paper px-1.5 py-0.5 font-mono text-[11px] text-slate-mid"
-          title="How well-sourced this record is (count, primary sources, diversity, freshness). Separate from thesis fit — a perfect fit on thin evidence still needs research."
-        >
-          Evidence confidence {Math.round(fit.evidenceConfidence * 100)}%
-        </span>
-        <span className="rounded-sm bg-paper px-1.5 py-0.5 font-mono text-[10px] text-slate-mid" title={fit.explanation}>
-          scoring model {fit.version}
-        </span>
-        {m?.reviewStatus && <span className="rounded-sm bg-marigold-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-marigold">{m.reviewStatus}</span>}
-        {m?.stale && (
-          <span className="rounded-sm bg-alerta-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-alerta" title="Not reviewed or refreshed within the administrator-configured threshold (Settings → Stale-record settings).">
-            Stale
-          </span>
-        )}
-      </div>
-
-      {duplicates.length > 0 && (
-        <div className="mb-4 rounded-sm border border-alerta/40 bg-alerta-soft px-3 py-2.5 text-xs">
-          <span className="font-mono uppercase tracking-wider text-alerta">Possible duplicate — pending review</span>
-          {duplicates.map((d) => {
-            const other = d.companyId === c.id ? d.otherCompany : d.company;
-            return (
-              <div key={d.id} className="mt-1.5 flex flex-wrap items-center gap-2">
-                <span>Matched by <strong>{d.matchedBy}</strong> ({Math.round(d.similarity * 100)}% similar){other ? <> against <strong>{other.name}</strong></> : ''} — {d.detail}</span>
-                <span className="ml-auto flex gap-1.5">
-                  <button className={btnGhost} disabled={duplicateBusy === d.id} onClick={() => resolveDuplicate(d.id, 'confirmed-duplicate')}>
-                    {duplicateBusy === d.id ? 'Saving…' : 'Confirm duplicate'}
-                  </button>
-                  <button className={btnGhost} disabled={duplicateBusy === d.id} onClick={() => resolveDuplicate(d.id, 'not-duplicate')}>
-                    Not a duplicate
-                  </button>
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div className="mb-4 grid gap-x-6 gap-y-1.5 rounded-sm border border-line bg-panel px-3 py-2.5 text-xs sm:grid-cols-2">
-        {facts.map((f) => (
-          <div key={f.label} className="flex items-baseline gap-2">
-            <span className="w-32 shrink-0 font-mono text-[10px] uppercase tracking-wider text-slate-mid">{f.label}</span>
-            {f.value ? (
-              <span className="min-w-0">
-                {f.href ? (
-                  <a href={f.href} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{f.value.replace('https://', '')}</a>
-                ) : (
-                  <span className={f.value.toLowerCase().includes('unknown') ? 'italic text-slate-mid' : ''}>{f.value}</span>
-                )}
-                {f.field && origin(f.field) && (
-                  <span className="ml-1.5 rounded-sm bg-paper px-1 py-0.5 font-mono text-[9px] uppercase text-slate-mid" title={`Field origin: ${origin(f.field)}`}>
-                    {origin(f.field)}
-                  </span>
-                )}
-              </span>
-            ) : (
-              <span className="italic text-slate-mid">Missing</span>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {(m?.addedEvidence?.length ?? 0) > 0 && (
-        <div className="mb-3 rounded-sm border border-marigold/40 bg-marigold-soft/50 px-3 py-2 text-xs">
-          <span className="font-semibold text-ink">Evidence added from discovery (appended, never overwritten):</span>
-          <ul className="mt-0.5 list-disc pl-4 text-slate-mid">
-            {m!.addedEvidence!.map((e, i) => (
-              <li key={i}>{e.claim} — {e.source}, {e.date} (<a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">source</a>)</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-sm border border-line bg-panel px-3 py-2.5">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">
-          Review status — no CRM workflow, just the calls a reviewer actually makes
-        </span>
-        <span className="ml-auto flex flex-wrap justify-end gap-1.5">
-          <button className={btnGhost} disabled={!!statusBusy} onClick={markReviewed} title="Stamp this record reviewed as of today — no external lookup">
-            {statusBusy === 'Mark reviewed' ? 'Marking…' : 'Mark reviewed'}
-          </button>
-          <button className={btnGhost} disabled={!!statusBusy} onClick={refreshLiveResearch} title="Re-query live sources for this company and report what changed">
-            {statusBusy === 'Refresh live research' ? 'Researching…' : 'Refresh live research'}
-          </button>
-          <button className={btnGhost} disabled={!!statusBusy} onClick={() => setStatus('Research Needed')}>
-            {statusBusy === 'Research Needed' ? 'Saving…' : 'Send for research'}
-          </button>
-          <button className={btnGhost} disabled={!!statusBusy} onClick={() => setStatus('Monitor')}>
-            {statusBusy === 'Monitor' ? 'Saving…' : 'Monitor'}
-          </button>
-          <button className={btnGhost} disabled={!!statusBusy} onClick={() => setStatus('Passed')}>
-            {statusBusy === 'Passed' ? 'Saving…' : 'Pass'}
-          </button>
-        </span>
-      </div>
-
       {refreshResult && (
-        <div className="mb-4 rounded-sm border border-verde/40 bg-verde-soft/30 px-3 py-2.5 text-xs">
+        <div className="mb-4 border border-verde/40 border-l-[3px] border-l-verde bg-verde-soft/30 px-3 py-2.5 text-xs">
           <div className="mb-1.5 flex items-center justify-between">
             <span className="font-mono uppercase tracking-wider text-slate-mid">
               What changed — live research refresh ({refreshResult.refreshedAt})
@@ -581,105 +562,234 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
         </div>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-sm border border-line bg-panel px-3 py-2.5">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">
-          Team actions — every external step gets a human review screen first
-        </span>
-        <span className="ml-auto flex gap-2">
-          <button
-            className={btnPrimary}
-            disabled={!!statusBusy}
-            onClick={() => setStatus('Approved for HubSpot', () => setModal('hubspot'))}
-          >
-            Approve &amp; add to HubSpot
-          </button>
-          <button className={btnGhost} onClick={() => setModal('outreach')}>
-            Generate founder outreach
-          </button>
-        </span>
-      </div>
-      {statusNote && <p className="mb-3 -mt-2 text-xs text-alerta">{statusNote}</p>}
-      {modal === 'hubspot' && <HubSpotModal c={c} onClose={() => setModal(null)} />}
-      {modal === 'outreach' && <OutreachPanel c={c} onClose={() => setModal(null)} />}
-      <AiAnalysis c={c} />
-      <div className="grid gap-5 lg:grid-cols-2">
-      <section>
-        <h3 className="mb-2 font-mono text-[11px] uppercase tracking-widest text-slate-mid">
-          Score breakdown — {fit.totalPoints}/100 pts → {fit.score.toFixed(1)}/10 · weights shown as points/max
-        </h3>
-        <ul className="space-y-2">
-          {fit.components.map((comp) => (
-            <li key={comp.key}>
-              <div className="flex items-baseline justify-between gap-2 text-sm">
-                <span className="font-medium">{comp.label}</span>
-                <span className="font-mono text-xs font-semibold">{comp.points}/{comp.max}</span>
+      <div className="lg:flex lg:items-start lg:gap-6">
+        {/* ── Inspector rail: score, status, and every action, always in view. ── */}
+        <aside className="mb-5 lg:sticky lg:top-12 lg:mb-0 lg:w-60 lg:shrink-0">
+          <div className={`border border-line ${scoreTone} border-l-[3px] bg-panel px-3.5 py-3`}>
+            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Vamos Fit Score</div>
+            <div className="mt-0.5 flex items-baseline gap-2">
+              <span className="font-display text-3xl font-bold leading-none text-ink">{fit.score.toFixed(1)}</span>
+              <span className="font-mono text-xs text-slate-mid">/10</span>
+            </div>
+            <div className="mt-2 space-y-1 border-t border-line pt-2 font-mono text-[10px] text-slate-mid">
+              <div className="flex items-center justify-between gap-2">
+                <span>Vamos Fit Score:</span><span className="text-ink">{fit.score.toFixed(1)}/10</span>
               </div>
-              <div className="mt-0.5 h-1 w-full rounded-sm bg-line">
-                <div className="h-1 rounded-sm bg-verde" style={{ width: `${(comp.points / comp.max) * 100}%` }} />
+              <div className="flex items-center justify-between gap-2" title="How well-sourced this record is (count, primary sources, diversity, freshness). Separate from thesis fit.">
+                <span>Evidence confidence</span><span className="text-ink">{Math.round(fit.evidenceConfidence * 100)}%</span>
               </div>
-              <p className="mt-0.5 text-xs text-slate-mid">{comp.rationale}</p>
-            </li>
-          ))}
-        </ul>
-        {fit.exceptions.length > 0 && (
-          <div className="mt-3 space-y-2">
-            {fit.exceptions.map((e) => (
-              <div key={e.flag} className="rounded-sm border border-alerta/40 bg-alerta-soft px-3 py-2 text-xs text-alerta">
-                <ExceptionBadge flag={e.flag} /> <span className="mt-1 block text-ink/80">{e.message}</span>
+              <div className="flex items-center justify-between gap-2" title={fit.explanation}>
+                <span>Scoring model</span><span className="text-ink">{fit.version}</span>
               </div>
-            ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1 border-t border-line pt-2">
+              {m?.reviewStatus && <span className="rounded-[2px] bg-marigold-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-marigold">{m.reviewStatus}</span>}
+              {m?.stale && (
+                <span className="rounded-[2px] bg-alerta-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-alerta" title="Not reviewed or refreshed within the administrator-configured threshold (Settings → Stale-record settings).">
+                  Stale
+                </span>
+              )}
+            </div>
           </div>
-        )}
 
-        <h3 className="mb-2 mt-4 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Missing information</h3>
-        {missing.length === 0 ? (
-          <p className="text-xs text-slate-mid">No gaps detected in the recorded facts.</p>
-        ) : (
-          <ul className="list-disc space-y-1 pl-4 text-xs text-slate-mid">
-            {missing.map((x) => <li key={x}>{x}</li>)}
-          </ul>
-        )}
+          <div className="mt-3 border border-line bg-panel px-3.5 py-3">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Review status</div>
+            <div className="mt-2 flex flex-col gap-1.5">
+              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={markReviewed} title="Stamp this record reviewed as of today — no external lookup">
+                {statusBusy === 'Mark reviewed' ? 'Marking…' : 'Mark reviewed'}
+              </button>
+              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={refreshLiveResearch} title="Re-query live sources for this company and report what changed">
+                {statusBusy === 'Refresh live research' ? 'Researching…' : 'Refresh live research'}
+              </button>
+              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={() => setStatus('Research Needed')}>
+                {statusBusy === 'Research Needed' ? 'Saving…' : 'Send for research'}
+              </button>
+              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={() => setStatus('Monitor')}>
+                {statusBusy === 'Monitor' ? 'Saving…' : 'Monitor'}
+              </button>
+              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={() => setStatus('Passed')}>
+                {statusBusy === 'Passed' ? 'Saving…' : 'Pass'}
+              </button>
+            </div>
+          </div>
 
-        <h3 className="mb-2 mt-4 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Risks</h3>
-        {risks.length === 0 ? (
-          <p className="text-xs text-slate-mid">No risks flagged by the scoring model.</p>
-        ) : (
-          <ul className="list-disc space-y-1 pl-4 text-xs text-slate-mid">
-            {risks.map((x) => <li key={x}>{x}</li>)}
-          </ul>
-        )}
+          <div className="mt-3 border border-line bg-panel px-3.5 py-3">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Team actions</div>
+            <p className="mt-1 text-[10px] leading-relaxed text-slate-mid">Every external step gets a human review screen first.</p>
+            <div className="mt-2 flex flex-col gap-1.5">
+              <button
+                className={`${btnPrimary} w-full`}
+                disabled={!!statusBusy}
+                onClick={() => setStatus('Approved for HubSpot', () => setModal('hubspot'))}
+              >
+                Approve &amp; add to HubSpot
+              </button>
+              <button className={`${btnGhost} w-full`} onClick={() => setModal('outreach')}>
+                Generate founder outreach
+              </button>
+            </div>
+            {statusNote && <p className="mt-2 text-xs text-alerta">{statusNote}</p>}
+          </div>
 
-        <h3 className="mb-2 mt-4 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Recommended next step</h3>
-        <p className="rounded-sm border border-line bg-panel px-3 py-2 text-xs">{nextStep}</p>
-      </section>
+          <nav aria-label="Memo sections" className="mt-3 hidden border border-line bg-panel px-3.5 py-3 lg:block">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">On this record</div>
+            <ul className="mt-1.5 space-y-1">
+              {TOC.map((t) => (
+                <li key={t.id}>
+                  <a href={`#${c.id}-${t.id}`} className="flex items-center gap-1.5 text-xs text-slate-mid transition-colors hover:text-marigold">
+                    {t.id === 'risks' && hasOpenQuestions && <span className="h-1 w-1 rounded-full bg-alerta" aria-hidden />}
+                    {t.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        </aside>
 
-      <section>
-        <h3 className="mb-2 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Founders</h3>
-        <div className="space-y-1.5">{c.founders.map((f) => <FounderLine key={f.name} f={f} />)}</div>
-        <p className="mt-1.5 text-[11px] italic text-slate-mid">
-          Founder identity indicators come only from explicit public statements, approved data, or user entry —
-          never inferred from names, photos, appearance, language, or geography.
-        </p>
+        {/* ── Memo: the investment-committee read. ── */}
+        <div className="min-w-0 flex-1">
+          {modal === 'hubspot' && <HubSpotModal c={c} onClose={() => setModal(null)} />}
+          {modal === 'outreach' && <OutreachPanel c={c} onClose={() => setModal(null)} />}
 
-        <h3 className="mb-2 mt-4 font-mono text-[11px] uppercase tracking-widest text-slate-mid">
-          Evidence &amp; source URLs ({c.evidence.length})
-        </h3>
-        <ul className="space-y-2">
-          {c.evidence.map((e) => (
-            <li key={e.url} className="rounded-sm border border-line bg-panel px-3 py-2 text-xs">
-              <div className="font-medium text-ink">{e.claim}</div>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-slate-mid">
-                <span className="rounded-sm bg-paper px-1 py-0.5 font-mono text-[10px] uppercase">{e.type}</span>
-                <a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{e.source}</a>
-                <span className="font-mono">{e.date}</span>
+          <MemoSection n="01" id={`${c.id}-overview`} title="Company overview">
+            <div className="grid gap-x-6 sm:grid-cols-2">
+              {overviewFacts.map((f) => <FactRow key={f.label} label={f.label} value={f.value} kind={f.field ? originKind(f.field) : null} href={f.href} />)}
+            </div>
+          </MemoSection>
+
+          <MemoSection n="02" id={`${c.id}-thesis-fit`} title={`Thesis fit — ${fit.totalPoints}/100 pts → ${fit.score.toFixed(1)}/10`}>
+            <ul className="space-y-2.5">
+              {fit.components.map((comp) => (
+                <li key={comp.key}>
+                  <div className="flex items-baseline justify-between gap-2 text-sm">
+                    <span className="font-medium text-ink">{comp.label}</span>
+                    <span className="font-mono text-xs font-semibold tabular-nums">{comp.points}/{comp.max}</span>
+                  </div>
+                  <div className="mt-1 h-1 w-full bg-line">
+                    <div className="h-1 bg-verde" style={{ width: `${(comp.points / comp.max) * 100}%` }} />
+                  </div>
+                  <p className="mt-1 text-xs text-slate-mid">{comp.rationale}</p>
+                </li>
+              ))}
+            </ul>
+            {fit.exceptions.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {fit.exceptions.map((e) => (
+                  <div key={e.flag} className="border border-alerta/40 border-l-[3px] border-l-alerta bg-alerta-soft px-3 py-2 text-xs text-alerta">
+                    <ExceptionBadge flag={e.flag} /> <span className="mt-1 block text-ink/80">{e.message}</span>
+                  </div>
+                ))}
               </div>
-            </li>
-          ))}
-        </ul>
-        <div className="mt-3 text-xs text-slate-mid">
-          Founded {c.foundedYear} · Team of {c.teamSize}
+            )}
+          </MemoSection>
+
+          <MemoSection n="03" id={`${c.id}-founders`} title="Founders">
+            <div className="space-y-1.5">{c.founders.map((f) => <FounderLine key={f.name} f={f} />)}</div>
+            <p className="mt-1.5 text-[11px] italic text-slate-mid">
+              Founder identity indicators come only from explicit public statements, approved data, or user entry —
+              never inferred from names, photos, appearance, language, or geography.
+            </p>
+          </MemoSection>
+
+          <MemoSection n="04" id={`${c.id}-funding-traction`} title="Funding & traction">
+            <div className="grid gap-x-6 sm:grid-cols-2">
+              {fundingFacts.map((f) => <FactRow key={f.label} label={f.label} value={f.value} kind={f.field ? originKind(f.field) : null} />)}
+            </div>
+            <div className="mt-2.5 border-t border-line pt-2.5">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Traction signal</span>
+              <div className="mt-1 flex items-center gap-2">
+                <div className="h-1 w-32 bg-line"><div className="h-1 bg-verde" style={{ width: `${(c.traction.level / 10) * 100}%` }} /></div>
+                <span className="font-mono text-xs tabular-nums text-ink">{c.traction.level}/10</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-mid">{c.traction.note}</p>
+            </div>
+          </MemoSection>
+
+          <MemoSection n="05" id={`${c.id}-evidence`} title={`Evidence & source URLs (${c.evidence.length})`}>
+            {(m?.addedEvidence?.length ?? 0) > 0 && (
+              <div className="mb-3 border border-marigold/40 border-l-[3px] border-l-marigold bg-marigold-soft/50 px-3 py-2 text-xs">
+                <span className="font-semibold text-ink">Evidence added from discovery (appended, never overwritten):</span>
+                <ul className="mt-0.5 list-disc pl-4 text-slate-mid">
+                  {m!.addedEvidence!.map((e, i) => (
+                    <li key={i}>{e.claim} — {e.source}, {e.date} (<a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">source</a>)</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <ul className="space-y-2">
+              {c.evidence.map((e) => (
+                <li key={e.url} className="border border-line bg-panel px-3 py-2 text-xs transition-colors hover:border-verde/40">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-medium text-ink">{e.claim}</div>
+                    <ProvenanceTag kind="verified">Sourced</ProvenanceTag>
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-slate-mid">
+                    <span className="rounded-[2px] bg-paper px-1 py-0.5 font-mono text-[10px] uppercase">{e.type}</span>
+                    <a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{e.source}</a>
+                    <span className="font-mono">{e.date}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </MemoSection>
+
+          <MemoSection n="06" id={`${c.id}-risks`} title="Risks & open questions" flag={hasOpenQuestions}>
+            {duplicates.length > 0 && (
+              <div className="mb-3 border border-alerta/40 border-l-[3px] border-l-alerta bg-alerta-soft px-3 py-2.5 text-xs">
+                <span className="font-mono uppercase tracking-wider text-alerta">Possible duplicate — pending review</span>
+                {duplicates.map((d) => {
+                  const other = d.companyId === c.id ? d.otherCompany : d.company;
+                  return (
+                    <div key={d.id} className="mt-1.5 flex flex-wrap items-center gap-2">
+                      <span>Matched by <strong>{d.matchedBy}</strong> ({Math.round(d.similarity * 100)}% similar){other ? <> against <strong>{other.name}</strong></> : ''} — {d.detail}</span>
+                      <span className="ml-auto flex gap-1.5">
+                        <button className={btnGhost} disabled={duplicateBusy === d.id} onClick={() => resolveDuplicate(d.id, 'confirmed-duplicate')}>
+                          {duplicateBusy === d.id ? 'Saving…' : 'Confirm duplicate'}
+                        </button>
+                        <button className={btnGhost} disabled={duplicateBusy === d.id} onClick={() => resolveDuplicate(d.id, 'not-duplicate')}>
+                          Not a duplicate
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <h4 className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-slate-mid">Open questions — what we don't know</h4>
+            {missing.length === 0 ? (
+              <p className="text-xs text-slate-mid">No gaps detected in the recorded facts.</p>
+            ) : (
+              <ul className="list-disc space-y-1 pl-4 text-xs text-slate-mid">
+                {missing.map((x) => <li key={x}>{x}</li>)}
+              </ul>
+            )}
+            <h4 className="mb-1.5 mt-4 font-mono text-[10px] uppercase tracking-wider text-slate-mid">Risks</h4>
+            {risks.length === 0 ? (
+              <p className="text-xs text-slate-mid">No risks flagged by the scoring model.</p>
+            ) : (
+              <ul className="list-disc space-y-1 pl-4 text-xs text-slate-mid">
+                {risks.map((x) => <li key={x}>{x}</li>)}
+              </ul>
+            )}
+          </MemoSection>
+
+          <MemoSection n="07" id={`${c.id}-recommendation`} title="Recommendation">
+            <p className="border-l-2 border-marigold pl-4 font-display text-xl italic leading-snug text-ink">{nextStep}</p>
+          </MemoSection>
+
+          <div id={`${c.id}-ai-analysis`} className="scroll-mt-16">
+            <AiAnalysis c={c} />
+          </div>
+
+          <MemoSection n="08" id={`${c.id}-provenance`} title="Review history & sync">
+            <div className="grid gap-x-6 sm:grid-cols-2">
+              <FactRow label="Discovered" value={m?.discoveredAt ? `${m.discoveredAt}${m.discoverySource ? ` via ${m.discoverySource}` : ''}` : null} />
+              <FactRow label="Last refreshed" value={c.lastRefreshed ?? m?.lastRefreshed ?? null} />
+              <FactRow label="Review status" value={m?.reviewStatus ?? 'New'} />
+              <FactRow label="HubSpot sync" value={m?.hubspotCompanyId ? `Synced — record ${m.hubspotCompanyId}` : 'Not synced'} />
+            </div>
+          </MemoSection>
         </div>
-      </section>
       </div>
     </div>
   );

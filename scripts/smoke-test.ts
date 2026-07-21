@@ -81,7 +81,7 @@ async function main() {
 
     const frontend = await fetch(`http://localhost:${PORT}/`);
     const html = await frontend.text();
-    if (!frontend.ok || !html.includes('Vamos Deal Radar')) throw new Error('Frontend did not load the expected content at /.');
+    if (!frontend.ok || !html.includes('Deal Radar')) throw new Error('Frontend did not load the expected content at /.');
     log('Frontend loads at /: OK');
 
     const gated = await fetch(`http://localhost:${PORT}/api/admin/status`);

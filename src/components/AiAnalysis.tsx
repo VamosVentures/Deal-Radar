@@ -46,7 +46,7 @@ export function AiAnalysis({ c }: { c: Company }) {
   }
 
   return (
-    <section className="mt-5 rounded-sm border border-line bg-panel px-3 py-2.5">
+    <section className="mt-5 border border-line bg-panel px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">
           AI analysis — advisory only, built from the audited score data
@@ -120,10 +120,10 @@ export function AiAnalysis({ c }: { c: Company }) {
 function Badge({ demo, cached }: { demo: boolean; cached: boolean }) {
   return (
     <div className="flex gap-1.5">
-      <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${demo ? 'bg-marigold-soft text-marigold' : 'bg-verde-soft text-verde'}`}>
+      <span className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${demo ? 'bg-marigold-soft text-marigold' : 'bg-verde-soft text-verde'}`}>
         {demo ? 'Local template — no AI model used' : 'AI-generated'}
       </span>
-      {cached && <span className="rounded-sm bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-mid">cached</span>}
+      {cached && <span className="rounded-[2px] bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-mid">cached</span>}
     </div>
   );
 }
