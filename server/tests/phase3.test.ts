@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
@@ -60,10 +59,11 @@ describe('local CSV import', () => {
 
   it('imported companies are exposed over HTTP', async () => {
     const app = createApp();
-    const up = await request(app).post('/api/companies/import-csv').send({ csv: [CSV_HEADER, GOOD_ROW].join('\n') });
+    const agent = await adminAgent(app);
+    const up = await agent.post('/api/companies/import-csv').send({ csv: [CSV_HEADER, GOOD_ROW].join('\n') });
     expect(up.status).toBe(200);
     expect(up.body.imported).toBe(1);
-    const list = await request(app).get('/api/companies/imported');
+    const list = await agent.get('/api/companies/imported');
     expect(list.body.companies[0].name).toBe('Nueva Salud');
     expect(list.body.companies[0].imported).toBe(true);
   });
@@ -134,7 +134,7 @@ describe('refresh engine', () => {
     await agent.post('/api/refresh/run').send({ connectorIds: ['local-csv'] });
     const log = await agent.get('/api/refresh/log');
     expect(log.body.log[0].results[0].connector).toBe('local-csv');
-    const status = await request(app).get('/api/integrations/status');
+    const status = await agent.get('/api/integrations/status');
     expect(status.body.statuses.refresh.status).toBe('Connected');
   });
 });
@@ -144,7 +144,8 @@ describe('HubSpot search + OAuth (fixtures / offline)', () => {
     installMockIntegrations();
     installTestPipelineMapping();
     const app = createApp();
-    await request(app).post('/api/hubspot/sync-company').send({
+    const agent = await adminAgent(app);
+    await agent.post('/api/hubspot/sync-company').send({
       company: {
         name: 'SolCare Health', domain: 'solcarehealth.example.com', website: null,
         city: 'Austin', state: 'TX', country: 'United States', description: 'x',
@@ -167,10 +168,10 @@ describe('HubSpot search + OAuth (fixtures / offline)', () => {
       },
       radarStage: 'Surfaced', duplicateResolution: 'create-new', existingRecordId: null,
     });
-    const companies = await request(app).post('/api/hubspot/search').send({ query: 'solcare', type: 'companies' });
+    const companies = await agent.post('/api/hubspot/search').send({ query: 'solcare', type: 'companies' });
     expect(companies.body.demo).toBe(true);
     expect(companies.body.hits[0].title).toBe('SolCare Health');
-    const contacts = await request(app).post('/api/hubspot/search').send({ query: 'mariana', type: 'contacts' });
+    const contacts = await agent.post('/api/hubspot/search').send({ query: 'mariana', type: 'contacts' });
     expect(contacts.body.hits[0].subtitle).toContain('mariana@');
   });
 
@@ -245,9 +246,10 @@ describe('AI analysis (local templates + caching)', () => {
 
   it('portfolio upload validates over HTTP', async () => {
     const app = createApp();
-    const bad = await request(app).put('/api/portfolio').send([{ name: '' }]);
+    const agent = await adminAgent(app);
+    const bad = await agent.put('/api/portfolio').send([{ name: '' }]);
     expect(bad.status).toBe(400);
-    const good = await request(app).put('/api/portfolio').send([
+    const good = await agent.put('/api/portfolio').send([
       { name: 'CuidaMed', vertical: 'Health & Wellness', stage: 'Series A', status: 'Active' },
     ]);
     expect(good.body.count).toBe(1);

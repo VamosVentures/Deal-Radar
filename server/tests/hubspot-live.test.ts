@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import request from 'supertest';
 import { adminAgent } from './testAuth';
 
 /**
@@ -213,7 +212,7 @@ describe('sync failure recording and retry', () => {
     const agent = await adminAgent(app);
 
     // First attempt fails — recorded honestly, nothing pretends success.
-    const failed = await request(app).post('/api/hubspot/sync-company').send(payload);
+    const failed = await agent.post('/api/hubspot/sync-company').send(payload);
     expect(failed.status).toBe(502);
 
     const queue = await agent.get('/api/hubspot/failed-syncs');

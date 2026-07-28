@@ -1,6 +1,7 @@
-import { aiConfigured, aiKey, env } from '../env';
-import { fetchWithRetry } from '../lib/http';
+import { aiConfigured, env } from '../env';
 import { audit } from '../lib/guard';
+import { callBudgetedModel } from './aiClient';
+import { parseModelJson } from './aiGuard';
 import {
   emailGenContextSchema,
   generatedEmailSchema,
@@ -209,49 +210,33 @@ class LiveGenerator implements EmailGenerator {
     ].filter(Boolean).join('\n\n');
   }
 
-  private async callModel(prompt: string): Promise<{ subject: string; body: string; rationale: string }> {
-    let text: string;
-    if (env.AI_PROVIDER === 'anthropic') {
-      const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': aiKey()!,
-          'anthropic-version': '2023-06-01',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: env.AI_MODEL ?? 'claude-sonnet-5',
-          max_tokens: 1200,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      });
-      if (!res.ok) throw Object.assign(new Error('The AI provider rejected the request. Check AI_API_KEY and AI_MODEL.'), { status: 502 });
-      const data = (await res.json()) as { content: { type: string; text?: string }[] };
-      text = data.content.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n');
-    } else {
-      const res = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${aiKey()}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: env.AI_MODEL ?? 'gpt-4o-mini',
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      });
-      if (!res.ok) throw Object.assign(new Error('The AI provider rejected the request. Check AI_API_KEY and AI_MODEL.'), { status: 502 });
-      const data = (await res.json()) as { choices: { message: { content: string } }[] };
-      text = data.choices[0]?.message?.content ?? '';
+  private async callModel(
+    prompt: string,
+    meta: { feature: string; companyId?: string | null },
+  ): Promise<{ subject: string; body: string; rationale: string }> {
+    // Every model call in this codebase goes through callBudgetedModel,
+    // which is the one place that enforces the kill switch, the monthly
+    // and per-run caps, the timeout, and the usage ledger. Calling a
+    // provider directly from anywhere else would bypass all of it.
+    const { text } = await callBudgetedModel({
+      prompt,
+      feature: meta.feature,
+      companyId: meta.companyId ?? null,
+      maxOutputTokens: 1200,
+    });
+
+    const parsed = parseModelJson<{ subject: string; body: string; rationale: string }>(text);
+    if (!parsed.ok) {
+      // Malformed output is rejected, never guessed at or partially used.
+      throw Object.assign(new Error(parsed.error), { status: 502 });
     }
-    const clean = text.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean) as { subject: string; body: string; rationale: string };
+    return parsed.value;
   }
 
   async generateOutreachEmail(context: EmailGenContext): Promise<GeneratedEmail> {
     const c = emailGenContextSchema.parse(context);
     const { weak, warnings } = weakEvidence(c);
-    const out = await this.callModel(this.prompt(c, ''));
+    const out = await this.callModel(this.prompt(c, ''), { feature: 'outreach-email', companyId: c.companyId });
     const result: GeneratedEmail = {
       subject: out.subject,
       body: out.body,
@@ -274,7 +259,7 @@ class LiveGenerator implements EmailGenerator {
   async regenerateOutreachEmail(context: EmailGenContext, instructions: string): Promise<GeneratedEmail> {
     const c = emailGenContextSchema.parse(context);
     const { weak, warnings } = weakEvidence(c);
-    const out = await this.callModel(this.prompt(c, `REVISION INSTRUCTIONS: ${instructions}`));
+    const out = await this.callModel(this.prompt(c, `REVISION INSTRUCTIONS: ${instructions}`), { feature: 'outreach-email-regenerate', companyId: c.companyId });
     return validateGeneratedEmail(c, {
       subject: out.subject,
       body: out.body,

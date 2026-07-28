@@ -4,6 +4,7 @@ import { latestMigrationVersion } from '../db/migrations';
 import { schedulerEnabled, aiConfigured, outlookConfigured, env } from '../env';
 import { hubspotConnected } from '../services/hubspot';
 import { schedulerRunning } from '../services/schedule';
+import { readCookie, SESSION_COOKIE, verifySessionToken } from '../lib/auth';
 
 /**
  * Deployment health endpoints — deliberately NOT under /api (the
@@ -18,7 +19,14 @@ healthRouter.get('/health/live', (_req, res) => {
   res.json({ status: 'live' });
 });
 
-healthRouter.get('/health/ready', (_req, res) => {
+healthRouter.get('/health/ready', (req, res) => {
+  // Readiness has two audiences with different needs. An orchestrator
+  // needs a status code and nothing else; an administrator debugging a
+  // bad deploy needs the detail. Anonymous callers therefore get the
+  // verdict only — the full body leaks the schema version, raw SQLite
+  // error text, and which third-party integrations are configured,
+  // none of which should be readable from the open internet.
+  const detailed = verifySessionToken(readCookie(req, SESSION_COOKIE));
   const checks: Record<string, { ok: boolean; detail: string }> = {};
 
   try {
@@ -45,9 +53,16 @@ healthRouter.get('/health/ready', (_req, res) => {
   checks.config = { ok: true, detail: 'Environment configuration parsed successfully at boot.' };
 
   const allOk = Object.values(checks).every((c) => c.ok);
+  const status = allOk ? 'ready' : 'not_ready';
+
+  if (!detailed) {
+    // Enough for a load balancer to route on, nothing more.
+    res.status(allOk ? 200 : 503).json({ status });
+    return;
+  }
 
   res.status(allOk ? 200 : 503).json({
-    status: allOk ? 'ready' : 'not_ready',
+    status,
     checks,
     // Optional integrations — never block readiness, reported honestly.
     integrations: {

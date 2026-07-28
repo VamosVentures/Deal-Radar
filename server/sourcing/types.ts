@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { VERTICAL_ID_VALUES } from '../../shared/discovery';
 import type { DiscoveryQuery, DiscoverySourceId } from '../../shared/discovery';
 import type { SourceFailureKind } from './errors';
 
@@ -33,7 +34,7 @@ export const leadEvidenceSchema = z.object({
   hqState: z.string().length(2).optional(),
   geography: z.string().optional(),
   stage: z.enum(['Pre-seed', 'Seed', 'Series A', 'Stealth']).optional(),
-  vertical: z.enum(['health', 'fintech', 'fow', 'sustainability', 'aoi']).optional(),
+  vertical: z.enum(VERTICAL_ID_VALUES).optional(),
   subcategory: z.string().optional(),
 
   fundingAmount: z.number().nonnegative().optional(),

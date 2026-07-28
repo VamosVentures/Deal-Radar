@@ -3,10 +3,10 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import request from 'supertest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
+import { adminAgent } from './testAuth';
 import { importCompaniesCsv, importedCompanies } from '../services/imports';
 import {
   applyFieldUpdate, getCompany, getProvenance, listCompanies, listPossibleDuplicates,
@@ -194,13 +194,14 @@ describe('duplicate prevention', () => {
 
   it('uncertain duplicates wait for a human: not-duplicate keeps both, confirmed merges', async () => {
     const app = createApp();
+    const agent = await adminAgent(app);
     importCompaniesCsv([CSV_HEADER, row('Pacific Rim Energy')].join('\n'));
     importCompaniesCsv([CSV_HEADER, row('Pacific Rim Energ', '', 'https://example.com/typo-src')].join('\n'));
     const pending = listPossibleDuplicates('pending');
     expect(pending).toHaveLength(1);
 
     // Human says: not a duplicate → both records stay active.
-    const keep = await request(app).post(`/api/duplicates/${pending[0].id}/resolve`).send({ resolution: 'not-duplicate', actor: 'MG' });
+    const keep = await agent.post(`/api/duplicates/${pending[0].id}/resolve`).send({ resolution: 'not-duplicate', actor: 'MG' });
     expect(keep.status).toBe(200);
     expect(listCompanies()).toHaveLength(2);
     expect(listPossibleDuplicates('pending')).toHaveLength(0);
@@ -209,7 +210,7 @@ describe('duplicate prevention', () => {
     importCompaniesCsv([CSV_HEADER, row('Pacific Rim Enrgy', '', 'https://example.com/typo-2')].join('\n'));
     const pending2 = listPossibleDuplicates('pending');
     expect(pending2).toHaveLength(1);
-    const confirm = await request(app).post(`/api/duplicates/${pending2[0].id}/resolve`).send({ resolution: 'confirmed-duplicate', actor: 'MG' });
+    const confirm = await agent.post(`/api/duplicates/${pending2[0].id}/resolve`).send({ resolution: 'confirmed-duplicate', actor: 'MG' });
     expect(confirm.status).toBe(200);
     const kept = getCompany(pending2[0].otherCompanyId!)!;
     expect(kept.evidence.some((e) => e.url === 'https://example.com/typo-2')).toBe(true); // merged evidence

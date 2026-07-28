@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type ConnectorInfo, type RefreshLogEntry } from '../lib/api';
 import { useCompanies } from '../store/companies';
 import { useIntegrations } from '../store/integrations';
+import { VERTICAL_OPTIONS } from '../data/taxonomy';
 import { btnGhost, btnPrimary, ErrorNote } from './Modal';
 
 /**
@@ -86,11 +87,7 @@ export function ConnectorPanel() {
           <span className="font-mono text-[10px] uppercase text-slate-mid">Vertical scope</span>
           <select value={vertical} onChange={(e) => setVertical(e.target.value)} className="rounded-[2px] border border-line bg-panel px-2 py-1">
             <option value="">All verticals</option>
-            <option value="health">Health &amp; Wellness</option>
-            <option value="fintech">FinTech</option>
-            <option value="fow">Future of Work</option>
-            <option value="sustainability">Sustainability</option>
-            <option value="aoi">Other Industries</option>
+            {VERTICAL_OPTIONS.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">

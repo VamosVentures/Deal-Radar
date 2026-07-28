@@ -43,7 +43,7 @@ const EXCEPTION_MESSAGES: Record<PolicyFlag, string> = {
   'hardware-heavy':
     'Hardware-heavy business model sits outside the firm’s standard software-first thesis. Requires explicit partner sign-off.',
   'outside-thesis':
-    'Category is outside the four core sectors. Score is computed on the separate other-industries scale and needs partner review.',
+    'Category is outside the core sectors. Score is computed on the separate other-industries scale and needs partner review.',
 };
 
 function thesisFit(c: Company): ScoreComponent {
@@ -56,7 +56,7 @@ function thesisFit(c: Company): ScoreComponent {
     rationale = `Subcategory "${c.subcategory}" is not in the ${v.name} taxonomy — review classification.`;
   } else if (!v.core) {
     points = 11;
-    rationale = `${v.name} is outside the four core sectors and scored on a separate scale.`;
+    rationale = `${v.name} is outside the core sectors and scored on a separate scale.`;
   } else if (sub.exception) {
     points = 12;
     rationale = `Core sector, but "${sub.name}" is an exception subcategory: ${sub.exception}`;

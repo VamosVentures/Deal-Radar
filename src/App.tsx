@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { IntegrationsProvider, useIntegrations } from './store/integrations';
 import { CompaniesProvider } from './store/companies';
+import { AppGate } from './components/AppGate';
 
 // Route-level code splitting: each page (and its dependencies, e.g.
 // Overview's Recharts import) becomes its own chunk fetched on
@@ -221,6 +222,7 @@ function VerticalRedirect({ vertical }: { vertical: string }) {
 
 export default function App() {
   return (
+    <AppGate>
     <IntegrationsProvider>
       <CompaniesProvider>
       <div className="flex min-h-screen max-lg:flex-col">
@@ -237,6 +239,9 @@ export default function App() {
                   <Route path="/fintech" element={<VerticalRedirect vertical="fintech" />} />
                   <Route path="/future-of-work" element={<VerticalRedirect vertical="fow" />} />
                   <Route path="/sustainability" element={<VerticalRedirect vertical="sustainability" />} />
+                  <Route path="/robotics" element={<VerticalRedirect vertical="robotics" />} />
+                  <Route path="/space-tech" element={<VerticalRedirect vertical="spacetech" />} />
+                  <Route path="/ai" element={<VerticalRedirect vertical="ai" />} />
                   <Route path="/areas-of-interest" element={<VerticalRedirect vertical="aoi" />} />
                   <Route path="/stealth" element={<StealthRadar />} />
                   <Route path="/discovery" element={<Discovery />} />
@@ -251,6 +256,7 @@ export default function App() {
       </div>
       </CompaniesProvider>
     </IntegrationsProvider>
+    </AppGate>
   );
 }
 

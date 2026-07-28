@@ -95,13 +95,34 @@ describe('auth routes (ADMIN_PASSWORD configured — see vitest.config.ts)', () 
     expect(allowed.status).toBe(200);
   });
 
-  it('does not gate the general team review actions (company status) or the discovery/outlook-draft paths', async () => {
-    // These stay usable without an admin session — only the
-    // administrator-plane actions (schedule, refresh, connector
-    // connect/disconnect) require sign-in.
+  it('gates the non-administrator routes too: integration status needs a session', async () => {
+    // The gate is now whole-application, not administrator-plane only
+    // (see the PUBLIC_API_PATHS allowlist in server/app.ts). Routes
+    // like this one leak which connectors are wired up and to whom, so
+    // they are private by default; only /api/auth/{status,login,logout}
+    // and the two OAuth callbacks stay open.
     const { createApp } = await import('../app');
-    const res = await request(createApp()).get('/api/integrations/status');
+    const app = createApp();
+
+    const denied = await request(app).get('/api/integrations/status');
+    expect(denied.status).toBe(401);
+
+    const agent = await adminAgent(app);
+    const res = await agent.get('/api/integrations/status');
     expect(res.status).toBe(200);
+  });
+
+  it('leaves the auth allowlist reachable without a session', async () => {
+    const { createApp } = await import('../app');
+    const app = createApp();
+
+    expect((await request(app).get('/api/auth/status')).status).toBe(200);
+    expect((await request(app).post('/api/auth/logout').send({})).status).toBe(200);
+    // The login route itself must not be behind the gate it guards.
+    expect((await request(app).post('/api/auth/login').send({ password: 'wrong' })).status).toBe(401);
+    expect(
+      (await request(app).post('/api/auth/login').send({ password: TEST_ADMIN_PASSWORD })).status,
+    ).toBe(200);
   });
 });
 

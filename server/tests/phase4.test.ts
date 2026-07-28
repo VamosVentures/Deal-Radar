@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
@@ -54,7 +53,8 @@ describe('discovery pipeline (fixture sources injected — no network in tests)'
   it('rejects restricted sources outright', async () => {
     await expect(runDiscovery({ ...BASE_QUERY, sources: ['linkedin'] }, 'tester')).rejects.toThrow(/restricted/i);
     const app = createApp();
-    const res = await request(app).post('/api/discovery/run').send({ sources: ['pitchbook'], maxResults: 5 });
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/run').send({ sources: ['pitchbook'], maxResults: 5 });
     expect(res.status).toBe(422);
     expect(res.body.message).toMatch(/never scraped/i);
   });
@@ -102,7 +102,8 @@ describe('discovery pipeline (fixture sources injected — no network in tests)'
 
   it('partial source failure preserves other sources (HTTP)', async () => {
     const app = createApp();
-    const res = await request(app).post('/api/discovery/run').send({ ...BASE_QUERY });
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/run').send({ ...BASE_QUERY });
     expect(res.status).toBe(200);
     expect(res.body.sourceResults.length).toBe(4);
     expect(res.body.errors).toBeInstanceOf(Array);
@@ -182,7 +183,8 @@ describe('selective import → Awaiting Review (human gates intact)', () => {
 
     // Run history reflects the import count.
     const app = createApp();
-    const runs = await request(app).get('/api/discovery/runs');
+    const agent = await adminAgent(app);
+    const runs = await agent.get('/api/discovery/runs');
     expect(runs.body.runs.find((r: { id: string }) => r.id === run.id).imported).toBe(2);
   });
 
@@ -283,9 +285,10 @@ describe('stealth radar & hypothesis guardrails', () => {
   it('signals support assignment and research-queue status over HTTP', async () => {
     addSignal(SIGNAL_FIXTURE);
     const app = createApp();
-    const list = await request(app).get('/api/stealth/signals');
+    const agent = await adminAgent(app);
+    const list = await agent.get('/api/stealth/signals');
     const id = list.body.signals[0].id;
-    const patched = await request(app).post(`/api/stealth/signals/${id}`).send({ assignedTo: 'MG', outreachStatus: 'Research queue' });
+    const patched = await agent.post(`/api/stealth/signals/${id}`).send({ assignedTo: 'MG', outreachStatus: 'Research queue' });
     expect(patched.body.assignedTo).toBe('MG');
     expect(patched.body.outreachStatus).toBe('Research queue');
     expect(() => patchSignal('nope', {})).toThrow(/not found/i);
@@ -293,7 +296,8 @@ describe('stealth radar & hypothesis guardrails', () => {
 
   it('manual signal entry validates and stores a pasted public-profile URL as evidence without crawling', async () => {
     const app = createApp();
-    const res = await request(app).post('/api/stealth/signals').send({
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/stealth/signals').send({
       founderName: 'T. Example',
       previousRole: 'Unknown', previousEmployer: 'Unknown',
       knownSkills: [], priorStartups: [], education: 'Unknown',
@@ -343,11 +347,12 @@ describe('portfolio layer (Phase 4)', () => {
 
   it('manual creation and CSV import upsert without duplicates', async () => {
     const app = createApp();
-    await request(app).post('/api/portfolio/company').send({ name: 'CuidaMed', vertical: 'Health & Wellness', stage: 'Series A', status: 'Active' });
-    await request(app).post('/api/portfolio/company').send({ name: 'CuidaMed', vertical: 'Health & Wellness', stage: 'Series A', status: 'Exited' });
+    const agent = await adminAgent(app);
+    await agent.post('/api/portfolio/company').send({ name: 'CuidaMed', vertical: 'Health & Wellness', stage: 'Series A', status: 'Active' });
+    await agent.post('/api/portfolio/company').send({ name: 'CuidaMed', vertical: 'Health & Wellness', stage: 'Series A', status: 'Exited' });
     expect(store.raw.portfolio).toHaveLength(1);
     const csv = 'name,vertical,stage,status,themes\nPagoSur,FinTech,Seed,Active,payments|inclusion';
-    const res = await request(app).post('/api/portfolio/import-csv').send({ csv });
+    const res = await agent.post('/api/portfolio/import-csv').send({ csv });
     expect(res.body.imported).toBe(1);
     expect((store.raw.portfolio[1] as { themes: string[] }).themes).toEqual(['payments', 'inclusion']);
   });

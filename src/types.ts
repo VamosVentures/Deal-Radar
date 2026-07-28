@@ -1,10 +1,16 @@
 // ── VamosVentures Deal Radar: domain types ───────────────────────
 
+// Keep in lockstep with VERTICAL_ID_VALUES in shared/discovery.ts —
+// that array is the runtime (Zod) source of truth and this union is the
+// compile-time one; a mismatch is a type error at the import sites.
 export type VerticalId =
   | 'health'
   | 'fintech'
   | 'fow'
   | 'sustainability'
+  | 'robotics'
+  | 'spacetech'
+  | 'ai'
   | 'aoi';
 
 export type Stage = 'Pre-seed' | 'Seed' | 'Series A' | 'Stealth';

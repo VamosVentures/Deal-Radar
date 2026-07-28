@@ -1,5 +1,5 @@
 import { normalizeDomain } from '../../shared/integrations';
-import type { CandidateEvidence } from '../../shared/discovery';
+import type { CandidateEvidence, VERTICAL_ID_VALUES } from '../../shared/discovery';
 import type { LeadEvidence } from './types';
 
 /**
@@ -46,7 +46,7 @@ export interface RawCandidate {
   externalId?: string;
   website?: string;
   pitch?: string;
-  vertical?: 'health' | 'fintech' | 'fow' | 'sustainability' | 'aoi';
+  vertical?: (typeof VERTICAL_ID_VALUES)[number];
   subcategory?: string;
   stage?: 'Pre-seed' | 'Seed' | 'Series A' | 'Stealth';
   hqCity?: string;

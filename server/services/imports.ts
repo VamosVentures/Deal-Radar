@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { portfolioCompanySchema } from '../../shared/integrations';
+import { VERTICAL_ID_VALUES } from '../../shared/discovery';
 import {
   addPossibleDuplicate, clearCompanies, listCompanies, matchRecords, saveCompany,
 } from '../db/repos/companies';
@@ -18,7 +19,7 @@ import type { Company } from '../../src/types';
  * entered through the reviewed data layer, never a bulk file.
  */
 
-const VERTICALS = ['health', 'fintech', 'fow', 'sustainability', 'aoi'] as const;
+const VERTICALS = VERTICAL_ID_VALUES;
 const STAGES = ['Pre-seed', 'Seed', 'Series A', 'Stealth'] as const;
 const EVIDENCE_TYPES = ['Filing', 'News', 'Founder statement', 'Product', 'Accelerator', 'Hiring signal', 'Database record'] as const;
 

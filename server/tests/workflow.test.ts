@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
+import type { Express } from 'express';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
@@ -79,30 +79,36 @@ const syncPayload = () => ({
 });
 
 describe('screening workflow (fixture integrations, end to end over HTTP)', () => {
-  beforeEach(() => {
+  // Every /api route now requires an authenticated session (see the
+  // gate in server/app.ts), so the whole workflow runs through one
+  // signed-in agent rather than bare `request(app)` calls.
+  let app: Express;
+  let agent: Awaited<ReturnType<typeof adminAgent>>;
+
+  beforeEach(async () => {
     store.resetForTests();
     resetIdempotencyForTests();
     installMockIntegrations();
     installTestPipelineMapping();
+    app = createApp();
+    agent = await adminAgent(app);
   });
   afterAll(() => uninstallMockIntegrations());
 
   it('checks duplicates, syncs once, records everything, and drafts for manual sending', async () => {
-    const app = createApp();
-
     // Status reflects the fixtures (Connected appears only after a verified check).
-    const status = await request(app).get('/api/integrations/status');
+    const status = await agent.get('/api/integrations/status');
     expect(status.body.statuses.hubspot.status).toBe('Connected');
     expect(status.body.statuses.hubspot.detail).toContain('Test fixture');
 
     // Duplicate check — clean the first time.
-    const dup1 = await request(app)
+    const dup1 = await agent
       .post('/api/hubspot/check-duplicate')
       .send({ name: 'SolCare Health', domain: 'solcarehealth.example.com', dealRadarId: 'c-solcare' });
     expect(dup1.body.matches).toHaveLength(0);
 
     // Approved sync: company + contact + deal with score, explanation, reviewer, approval date, source URLs.
-    const sync = await request(app)
+    const sync = await agent
       .post('/api/hubspot/sync-company').set('Idempotency-Key', 'wf-sync-1').send(syncPayload());
     expect(sync.status).toBe(200);
     expect(sync.body.contactIds).toHaveLength(1);
@@ -121,25 +127,25 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     expect(history[0].hubspotCompanyId).toBe(sync.body.companyId);
 
     // Duplicate check now finds the record by our own radar id (tier 1).
-    const dup2 = await request(app)
+    const dup2 = await agent
       .post('/api/hubspot/check-duplicate')
       .send({ name: 'Different Name', domain: null, dealRadarId: 'c-solcare' });
     expect(dup2.body.matches).toHaveLength(1);
     expect(dup2.body.matches[0].matchedOn).toBe('radar-id');
 
     // Founder email matches surface too.
-    const dup3 = await request(app)
+    const dup3 = await agent
       .post('/api/hubspot/check-duplicate')
       .send({ name: 'Zzz Unrelated', domain: null, founderEmails: ['mariana@solcarehealth.example.com'] });
     expect(dup3.body.matches[0].matchedOn).toBe('founder-email');
 
     // Generate a draft (labeled local template) and save it to Outlook.
-    const gen = await request(app).post('/api/outreach/generate').send(genContext);
+    const gen = await agent.post('/api/outreach/generate').send(genContext);
     expect(gen.status).toBe(200);
     expect(gen.body.body).toContain('Mariana');
 
-    await (await adminAgent(app)).post('/api/outlook/connect').send({});
-    const draft = await request(app)
+    await agent.post('/api/outlook/connect').send({});
+    const draft = await agent
       .post('/api/outlook/drafts').set('Idempotency-Key', 'wf-draft-1')
       .send({
         companyId: 'c-solcare',
@@ -152,29 +158,27 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     expect(draft.status).toBe(200);
     expect(draft.body.message).toContain('send it yourself'); // never sent automatically
     // Draft creation is recorded (id + link, no delivery simulation).
-    const drafts = await request(app).get('/api/outlook/drafts?companyId=c-solcare');
+    const drafts = await agent.get('/api/outlook/drafts?companyId=c-solcare');
     expect(drafts.body.drafts).toHaveLength(1);
     expect(drafts.body.drafts[0].outlookDraftId).toBe(draft.body.outlookDraftId);
     expect(drafts.body.drafts[0].body).toBeUndefined(); // bodies never echoed in lists
 
     // Audit captured the run without any secrets or bodies.
-    const auditRes = await request(app).get('/api/audit');
+    const auditRes = await agent.get('/api/audit');
     expect(auditRes.body.length).toBeGreaterThan(2);
     expect(JSON.stringify(auditRes.body)).not.toContain('P.S. Edited by a human');
   });
 
   it('sync is idempotent: repeated clicks and re-submissions never create duplicate companies', async () => {
-    const app = createApp();
-
     // Same Idempotency-Key (double-click) → blocked outright.
-    const first = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(syncPayload());
+    const first = await agent.post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(syncPayload());
     expect(first.status).toBe(200);
-    const second = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(syncPayload());
+    const second = await agent.post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(syncPayload());
     expect(second.status).toBe(409);
     expect(second.body.error).toBe('duplicate_submission');
 
     // NEW key, same company (e.g. hours later, still create-new) → updates, never a twin.
-    const third = await request(app).post('/api/hubspot/sync-company').set('Idempotency-Key', 'later-resync').send(syncPayload());
+    const third = await agent.post('/api/hubspot/sync-company').set('Idempotency-Key', 'later-resync').send(syncPayload());
     expect(third.status).toBe(200);
     expect(third.body.action).toBe('updated');
     expect(third.body.companyId).toBe(first.body.companyId);
@@ -182,8 +186,7 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
   });
 
   it('rejects a sync payload whose demographics lack a source (guardrail over HTTP)', async () => {
-    const app = createApp();
-    const res = await request(app).post('/api/hubspot/sync-company').send({
+    const res = await agent.post('/api/hubspot/sync-company').send({
       ...syncPayload(),
       contacts: [{ ...contactMariana, demographics: [{ indicator: 'Latino-led', basis: 'Self-identified', sourceName: 'n/a', sourceRef: 'x', verificationStatus: 'Self-reported' }] }],
     });
@@ -194,9 +197,8 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
   });
 
   it('draft saving without a recipient fails with a clear message', async () => {
-    const app = createApp();
-    await request(app).post('/api/outlook/connect').send({});
-    const res = await request(app).post('/api/outlook/drafts').send({
+    await agent.post('/api/outlook/connect').send({});
+    const res = await agent.post('/api/outlook/drafts').send({
       companyId: 'c-x', to: '', subject: 'Hello', body: 'Long enough body text here.', senderName: 'DR', tone: '—',
     });
     expect(res.status).toBe(400);

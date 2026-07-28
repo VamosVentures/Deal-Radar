@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import type { DiscoveryQuery, ScheduledJob } from '../../shared/discovery';
 import { GEOGRAPHIES, PREFERRED_STATES_P4 } from '../../shared/discovery';
+import { VERTICAL_OPTIONS } from '../data/taxonomy';
 
 const STAGES = ['Pre-seed', 'Seed', 'Series A'] as const;
 
@@ -128,11 +129,7 @@ export function SchedulePanel() {
             <span className="font-mono text-[10px] uppercase text-slate-mid">Vertical focus</span>
             <select className={input} value={vertical ?? ''} onChange={(e) => setVertical((e.target.value || null) as DiscoveryQuery['vertical'])}>
               <option value="">Any vertical</option>
-              <option value="health">Health &amp; Wellness</option>
-              <option value="fintech">FinTech</option>
-              <option value="fow">Future of Work</option>
-              <option value="sustainability">Sustainability</option>
-              <option value="aoi">Other Industries</option>
+              {VERTICAL_OPTIONS.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </label>
         </div>

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import request from 'supertest';
 import { getSourceMeta } from '../sourcing';
+import { adminAgent } from './testAuth';
 
 function stateOf(id: string) {
   return getSourceMeta().find((s) => s.id === id)?.state;
@@ -48,7 +48,8 @@ describe('honest source-selection states', () => {
 
   it('GET /api/discovery/sources exposes the same states over HTTP', async () => {
     const { createApp } = await import('../app');
-    const res = await request(createApp()).get('/api/discovery/sources');
+    const agent = await adminAgent(createApp());
+    const res = await agent.get('/api/discovery/sources');
     expect(res.status).toBe(200);
     const byId = Object.fromEntries(res.body.sources.map((s: { id: string; state: string }) => [s.id, s.state]));
     expect(byId.github).toBe('live');

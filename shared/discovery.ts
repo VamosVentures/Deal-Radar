@@ -14,11 +14,26 @@ export type DiscoverySourceId = (typeof DISCOVERY_SOURCES)[number];
 /** Restricted services — requests naming them are rejected outright. */
 export const RESTRICTED_SOURCES = ['linkedin', 'pitchbook', 'crunchbase'] as const;
 
+/**
+ * Runtime source of truth for sector ids, shared by every Zod enum on
+ * both tiers. Robotics, Space Tech, and General AI were promoted from
+ * `aoi` subcategories to first-class sectors; `aoi` remains as the
+ * genuine catch-all. Mirrors the VerticalId union in src/types.ts and
+ * the VERTICALS table in src/data/taxonomy.ts — change all three
+ * together.
+ */
+export const VERTICAL_ID_VALUES = [
+  'health', 'fintech', 'fow', 'sustainability', 'robotics', 'spacetech', 'ai', 'aoi',
+] as const;
+
+/** Same list plus the explicit 'Unknown' escape hatch used by candidates/signals. */
+export const VERTICAL_ID_VALUES_WITH_UNKNOWN = [...VERTICAL_ID_VALUES, 'Unknown'] as const;
+
 export const GEOGRAPHIES = ['Preferred states', 'United States', 'LATAM'] as const;
 export const PREFERRED_STATES_P4 = ['NM', 'NY', 'NJ', 'OR', 'CA', 'TX', 'IL'] as const;
 
 export const discoveryQuerySchema = z.object({
-  vertical: z.enum(['health', 'fintech', 'fow', 'sustainability', 'aoi']).nullable().default(null),
+  vertical: z.enum(VERTICAL_ID_VALUES).nullable().default(null),
   subcategory: z.string().nullable().default(null),
   areasOfInterest: z.array(z.string()).default([]),
   terms: z.array(z.string().min(2)).max(10).default([]),
@@ -76,7 +91,7 @@ export const discoveryCandidateSchema = z.object({
   companyName: z.string().min(1),
   website: unknownable,
   pitch: unknownable,
-  vertical: z.enum(['health', 'fintech', 'fow', 'sustainability', 'aoi', 'Unknown']).default('Unknown'),
+  vertical: z.enum(VERTICAL_ID_VALUES_WITH_UNKNOWN).default('Unknown'),
   subcategory: unknownable,
   stage: z.enum(['Pre-seed', 'Seed', 'Series A', 'Stealth', 'Unknown']).default('Unknown'),
   hqCity: unknownable,
@@ -166,7 +181,7 @@ export const stealthSignalSchema = z.object({
   sourceName: z.string().min(2),
   sourceUrl: z.string().url(),
   dateAccessed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  possibleVertical: z.enum(['health', 'fintech', 'fow', 'sustainability', 'aoi', 'Unknown']).default('Unknown'),
+  possibleVertical: z.enum(VERTICAL_ID_VALUES_WITH_UNKNOWN).default('Unknown'),
   possibleTheme: unknownable,
   /** Suspected geography (city/state or region) — 'Unknown' until recorded, never guessed. */
   suspectedGeography: unknownable,

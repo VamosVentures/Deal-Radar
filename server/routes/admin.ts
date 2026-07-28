@@ -10,6 +10,8 @@ import { verifyAiConnection } from '../services/analysis';
 import { computeSourceAnalytics } from '../services/sourceAnalytics';
 import { backupSettingsSchema, createBackup, getBackupMetadata, getBackupPath, getBackupSettings, listBackups, setBackupSettings } from '../services/backup';
 import { fetchWithTimeout } from '../lib/http';
+import { activeModel, budgetStatus, budgetWarning, getAiSettings, setAiSettings, usageReport } from '../services/aiBudget';
+import { aiSettingsBaseSchema, PRICING_CHECKED_ON, PRICING_SOURCE_URL } from '../../shared/ai';
 import { requireAdmin } from '../lib/auth';
 import { wrap } from './helpers';
 
@@ -216,4 +218,42 @@ adminRouter.get('/backups/:file/location', wrap(async (req, res) => {
 adminRouter.put('/backup-settings', wrap(async (req, res) => {
   const patch = backupSettingsSchema.partial().parse(req.body);
   res.json(setBackupSettings(patch));
+}));
+
+// ── AI budget, kill switch, and usage ledger ──────────────────────
+// This whole router already requires an administrator session (see the
+// requireAdmin at the top of the file plus the whole-application gate
+// in server/app.ts), which satisfies "protect AI configuration and
+// usage endpoints with administrator authorization".
+
+adminRouter.get('/ai/settings', wrap(async (_req, res) => {
+  res.json({
+    settings: getAiSettings(),
+    status: budgetStatus(),
+    warning: budgetWarning(),
+    pricing: {
+      sourceUrl: PRICING_SOURCE_URL,
+      checkedOn: PRICING_CHECKED_ON,
+      activeModel: activeModel(),
+    },
+  });
+}));
+
+adminRouter.put('/ai/settings', wrap(async (req, res) => {
+  // .partial() on the base object: the cross-field refinements still run
+  // on the MERGED result inside setAiSettings, so a patch cannot land the
+  // thresholds in an inconsistent order.
+  const patch = aiSettingsBaseSchema.partial().parse(req.body);
+  res.json({ settings: setAiSettings(patch), status: budgetStatus() });
+}));
+
+/** The kill switch as its own endpoint — unambiguous, and cheap to hit in an incident. */
+adminRouter.post('/ai/kill-switch', wrap(async (req, res) => {
+  const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
+  res.json({ settings: setAiSettings({ enabled }), status: budgetStatus() });
+}));
+
+adminRouter.get('/ai/usage', wrap(async (req, res) => {
+  const { month } = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() }).parse(req.query);
+  res.json(usageReport(month));
 }));

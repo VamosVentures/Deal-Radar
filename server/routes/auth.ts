@@ -8,9 +8,17 @@ import { createSessionToken, passwordMatches, readCookie, SESSION_COOKIE, verify
 
 export const authRouter = Router();
 
+// Anti-brute-force for a real client: 10 attempts per 15 minutes per IP.
+// This limiter is created at MODULE scope, so it is shared by every
+// createApp() in a process — which is correct in production (one app)
+// but means a test suite signing in for each of its cases exhausts the
+// budget and starts getting 429s that look like auth failures. The
+// suite is not an attacker, so the ceiling is raised under
+// NODE_ENV=test only, matching the same carve-out the global /api
+// limiter already makes in server/app.ts. Production is unchanged.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60_000,
-  limit: 10,
+  limit: process.env.NODE_ENV === 'test' ? 10_000 : 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'rate_limited', message: 'Too many sign-in attempts. Try again in a few minutes.' },

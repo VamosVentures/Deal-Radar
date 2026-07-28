@@ -3,6 +3,8 @@ import { aiConfigured, aiKey, env } from '../env';
 import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { fetchWithRetry } from '../lib/http';
+import { callBudgetedModel } from './aiClient';
+import { parseModelJson } from './aiGuard';
 import {
   fitExplainContextSchema,
   fitExplanationSchema,
@@ -47,41 +49,35 @@ function toCache(key: string, value: unknown) {
   store.save();
 }
 
-async function callModelJson<T>(prompt: string, schema: z.ZodType<T>): Promise<T> {
-  let text: string;
-  if (env.AI_PROVIDER === 'anthropic') {
-    const res = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': aiKey()!,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: env.AI_MODEL ?? 'claude-sonnet-5',
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-    if (!res.ok) throw Object.assign(new Error('The AI provider rejected the request. Check the API key and model.'), { status: 502 });
-    const data = (await res.json()) as { content: { type: string; text?: string }[] };
-    text = data.content.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('\n');
-  } else {
-    const res = await fetchWithRetry('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${aiKey()}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: env.AI_MODEL ?? 'gpt-4o-mini',
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    });
-    if (!res.ok) throw Object.assign(new Error('The AI provider rejected the request. Check the API key and model.'), { status: 502 });
-    const data = (await res.json()) as { choices: { message: { content: string } }[] };
-    text = data.choices[0]?.message?.content ?? '';
+async function callModelJson<T>(
+  prompt: string,
+  schema: z.ZodType<T>,
+  meta: { feature: string; companyId?: string | null },
+): Promise<T> {
+  // Routed through the single budgeted client so the kill switch, the
+  // monthly/per-run caps, the timeout, the backoff, and the usage
+  // ledger all apply here exactly as they do to outreach generation.
+  const { text } = await callBudgetedModel({
+    prompt,
+    feature: meta.feature,
+    companyId: meta.companyId ?? null,
+    maxOutputTokens: MAX_TOKENS,
+  });
+
+  const parsed = parseModelJson<unknown>(text);
+  if (!parsed.ok) {
+    throw Object.assign(new Error(parsed.error), { status: 502 });
   }
-  const clean = text.replace(/```json|```/g, '').trim();
-  return schema.parse(JSON.parse(clean));
+  // Structured output is validated against the existing schema; a shape
+  // the schema does not accept is rejected, never coerced.
+  const checked = schema.safeParse(parsed.value);
+  if (!checked.success) {
+    throw Object.assign(
+      new Error('The model returned JSON that does not match the expected schema. It was rejected.'),
+      { status: 502, issues: checked.error.issues.map((x) => x.path.join('.')) },
+    );
+  }
+  return checked.data;
 }
 
 // ── Fit explanation ──────────────────────────────────────────────
@@ -130,6 +126,7 @@ export async function explainFit(raw: unknown): Promise<FitExplanation> {
   const out = await callModelJson(
     prompt,
     z.object({ summary: z.string(), strengths: z.array(z.string()), concerns: z.array(z.string()), suggestedNextStep: z.string() }),
+    { feature: 'fit-analysis', companyId: c.companyId },
   );
   const result = fitExplanationSchema.parse({ ...out, demo: false, cached: false });
   toCache(key, result);
@@ -208,6 +205,7 @@ export async function comparePortfolio(rawCompany: unknown, rawPortfolio: unknow
   const out = await callModelJson(
     prompt,
     z.object({ summary: z.string(), overlaps: z.array(z.object({ portfolioCompany: z.string(), note: z.string() })), whitespace: z.string() }),
+    { feature: 'portfolio-comparison', companyId: company.companyId },
   );
   const result = portfolioComparisonSchema.parse({ ...out, demo: false, cached: false });
   toCache(key, result);

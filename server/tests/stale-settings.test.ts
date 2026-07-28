@@ -82,16 +82,20 @@ describe('stale-record settings', () => {
     expect(staleSettingsSchema.partial().safeParse({ defaultStaleFilter: 'bogus' }).success).toBe(false);
   });
 
-  it('GET is public; PUT requires an authenticated admin session and rejects invalid values over HTTP', async () => {
+  it('GET and PUT both require an authenticated admin session; PUT rejects invalid values over HTTP', async () => {
     const app = createApp();
-    const pub = await request(app).get('/api/stale-settings');
-    expect(pub.status).toBe(200);
-    expect(pub.body.staleAfterDays).toBe(30);
+    // Both the read and the write sit behind the whole-application gate now.
+    const anonGet = await request(app).get('/api/stale-settings');
+    expect(anonGet.status).toBe(401);
 
     const denied = await request(app).put('/api/admin/stale-settings').send({ staleAfterDays: 10 });
     expect(denied.status).toBe(401);
 
     const agent = await adminAgent(app);
+    const read = await agent.get('/api/stale-settings');
+    expect(read.status).toBe(200);
+    expect(read.body.staleAfterDays).toBe(30);
+
     const bad = await agent.put('/api/admin/stale-settings').send({ staleAfterDays: 999 });
     expect(bad.status).toBe(400);
 

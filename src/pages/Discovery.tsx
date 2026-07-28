@@ -4,15 +4,14 @@ import { api } from '../lib/api';
 import { useCompanies } from '../store/companies';
 import type { DiscoveryCandidate, DiscoveryQuery, DiscoveryRun } from '../../shared/discovery';
 import { GEOGRAPHIES, PREFERRED_STATES_P4 } from '../../shared/discovery';
+import { VERTICAL_OPTIONS } from '../data/taxonomy';
 
-const VERTICALS = [
+// Derived from the taxonomy so a new sector shows up here automatically
+// — this list used to be hand-maintained and drifted from the others.
+const VERTICALS: { id: string; name: string }[] = [
   { id: '', name: 'Any vertical' },
-  { id: 'health', name: 'Health & Wellness' },
-  { id: 'fintech', name: 'FinTech' },
-  { id: 'fow', name: 'Future of Work' },
-  { id: 'sustainability', name: 'Sustainability' },
-  { id: 'aoi', name: 'Other Industries' },
-] as const;
+  ...VERTICAL_OPTIONS,
+];
 
 const STAGES = ['Pre-seed', 'Seed', 'Series A'] as const;
 

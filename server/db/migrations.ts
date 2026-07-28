@@ -249,6 +249,46 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE source_run_results ADD COLUMN duration_ms INTEGER;
     `,
   },
+  {
+    version: 6,
+    name: 'ai-usage-ledger',
+    sql: `
+      -- Every model call gets one immutable row here, written whether
+      -- the call succeeded or failed. This is the ONLY basis for spend
+      -- reporting and budget enforcement — nothing is estimated after
+      -- the fact and no figure in the UI is derived from anything else.
+      --
+      -- estimated_cost_usd is what our pricing table says the reported
+      -- tokens are worth. actual_cost_usd stays NULL unless a provider
+      -- reports a real billed amount (none currently do on the request
+      -- path), so a NULL means "not reported", never "free".
+      --
+      -- month is stored denormalised as YYYY-MM so the monthly rollup
+      -- is an index seek rather than a scan over a date function.
+      CREATE TABLE ai_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        month TEXT NOT NULL,
+        feature TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        company_id TEXT,
+        run_id TEXT,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+        web_searches INTEGER NOT NULL DEFAULT 0,
+        estimated_cost_usd REAL NOT NULL DEFAULT 0,
+        actual_cost_usd REAL,
+        ok INTEGER NOT NULL DEFAULT 1,
+        detail TEXT
+      );
+      CREATE INDEX idx_ai_usage_month ON ai_usage (month);
+      CREATE INDEX idx_ai_usage_run ON ai_usage (run_id);
+      CREATE INDEX idx_ai_usage_company ON ai_usage (company_id);
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

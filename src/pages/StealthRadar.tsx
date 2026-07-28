@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { verticalById } from '../data/taxonomy';
+import { verticalById, VERTICAL_IDS } from '../data/taxonomy';
 import type { Company, Founder, VerticalId } from '../types';
 import { ConfidenceMeter, PageHeader } from '../components/ui';
 import { OutreachPanel } from '../components/OutreachPanel';
@@ -305,7 +305,7 @@ function AddSignalForm({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <input className={input} placeholder="Suspected geography (city, state — leave empty if unknown)" value={suspectedGeography} onChange={(e) => setSuspectedGeography(e.target.value)} />
           <div className="grid grid-cols-2 gap-2">
             <select className={input} value={possibleVertical} onChange={(e) => setPossibleVertical(e.target.value)}>
-              {['Unknown', 'health', 'fintech', 'fow', 'sustainability', 'aoi'].map((v) => <option key={v}>{v}</option>)}
+              {['Unknown', ...VERTICAL_IDS].map((v) => <option key={v}>{v}</option>)}
             </select>
             <select className={input} value={confidence} onChange={(e) => setConfidence(e.target.value as typeof confidence)}>
               {['Low', 'Medium', 'High'].map((c) => <option key={c}>{c}</option>)}

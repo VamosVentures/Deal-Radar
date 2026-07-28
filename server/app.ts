@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { env } from './env';
 import { idempotencyGuard, requestLogger } from './lib/guard';
 import { sanitizeErrorForClient } from './lib/errors';
+import { requireAdmin } from './lib/auth';
 import { healthRouter } from './routes/health';
 import { statusRouter } from './routes/status';
 import { hubspotRouter } from './routes/hubspot';
@@ -76,6 +77,36 @@ export function createApp() {
     rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false }),
   );
   app.use('/api', idempotencyGuard);
+
+  // ── Whole-application gate ─────────────────────────────────────
+  // Every /api route requires an authenticated session EXCEPT the
+  // narrow allowlist below. Before this existed, `requireAdmin` was
+  // applied only to the administrator plane (/api/schedule,
+  // /api/refresh, /api/admin, and a handful of per-route guards), so
+  // roughly thirty routes — every company record, the audit log, the
+  // integration status, and mutating routes that write to a real CRM
+  // or a real mailbox — were reachable by anyone who could reach the
+  // origin. That was survivable while this only ran on localhost; it
+  // is not survivable once the app is hosted. Gating centrally here,
+  // rather than per route, means a newly-added router is private by
+  // default and a future contributor has to opt OUT deliberately.
+  //
+  // Only these stay public, each for a specific reason:
+  const PUBLIC_API_PATHS = new Set([
+    '/auth/status',  // the UI must know whether to show the login form
+    '/auth/login',   // the login itself (separately rate-limited, 10/15min)
+    '/auth/logout',  // clearing a cookie needs no session
+  ]);
+  // OAuth providers redirect the BROWSER back to these with no cookie
+  // guarantee; each validates its own single-use, expiring state token
+  // server-side instead (see services/hubspot.ts + services/outlook.ts).
+  const PUBLIC_API_PREFIXES = ['/hubspot/callback', '/outlook/callback'];
+
+  app.use('/api', (req, res, next) => {
+    if (PUBLIC_API_PATHS.has(req.path)) return next();
+    if (PUBLIC_API_PREFIXES.some((p) => req.path.startsWith(p))) return next();
+    return requireAdmin(req, res, next);
+  });
 
   app.use('/api', authRouter);
   app.use('/api', statusRouter);

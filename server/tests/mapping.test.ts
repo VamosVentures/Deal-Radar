@@ -1,5 +1,4 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import request from 'supertest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
@@ -42,8 +41,9 @@ describe('pipeline-stage mapping', () => {
 
   it('blocks submission with instructions when a stage is unmapped — never guesses IDs', async () => {
     const app = createApp();
+    const agent = await adminAgent(app);
     // resolveStage throws BEFORE any HubSpot call is attempted.
-    const res = await request(app).post('/api/hubspot/sync-company').send(syncPayload());
+    const res = await agent.post('/api/hubspot/sync-company').send(syncPayload());
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('blocked');
     expect(res.body.message).toMatch(/no hubspot stage is mapped/i);
@@ -60,7 +60,7 @@ describe('pipeline-stage mapping', () => {
       stages: { 'Approved to Track': 'custom-stage-42' },
     });
     expect(put.status).toBe(200);
-    const res = await request(app).post('/api/hubspot/sync-company').send(syncPayload());
+    const res = await agent.post('/api/hubspot/sync-company').send(syncPayload());
     expect(res.status).toBe(200);
     const deal = store.raw.mockHubSpot.find((o) => o.type === 'deal')!;
     expect(deal.properties.dealstage).toBe('custom-stage-42');
@@ -78,7 +78,8 @@ describe('pipeline-stage mapping', () => {
   it('fails honestly with 503 not_connected when HubSpot has no credentials', async () => {
     uninstallMockIntegrations();
     const app = createApp();
-    const res = await request(app).post('/api/hubspot/sync-company').send(syncPayload());
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/hubspot/sync-company').send(syncPayload());
     expect(res.status).toBe(503);
     expect(res.body.error).toBe('not_connected');
     expect(res.body.message).toMatch(/not connected/i);

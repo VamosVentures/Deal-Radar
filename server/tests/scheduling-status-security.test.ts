@@ -204,6 +204,15 @@ describe('administrator "Run sourcing now"', () => {
 // ── Simple company-status lifecycle ─────────────────────────────────
 
 describe('company status lifecycle', () => {
+  // Every /api route now requires an authenticated session (the
+  // whole-application gate in server/app.ts), so the reviewer actions
+  // below go through a signed-in agent instead of a bare request(app).
+  let agent: Awaited<ReturnType<typeof adminAgent>>;
+
+  beforeEach(async () => {
+    agent = await adminAgent(createApp());
+  });
+
   it('CSV imports start as New; discovery imports start as Awaiting Review', async () => {
     importCompaniesCsv([
       'name,oneLiner,vertical,subcategory,stage,city,state,foundedYear,teamSize,tractionLevel,tractionNote,founderName,founderRole,founderBackground,evidenceClaim,evidenceSource,evidenceUrl,evidenceDate,evidenceType',
@@ -221,8 +230,7 @@ describe('company status lifecycle', () => {
     importCompaniesCsv(csv);
     const id = Object.keys(companyMetaView())[0];
     // Advance it manually, exactly like a reviewer would.
-    const app = createApp();
-    await request(app).post(`/api/companies/${id}/status`).send({ status: 'Monitor', actor: 'team' });
+    await agent.post(`/api/companies/${id}/status`).send({ status: 'Monitor', actor: 'team' });
     expect(companyMetaView()[id].reviewStatus).toBe('Monitor');
     // Re-importing the identical file must not revert that decision.
     importCompaniesCsv(csv);
@@ -231,27 +239,24 @@ describe('company status lifecycle', () => {
 
   it('accepts every documented status transition over HTTP and rejects an invalid one', async () => {
     saveCompany(fixtureCompany(), { origin: 'user-entered', source: 'test' });
-    const app = createApp();
     for (const status of ['Research Needed', 'Monitor', 'Passed', 'Approved for HubSpot']) {
-      const res = await request(app).post('/api/companies/status-test-co/status').send({ status, actor: 'team' });
+      const res = await agent.post('/api/companies/status-test-co/status').send({ status, actor: 'team' });
       expect(res.status).toBe(200);
       expect(companyMetaView()['status-test-co'].reviewStatus).toBe(status);
     }
-    const bad = await request(app).post('/api/companies/status-test-co/status').send({ status: 'Not A Real Status', actor: 'team' });
+    const bad = await agent.post('/api/companies/status-test-co/status').send({ status: 'Not A Real Status', actor: 'team' });
     expect(bad.status).toBe(400);
   });
 
   it('404s for a status change on an unknown company', async () => {
-    const app = createApp();
-    const res = await request(app).post('/api/companies/does-not-exist/status').send({ status: 'Monitor', actor: 'team' });
+    const res = await agent.post('/api/companies/does-not-exist/status').send({ status: 'Monitor', actor: 'team' });
     expect(res.status).toBe(404);
   });
 
   it('"refresh" marks a company reviewed as of today without changing its status', async () => {
     saveCompany(fixtureCompany({ id: 'refresh-me' }), { origin: 'user-entered', source: 'test' });
-    const app = createApp();
     const before = companyMetaView()['refresh-me']?.reviewStatus;
-    const res = await request(app).post('/api/companies/refresh-me/refresh').send({ actor: 'team' });
+    const res = await agent.post('/api/companies/refresh-me/refresh').send({ actor: 'team' });
     expect(res.status).toBe(200);
     expect(res.body.lastRefreshed).toBe(new Date().toISOString().slice(0, 10));
     expect(getCompany('refresh-me')!.lastRefreshed).toBe(new Date().toISOString().slice(0, 10));
@@ -262,8 +267,7 @@ describe('company status lifecycle', () => {
     installMockIntegrations();
     installTestPipelineMapping();
     saveCompany(fixtureCompany({ id: 'sync-me' }), { origin: 'user-entered', source: 'test' });
-    const app = createApp();
-    const res = await request(app).post('/api/hubspot/sync-company').send({
+    const res = await agent.post('/api/hubspot/sync-company').send({
       company: {
         name: 'Status Test Co', domain: 'statustest.example.com', website: 'https://statustest.example.com',
         city: 'Austin', state: 'TX', country: 'United States', description: 'x',
@@ -304,8 +308,8 @@ describe('computed Stale overlay', () => {
   it('never flags a terminal status (Passed / Synced to HubSpot) as stale, however old', async () => {
     saveCompany(fixtureCompany({ id: 'old-but-passed' }), { origin: 'user-entered', source: 'test' });
     markRefreshed(['old-but-passed'], new Date(Date.now() - 200 * 86_400_000).toISOString().slice(0, 10));
-    const app = createApp();
-    await request(app).post('/api/companies/old-but-passed/status').send({ status: 'Passed', actor: 'team' });
+    const agent = await adminAgent(createApp());
+    await agent.post('/api/companies/old-but-passed/status').send({ status: 'Passed', actor: 'team' });
     expect(companyMetaView()['old-but-passed'].stale).toBeUndefined();
   });
 });
