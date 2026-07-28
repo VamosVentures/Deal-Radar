@@ -188,14 +188,42 @@ describe('selective import → Awaiting Review (human gates intact)', () => {
     expect(runs.body.runs.find((r: { id: string }) => r.id === run.id).imported).toBe(2);
   });
 
-  it('refuses to import a candidate whose vertical is Unknown instead of guessing', async () => {
+  it('refuses to import a candidate whose text carries no sector signal, instead of guessing', async () => {
+    // The rule being protected is "never invent a sector". It used to be
+    // expressed as "reject vertical === Unknown", but since NO adapter
+    // ever sets a vertical, that rejected 100% of candidates and nothing
+    // could be imported at all (see server/tests/import-candidates.test.ts).
+    // The rule now bites where it should: a candidate whose own published
+    // text says nothing about a sector is still refused.
     await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
     const cand = existingCandidates()[0];
     cand.vertical = 'Unknown';
+    cand.companyName = 'Generic Holdings';
+    cand.pitch = 'Unknown';
+    cand.subcategory = 'Unknown';
+    cand.evidence = [{
+      claim: 'A record exists.', source: 'Test', url: 'https://example.com/record',
+      dateAccessed: '2026-07-01', verificationStatus: 'Not verified', confidence: 0.4, notes: '',
+    }];
     store.raw.discoveryCandidates = [cand];
     const outcome = importCandidates({ candidateIds: [cand.id] });
     expect(outcome.imported).toHaveLength(0);
-    expect(outcome.skipped[0].reason).toMatch(/no guessing/i);
+    expect(outcome.skipped[0].code).toBe('unclassifiable-sector');
+    expect(outcome.skipped[0].reason).toMatch(/no sector signal/i);
+  });
+
+  it('DOES import a candidate whose published text plainly states its sector', async () => {
+    // The other half of the same rule: reading "robotics" out of a
+    // company's own description is not guessing.
+    await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+    const cand = existingCandidates()[0];
+    cand.vertical = 'Unknown';
+    cand.companyName = 'Cosmic Robotics';
+    cand.pitch = 'Robots that install solar panels.';
+    store.raw.discoveryCandidates = [cand];
+    const outcome = importCandidates({ candidateIds: [cand.id] });
+    expect(outcome.imported).toHaveLength(1);
+    expect(outcome.skipped).toHaveLength(0);
   });
 
   it('duplicates default to skip on import', async () => {

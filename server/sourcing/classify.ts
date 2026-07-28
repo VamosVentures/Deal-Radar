@@ -247,3 +247,81 @@ export function matchesSector(
   }
   return { ok: true, classification: c, reason: `Matched ${target} on: ${c.matched.slice(0, 4).join(', ')}.` };
 }
+
+// ── Structured source taxonomies ──────────────────────────────────
+
+/**
+ * Y Combinator publishes `industries` and `tags` per company. That is
+ * real structured evidence and it beats keyword-guessing at the
+ * company's name, so it is consulted first.
+ *
+ * Weighted, because YC tags overlap: "Spaceium Inc" carries
+ * ['Hard Tech', 'Robotics', 'Space Exploration', 'Aerospace'] and is a
+ * space company that happens to build robots. Specific space/robotics
+ * terms therefore outscore the generic ones.
+ */
+const YC_TAXONOMY: { pattern: RegExp; vertical: VerticalId; weight: number }[] = [
+  // Space — deliberately heavy, since space companies frequently also
+  // tag Robotics/Hard Tech and would otherwise be misfiled.
+  { pattern: /^(?:aviation and space|space exploration|commercial space launch|satellite|aerospace)$/i, vertical: 'spacetech', weight: 5 },
+  { pattern: /\b(?:space|orbital|satellite|launch)\b/i, vertical: 'spacetech', weight: 3 },
+
+  { pattern: /^(?:robotics|drones|autonomous vehicles?)$/i, vertical: 'robotics', weight: 4 },
+  { pattern: /\brobot/i, vertical: 'robotics', weight: 3 },
+
+  { pattern: /^(?:healthcare|health tech|healthcare it|diagnostics|therapeutics|medical devices?|digital health|bio|biotech|consumer health services|drug discovery|healthcare services)$/i, vertical: 'health', weight: 5 },
+  { pattern: /\b(?:health|medical|clinical|patient|bio)\b/i, vertical: 'health', weight: 2 },
+
+  { pattern: /^(?:fintech|payments|banking as a service|insurance|lending|credit|asset management|consumer finance|financial services)$/i, vertical: 'fintech', weight: 5 },
+  { pattern: /\b(?:fintech|payment|banking|lending|insurance)\b/i, vertical: 'fintech', weight: 2 },
+
+  { pattern: /^(?:climate|energy|sustainability|solar|carbon removal|climate tech|renewable energy)$/i, vertical: 'sustainability', weight: 5 },
+  { pattern: /\b(?:climate|carbon|renewable|solar|decarboniz)\b/i, vertical: 'sustainability', weight: 2 },
+
+  { pattern: /^(?:recruiting|recruiting and talent|hr tech|human resources|productivity|collaboration|future of work|workflow automation|hiring)$/i, vertical: 'fow', weight: 5 },
+  { pattern: /\b(?:recruit|hiring|hr\b|workforce|productivity|collaboration)\b/i, vertical: 'fow', weight: 2 },
+
+  // General AI is last and needs a SPECIFIC tag: almost every YC company
+  // now tags "AI", so a bare AI tag is not evidence of an AI-infrastructure
+  // company. Only infra/tooling-shaped tags count.
+  { pattern: /^(?:ai\/ml|machine learning|generative ai|ai infrastructure|mlops|infrastructure|developer tools)$/i, vertical: 'ai', weight: 4 },
+  { pattern: /\b(?:llm|foundation model|inference|vector database)\b/i, vertical: 'ai', weight: 4 },
+];
+
+export interface TaxonomyMatch {
+  vertical: VerticalId | null;
+  confidence: number;
+  matched: string[];
+}
+
+/**
+ * Map a source's own category labels onto a sector. Returns null when
+ * the labels do not clearly indicate one — the caller then falls back
+ * to text classification, and failing that, refuses.
+ */
+export function classifyFromTaxonomy(labels: string[]): TaxonomyMatch {
+  const clean = labels.map((l) => (l ?? '').trim()).filter(Boolean);
+  if (clean.length === 0) return { vertical: null, confidence: 0, matched: [] };
+
+  const totals = new Map<VerticalId, { score: number; matched: string[] }>();
+  for (const label of clean) {
+    for (const rule of YC_TAXONOMY) {
+      if (rule.pattern.test(label)) {
+        const cur = totals.get(rule.vertical) ?? { score: 0, matched: [] };
+        cur.score += rule.weight;
+        cur.matched.push(label);
+        totals.set(rule.vertical, cur);
+        break; // one rule per label — the most specific pattern listed first wins
+      }
+    }
+  }
+  if (totals.size === 0) return { vertical: null, confidence: 0, matched: [] };
+
+  const ranked = [...totals.entries()].sort((a, b) => b[1].score - a[1].score);
+  const [vertical, top] = ranked[0];
+  const second = ranked[1]?.[1].score ?? 0;
+  const separation = top.score > 0 ? (top.score - second) / top.score : 0;
+  const confidence = Math.round(Math.min(1, (top.score / 5) * 0.6 + separation * 0.4) * 100) / 100;
+
+  return { vertical, confidence, matched: [...new Set(top.matched)] };
+}

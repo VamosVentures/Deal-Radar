@@ -15,7 +15,8 @@ import {
   getConfig, listRuns, recordReviewDecision, saveRun, saveScore, setConfig, updateRunCounts,
 } from '../db/repos/operations';
 import { scoreCompany } from '../../src/lib/scoring';
-import type { Company } from '../../src/types';
+import { checkEntityType, classifyCandidate } from '../sourcing/classify';
+import type { Company, VerticalId } from '../../src/types';
 
 // Deduplication lives in server/sourcing/dedupe.ts; re-exported here
 // so existing imports (routes, tests) keep working.
@@ -306,25 +307,71 @@ const importRequestSchema = z.object({
   duplicateAction: z.enum(['skip', 'merge-evidence', 'import-anyway']).default('skip'),
 });
 
+/**
+ * Why a candidate did not become a company. Machine-readable so callers
+ * can aggregate honestly instead of printing a wall of prose — the
+ * previous populate script discarded the reason strings entirely, which
+ * made a 100% rejection rate look like a silent failure.
+ */
+export type ImportSkipCode =
+  | 'not-found'
+  | 'terminal-status'          // already imported/merged/dismissed
+  | 'exact-duplicate'
+  | 'possible-duplicate'
+  | 'unsupported-entity-type'  // a fund, university, or government body
+  | 'unclassifiable-sector'    // published text carries no sector signal
+  | 'validation-failed';       // failed the ImportedCompany schema
+
+export interface ImportSkip {
+  id: string;
+  code: ImportSkipCode;
+  reason: string;
+  companyName?: string;
+}
+
+/** A genuine error, as opposed to a policy decision. Kept separate from `skipped`. */
+export interface ImportFailure {
+  id: string;
+  reason: string;
+  companyName?: string;
+}
+
 export interface ImportOutcome {
   imported: string[];
   merged: string[];
-  skipped: { id: string; reason: string }[];
+  skipped: ImportSkip[];
+  /** Unexpected errors (DB conflict, constraint violation, thrown exception). */
+  failed: ImportFailure[];
+  /** Counts, so a caller cannot accidentally report success by ignoring the arrays. */
+  counts: { requested: number; imported: number; merged: number; skipped: number; failed: number };
 }
 
 export function importCandidates(rawReq: unknown): ImportOutcome {
   const req = importRequestSchema.parse(rawReq);
   const all = existingCandidates();
-  const outcome: ImportOutcome = { imported: [], merged: [], skipped: [] };
+  const outcome: ImportOutcome = {
+    imported: [], merged: [], skipped: [], failed: [],
+    counts: { requested: req.candidateIds.length, imported: 0, merged: 0, skipped: 0, failed: 0 },
+  };
+  const skip = (id: string, code: ImportSkipCode, reason: string, companyName?: string) => {
+    outcome.skipped.push({ id, code, reason, companyName });
+  };
 
   for (const id of req.candidateIds) {
     const cand = all.find((c) => c.id === id);
-    if (!cand) { outcome.skipped.push({ id, reason: 'Candidate not found.' }); continue; }
-    if (cand.status !== 'pending') { outcome.skipped.push({ id, reason: `Already ${cand.status}.` }); continue; }
+    if (!cand) { skip(id, 'not-found', 'Candidate not found.'); continue; }
+    if (cand.status !== 'pending') {
+      skip(id, 'terminal-status', `Already ${cand.status}.`, cand.companyName); continue;
+    }
 
     if (cand.duplicateStatus !== 'none') {
       if (req.duplicateAction === 'skip') {
-        outcome.skipped.push({ id, reason: `Duplicate of ${cand.duplicateOfName} — left pending (choose merge or import-anyway).` });
+        skip(
+          id,
+          cand.duplicateStatus === 'exact' ? 'exact-duplicate' : 'possible-duplicate',
+          `${cand.duplicateStatus === 'exact' ? 'Exact' : 'Possible'} duplicate of ${cand.duplicateOfName} — left pending (choose merge or import-anyway).`,
+          cand.companyName,
+        );
         continue;
       }
       if (req.duplicateAction === 'merge-evidence' && cand.duplicateOfId) {
@@ -336,24 +383,59 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
       }
     }
 
-    const company = candidateToImportedCompany(cand);
-    if (!company.success) {
-      outcome.skipped.push({ id, reason: company.reason });
+    // Entity type first: a fund called "…Robotics Fund II, L.P." would
+    // otherwise classify as robotics and import as though it were a startup.
+    const entity = checkEntityType(cand.companyName);
+    if (!entity.isOperatingCompany) {
+      skip(id, 'unsupported-entity-type', entity.reason, cand.companyName);
       continue;
     }
-    saveCompany(company.value, {
-      origin: 'extracted', // public-source extraction; verified fields are never downgraded
-      source: `discovery:${cand.sourceId}`,
-      externalId: cand.externalId ? { sourceId: cand.sourceId, externalId: cand.externalId } : undefined,
-      reviewStatus: 'Awaiting Review',
-      discoverySource: cand.sourceId,
-      discoveredAt: cand.discoveredAt.slice(0, 10),
-    });
-    saveScore(company.value.id, scoreCompany(company.value as unknown as Company), company.value.evidence.map((e) => e.url));
-    recordReviewDecision({ subjectType: 'candidate', subjectId: cand.id, decision: 'imported', actor: req.actor });
-    cand.status = 'imported';
-    outcome.imported.push(id);
+
+    // Resolve the sector. Adapters do not set one — every candidate
+    // arrives 'Unknown' — so before this existed the schema gate below
+    // rejected 100% of candidates and nothing could ever be imported.
+    // Classification reads only text the source actually published and
+    // returns null rather than guessing, so an unclassifiable candidate
+    // is still refused; it just is not the default outcome any more.
+    const resolved = resolveVertical(cand);
+    if (!resolved.vertical) {
+      skip(id, 'unclassifiable-sector', resolved.reason, cand.companyName);
+      continue;
+    }
+
+    const company = candidateToImportedCompany(cand, resolved.vertical);
+    if (!company.success) {
+      skip(id, 'validation-failed', company.reason, cand.companyName);
+      continue;
+    }
+
+    try {
+      saveCompany(company.value, {
+        origin: 'extracted', // public-source extraction; verified fields are never downgraded
+        source: `discovery:${cand.sourceId}`,
+        externalId: cand.externalId ? { sourceId: cand.sourceId, externalId: cand.externalId } : undefined,
+        reviewStatus: 'Awaiting Review',
+        discoverySource: cand.sourceId,
+        discoveredAt: cand.discoveredAt.slice(0, 10),
+      });
+      saveScore(company.value.id, scoreCompany(company.value as unknown as Company), company.value.evidence.map((e) => e.url));
+      recordReviewDecision({ subjectType: 'candidate', subjectId: cand.id, decision: 'imported', actor: req.actor });
+      cand.status = 'imported';
+      outcome.imported.push(id);
+    } catch (e) {
+      // A database conflict or constraint violation on ONE candidate must
+      // not discard the candidates that already imported successfully.
+      outcome.failed.push({ id, reason: (e as Error).message, companyName: cand.companyName });
+    }
   }
+
+  outcome.counts = {
+    requested: req.candidateIds.length,
+    imported: outcome.imported.length,
+    merged: outcome.merged.length,
+    skipped: outcome.skipped.length,
+    failed: outcome.failed.length,
+  };
 
   store.raw.discoveryCandidates = all;
   // Reflect import counts on the originating runs.
@@ -373,16 +455,51 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
   return outcome;
 }
 
-/** Candidates become imported companies only with honest defaults — Unknowns stay visible. */
-function candidateToImportedCompany(c: DiscoveryCandidate): { success: true; value: ImportedCompany } | { success: false; reason: string } {
-  if (c.vertical === 'Unknown') {
-    return { success: false, reason: 'Vertical is Unknown — classify it in review before import (no guessing).' };
+/**
+ * Decide a candidate's sector.
+ *
+ * Adapters never populate `vertical` — every candidate arrives
+ * 'Unknown'. If the source DID give us one, that wins. Otherwise the
+ * deterministic classifier reads the published name/pitch/subcategory/
+ * evidence. It returns null when the text carries no clear signal, and
+ * that refusal is preserved: an unclassifiable candidate is still not
+ * imported. What changed is that a candidate whose own text plainly says
+ * "robotics" is no longer thrown away.
+ */
+function resolveVertical(c: DiscoveryCandidate): { vertical: VerticalId | null; reason: string; matched: string[] } {
+  if (c.vertical !== 'Unknown') {
+    return { vertical: c.vertical as VerticalId, reason: 'Sector supplied by the source.', matched: [] };
   }
+  const cls = classifyCandidate({
+    companyName: c.companyName,
+    pitch: c.pitch !== 'Unknown' ? c.pitch : undefined,
+    subcategory: c.subcategory !== 'Unknown' ? c.subcategory : undefined,
+    evidenceText: c.evidence.map((e) => e.claim).join(' '),
+  });
+  if (!cls.vertical) {
+    return {
+      vertical: null,
+      reason: 'No sector signal in the published text — left for a human to classify rather than guessed.',
+      matched: [],
+    };
+  }
+  return {
+    vertical: cls.vertical,
+    reason: `Classified as ${cls.vertical} from published text (${cls.matched.slice(0, 4).join(', ')}).`,
+    matched: cls.matched,
+  };
+}
+
+/** Candidates become imported companies only with honest defaults — Unknowns stay visible. */
+function candidateToImportedCompany(
+  c: DiscoveryCandidate,
+  vertical: VerticalId,
+): { success: true; value: ImportedCompany } | { success: false; reason: string } {
   const parsed = importedCompanySchema.safeParse({
     id: `disc-${c.id}`,
     name: c.companyName,
     oneLiner: c.pitch !== 'Unknown' ? c.pitch : 'Unknown — pitch not yet verified',
-    vertical: c.vertical,
+    vertical,
     subcategory: c.subcategory !== 'Unknown' ? c.subcategory : 'Unclassified — requires manual review',
     stage: c.stage === 'Unknown' ? 'Stealth' : c.stage,
     city: c.hqCity !== 'Unknown' ? c.hqCity : 'Unknown',

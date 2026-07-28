@@ -87,6 +87,7 @@ interface SectorOutcome {
   retrieved: number;
   matched: number;
   imported: string[];
+  skipReasons: string[];
   shortfall: number;
   sourceResults: { sourceId: string; mode: string; found: number; detail: string }[];
 }
@@ -146,13 +147,20 @@ async function sourceSector(v: { id: VerticalId; name: string }): Promise<Sector
   }).slice(0, PER_SECTOR);
 
   const imported: string[] = [];
+  const skipReasons: string[] = [];
   if (!DRY_RUN && deduped.length > 0) {
     const result = importCandidates({
       candidateIds: deduped.map((r) => r.c.id),
       actor: `populate:${v.id}`,
       duplicateAction: 'skip',
     });
-    imported.push(...result.imported);
+    // Surface every refusal. Discarding these is what made a 100%
+    // rejection rate look like a silent failure last time.
+    for (const s of result.skipped) skipReasons.push(`${s.companyName ?? s.id}: [${s.code}] ${s.reason}`);
+    for (const f of result.failed) skipReasons.push(`${f.companyName ?? f.id}: [failed] ${f.reason}`);
+    imported.push(...deduped
+      .filter((r) => result.imported.includes(r.c.id))
+      .map((r) => r.c.companyName));
   }
 
   return {
@@ -162,6 +170,7 @@ async function sourceSector(v: { id: VerticalId; name: string }): Promise<Sector
     retrieved: pending.length,
     matched: matches.length,
     imported: DRY_RUN ? deduped.map((r) => r.c.companyName) : imported,
+    skipReasons,
     shortfall: Math.max(0, PER_SECTOR - deduped.length),
     sourceResults: run.sourceResults.map((s) => ({
       sourceId: s.sourceId, mode: s.mode, found: s.found, detail: s.detail ?? '',
@@ -190,6 +199,7 @@ console.log('\n── Per-sector detail ─────────────�
 for (const o of outcomes) {
   console.log(`\n${o.name} (${o.vertical}) — ${o.windowUsed}`);
   for (const n of o.imported) console.log(`   ✓ ${n}`);
+  for (const r of o.skipReasons) console.log(`   ✗ ${r}`);
   if (o.shortfall > 0) {
     console.log(`   ! Short by ${o.shortfall}. Only ${o.matched} candidate(s) in this run were confirmed to be ${o.vertical}. Not padded with unrelated companies.`);
   }
