@@ -289,6 +289,68 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_ai_usage_company ON ai_usage (company_id);
     `,
   },
+  {
+    version: 7,
+    name: 'opportunity-classification',
+    sql: `
+      -- Separates "this company exists" from "this company is raising".
+      -- The dashboard previously showed 35 Y Combinator directory
+      -- entries as investment opportunities; a directory listing proves
+      -- existence and accelerator participation, nothing about a raise.
+      --
+      -- One row per company. Absence of a row means the company has not
+      -- been classified yet and must be treated as a lead, never as a
+      -- deal — the read path defaults that way rather than assuming.
+      CREATE TABLE company_opportunity (
+        company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+        classification TEXT NOT NULL,
+        primary_source_id TEXT NOT NULL,
+        primary_tier INTEGER NOT NULL,
+        opportunity_type TEXT NOT NULL,
+        evidence_url TEXT NOT NULL,
+        evidence_published_at TEXT,
+        evidence_retrieved_at TEXT NOT NULL,
+        evidence_summary TEXT NOT NULL,
+        why_current TEXT NOT NULL,
+        amount_usd REAL,
+        amount_text TEXT,
+        round_type TEXT,
+        investors TEXT NOT NULL DEFAULT '[]',
+        evidence_confidence REAL NOT NULL DEFAULT 0,
+        conflicts TEXT NOT NULL DEFAULT '[]',
+        missing_information TEXT NOT NULL DEFAULT '[]',
+        classified_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_company_opportunity_class ON company_opportunity (classification);
+      CREATE INDEX idx_company_opportunity_source ON company_opportunity (primary_source_id);
+
+      -- Every discrete piece of deal evidence, append-only, so a later
+      -- reclassification can be re-derived and audited rather than
+      -- trusted. Multiple rows per company are expected and desirable:
+      -- diversity is measured from these.
+      CREATE TABLE deal_evidence (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        opportunity_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        tier INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        published_at TEXT,
+        retrieved_at TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        why_current TEXT NOT NULL,
+        amount_usd REAL,
+        amount_text TEXT,
+        round_type TEXT,
+        investors TEXT NOT NULL DEFAULT '[]',
+        confidence REAL NOT NULL DEFAULT 0,
+        UNIQUE (company_id, url, opportunity_type)
+      );
+      CREATE INDEX idx_deal_evidence_company ON deal_evidence (company_id);
+      CREATE INDEX idx_deal_evidence_source ON deal_evidence (source_id);
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

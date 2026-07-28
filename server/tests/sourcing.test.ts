@@ -3,7 +3,8 @@ import { store } from '../lib/store';
 import { runSource } from '../sourcing';
 import { leadEvidenceSchema } from '../sourcing/types';
 import { extractFunding, parseRssItems } from '../sourcing/adapters/rss';
-import { filingIndexUrl, parseDisplayName } from '../sourcing/adapters/sec';
+import { parseDisplayName } from '../sourcing/adapters/sec';
+import { filingIndexUrl } from '../sourcing/formd';
 import { runDiscovery, existingCandidates } from '../services/discovery';
 import { discoveryQuerySchema, type DiscoveryQuery } from '../../shared/discovery';
 
