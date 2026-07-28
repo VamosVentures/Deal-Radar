@@ -1,12 +1,12 @@
 # External Action Required
 
-Last verified: 2026-07-27, against the actual local environment.
+Last verified: 2026-07-28, against the actual local environment.
 
 This file lists **only** things that cannot be completed by writing code. Everything on this list is blocked on a credential, an account, or an infrastructure decision that a human with the right access has to make.
 
-**What is NOT on this list**, because it is already done or is our job rather than anyone else's: writing code, running public sourcing, pushing to GitHub, building Docker images, and any security review. Public credential-free sources (SEC, YC, SBIR, GitHub public API, arXiv, RSS) need no permission from anybody and are already live.
+**What is NOT on this list**, because it is already done or is our job rather than anyone else's: writing code, running public sourcing, pushing to GitHub, building Docker images, and any security review. Public credential-free sources (SEC, YC, GitHub public API, arXiv, RSS) need no permission from anybody and are already live. SBIR is the one exception, and not for a credential reason — see §3b.
 
-**Nothing here is a request to Pliancy unless the "Owner" column says Pliancy.** Only §5 and §6 are theirs.
+**Nothing here is a request to Pliancy unless the "Owner" column says Pliancy.** Only §5 and §6 are theirs. §3b is nobody's to fix — it is recorded so it is not mistaken for a missing credential.
 
 ---
 
@@ -23,6 +23,7 @@ This file lists **only** things that cannot be completed by writing code. Everyt
 | 7 | Review link | A shareable URL for Andrew's review | Vamos | **Yes** (localhost works) |
 | 8 | Docker verification | Confirming the image builds | Vamos | **Yes** |
 | 9 | GitHub Actions | Confirming CI passes on GitHub | Vamos | **Yes** |
+| 10 | SBIR/STTR public API | The government-award source | **Nobody — the API itself is down** | **Yes** |
 
 **Every one of these is optional.** The dashboard — live sourcing across all 7 sectors, deterministic scoring, dedup, the full review queue, backups — runs today with zero credentials.
 
@@ -78,6 +79,22 @@ This file lists **only** things that cannot be completed by writing code. Everyt
   4. Add the redirect URI matching the eventual deployment: `{APP_ORIGIN}/api/outlook/callback`.
   5. Return the client id, client secret, and tenant id through whatever secret channel you prefer — please do not email them in plain text.
 - **Without it:** Everything else works. Drafts can still be generated and reviewed in-app; they just cannot be pushed into a mailbox.
+
+## 3b. SBIR/STTR public awards API — **no credential exists to fix this**
+
+- **System:** `api.www.sbir.gov/public/api/awards`
+- **Feature blocked:** the SBIR/STTR government-award source (a tier-1 commercialization signal)
+- **Environment variable:** **none.** This API is documented as key-free; there is nothing to configure.
+- **Owner:** **nobody at Vamos or Pliancy can fix this.** Listed here only so it is not mistaken for a credential gap.
+- **Exact current state, probed 2026-07-28:**
+  - With no `User-Agent`: **HTTP 403.**
+  - With any identifying `User-Agent`: **HTTP 429** on the *first* request of a run, with body `{"Code":"TooManyRequestsError","Message":"The SBIR Public API is not available at this time."}` and **no `Retry-After` header**. Repeated across spaced attempts.
+  - Meanwhile `https://www.sbir.gov/awards` (the human-facing site) returns **200**.
+- **Diagnosis:** this is the API refusing everyone at the service level, not us being throttled. No backoff, queueing, or caching strategy changes it. It reads as the public API being disabled or gated while the website stays up.
+- **What is already implemented:** the full politeness layer it would need the moment it comes back — identifying User-Agent, a 2-second per-host minimum gap, request queueing, bounded exponential backoff, `Retry-After` handling, a 30-minute response cache, and a per-run request budget (`server/sourcing/politeness.ts`). The adapter also parses the full award record (recipient, date, amount, agency, program, project description, direct award URL) and labels awards as **non-dilutive commercialization signals, never equity rounds**.
+- **Deliberately NOT done:** scraping `www.sbir.gov`'s HTML as a workaround. The API is saying no; routing around that would be bypassing an access restriction.
+- **Exact next action:** none available to us. Optionally contact SBIR support to ask whether the public API has been retired or moved. Re-probe periodically — the adapter will start working with no code change if the service returns.
+- **Without it:** SEC Form D, Y Combinator, and funding-news RSS all still work. SBIR is reported as a failed source in every run report rather than silently omitted.
 
 ## 4. Product Hunt
 
@@ -156,7 +173,7 @@ This file lists **only** things that cannot be completed by writing code. Everyt
 
 To be explicit, since the point of this document is to keep the ask small:
 
-- **All public sourcing** — SEC Form D, Y Combinator, SBIR/STTR, GitHub public API, arXiv, and funding-news RSS all work today with no credential. Live-probed 2026-07-27: all returned HTTP 200 except SBIR, which returned 429 (its own rate limiting, not a permission problem).
+- **Public sourcing** — SEC Form D (including full filing-document parsing for amounts, first-sale dates and officers), Y Combinator, GitHub public API, arXiv, and funding-news RSS all work today with no credential. Live-probed 2026-07-28. SBIR is the exception: its public API refuses everyone at the service level (§3b).
 - **The Vamos Fit Score** — deterministic, no AI, no credential.
 - **The entire review workflow** — filters, sorting, detail view, bulk status changes, duplicate detection, per-company research refresh, source analytics, stale settings, backup and restore.
 - **Authentication** — implemented and enforced application-wide. Set `ADMIN_PASSWORD` locally to use it.
