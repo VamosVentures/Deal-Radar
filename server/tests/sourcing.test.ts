@@ -5,6 +5,7 @@ import { leadEvidenceSchema } from '../sourcing/types';
 import { extractFunding, parseRssItems } from '../sourcing/adapters/rss';
 import { parseDisplayName } from '../sourcing/adapters/sec';
 import { filingIndexUrl } from '../sourcing/formd';
+import { clearPolitenessCacheForTests } from '../sourcing/politeness';
 import { runDiscovery, existingCandidates } from '../services/discovery';
 import { discoveryQuerySchema, type DiscoveryQuery } from '../../shared/discovery';
 
@@ -24,7 +25,15 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
   });
 }
 
-beforeEach(() => store.resetForTests());
+beforeEach(() => {
+  store.resetForTests();
+  // The politeness layer caches successful responses per URL for up to
+  // 30 minutes. That is correct in production — it stops us re-hitting
+  // someone else's free API — but across tests it would serve an earlier
+  // test's success to a later test that stubbed a failure, so each test
+  // starts with an empty cache and a clean per-host request queue.
+  clearPolitenessCacheForTests();
+});
 afterEach(() => vi.unstubAllGlobals());
 
 // ── Successful source validation ─────────────────────────────────
@@ -172,7 +181,12 @@ describe('rate limits', () => {
   });
 
   it('HTTP 429 is reported as rate-limited', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'slow down' }, 429)));
+    // mockImplementation, not mockResolvedValue: the politeness layer
+    // retries a plain 429, and a Response body can only be read once, so
+    // a single shared Response instance would fail the second attempt
+    // with "body already read" and be misreported as a network error.
+    // A real server sends a fresh response per attempt.
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(jsonResponse({ error: 'slow down' }, 429))));
     const res = await runSource('grants', q({ sources: ['grants'] }), 10);
     expect(res.mode).toBe('failed');
     expect(res.failureKind).toBe('rate-limited');

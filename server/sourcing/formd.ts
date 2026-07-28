@@ -129,6 +129,50 @@ const FUND_NAME_PATTERNS: { pattern: RegExp; kind: string }[] = [
   { pattern: /[\s,–—-]+(?:L\.?P\.?|Limited\s+Partnership)\s*$/i, kind: 'limited partnership' },
   { pattern: /\b(?:partners|holdings)\s+(?:[IVXL]+|\d+)\b/i, kind: 'numbered partnership' },
   { pattern: /\breal\s+estate\s+(?:fund|trust|partners)\b/i, kind: 'real-estate vehicle' },
+
+  // PROJECT-FINANCE SPVs. Found by a real run: a "solar" search returned
+  // "Scenic Hill Solar LI, LLC" and "Scenic Hill Solar L, LLC" — numbers
+  // 51 and 50 in a Roman-numeral series of single-project entities. They
+  // file real Form Ds with real amounts and the SEC's own industry group
+  // says "Other Energy", not a fund, so neither the industry check nor
+  // the fund-name patterns above catch them. They are not startups; they
+  // are one-asset financing vehicles, and a sector shortlist full of them
+  // is worse than an empty one.
+  //
+  // The signal is a Roman numeral or a bare number sitting immediately
+  // before the legal suffix. Requires at least two characters or a comma
+  // so a genuine single-letter initial ("Company X Inc") is not caught.
+  { pattern: /\b(?:[IVXLCDM]{2,7}|\d{1,3})\s*,\s*(?:LLC|L\.?L\.?C\.?|Inc\.?|LP|L\.?P\.?)\s*$/i, kind: 'numbered project vehicle' },
+  // The negative lookahead matters: "LLC" is itself made of Roman-numeral
+  // letters (L, L, C), so without it "Moda Solar LLC" matched as
+  // "Solar" + numeral "LLC" and a plausible operating company was
+  // rejected. Legal suffixes are explicitly not numerals.
+  { pattern: /\b(?:project|holdco|propco|opco|solar|wind|storage)\s+(?!LLC\b|LP\b|LC\b|INC\b)(?:[IVXLCDM]{1,7}|\d{1,3})\b\s*,?\s*(?:LLC|Inc\.?|LP)?\s*$/i, kind: 'single-project vehicle' },
+
+  // ASSET-MANAGEMENT AND LENDING VEHICLES. Found in a real run:
+  // "PIMCO Asset-Based Lending Co LLC" filed a Form D and passed every
+  // check above. It is a lending vehicle run by a trillion-dollar asset
+  // manager, not a venture-stage company.
+  { pattern: /\basset[-\s]based\s+lending\b/i, kind: 'asset-based lending vehicle' },
+  { pattern: /\b(?:asset\s+management|investment\s+management|advisors?|advisers?)\b\s*,?\s*(?:LLC|Inc\.?|LP)?\s*$/i, kind: 'asset manager' },
+  { pattern: /\b(?:PIMCO|Blackstone|KKR|Apollo|Carlyle|Ares|Brookfield|BlackRock|Fidelity|Vanguard)\b/i, kind: 'large asset manager' },
+
+  // CORPORATE SUBSIDIARIES AND REGIONAL JVs of established public
+  // companies. "Fresenius Medical Care North Dallas, LLC" is a dialysis
+  // clinic entity belonging to a listed multinational — a real Form D
+  // filer, and not remotely an early-stage deal. Detected by the
+  // "<known corporate> <geography>" shape.
+  { pattern: /\b(?:Fresenius|Kaiser|HCA|Tenet|DaVita|UnitedHealth|Optum|CVS|Cigna|Humana)\b/i, kind: 'subsidiary of a large healthcare operator' },
+  { pattern: /\b(?:North|South|East|West|Greater|Metro)\s+(?:Dallas|Houston|Atlanta|Chicago|Phoenix|Denver|Miami|Boston|Seattle|Portland)\b\s*,?\s*(?:LLC|Inc\.?|LP)?\s*$/i, kind: 'regional operating subsidiary' },
+
+  // An entity that calls itself "Investments" is telling you what it is.
+  { pattern: /\binvestments?\b\s*,?\s*(?:LLC|Inc\.?|LP|L\.?P\.?)?\s*$/i, kind: 'investment vehicle' },
+
+  // Capacity-named energy projects: "72 MA Solar LLC", "150 MW Wind
+  // Holdings". A megawatt/acre figure in the name means the entity IS a
+  // project, not a company that builds them.
+  { pattern: /\b\d{1,4}\s*(?:MW|MWh|KW|MA|AC|DC)\b.*\b(?:solar|wind|storage|energy)\b/i, kind: 'capacity-named energy project' },
+  { pattern: /\b(?:solar|wind|storage)\s+(?:investments?|holdings?|ventures?)\b/i, kind: 'energy investment vehicle' },
 ];
 
 export interface OperatingCompanyVerdict {

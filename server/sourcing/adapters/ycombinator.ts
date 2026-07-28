@@ -25,6 +25,8 @@ const responseSchema = z.object({
       oneLiner: z.string().optional().nullable(),
       longDescription: z.string().optional().nullable(),
       batch: z.string().optional().nullable(),
+      slug: z.string().optional().nullable(),
+      url: z.string().optional().nullable(),
       status: z.string().optional().nullable(),
       teamSize: z.number().optional().nullable(),
       industries: z.array(z.string()).optional().nullable(),
@@ -33,6 +35,29 @@ const responseSchema = z.object({
     }).loose(),
   ).default([]),
 }).loose();
+
+/**
+ * YC batch code → an approximate start date, so a batch can be judged for
+ * recency. "S26" is Summer 2026; "W12" is Winter 2012.
+ *
+ * The day is deliberately the 1st and the result is labelled approximate
+ * wherever it is shown: YC publishes a batch season, not a date, and
+ * inventing a precise day would be exactly the kind of false precision
+ * this codebase avoids. It is accurate enough to answer "is this batch
+ * recent?", which is the only question asked of it.
+ */
+export function batchToApproxDate(batch: string | null | undefined): string | null {
+  if (!batch) return null;
+  const m = batch.trim().match(/^(W|S|F|Sp|X)(\d{2})$/i);
+  if (!m) return null;
+  const season = m[1].toUpperCase();
+  const yy = Number(m[2]);
+  // YC batch codes are 2-digit years; every batch is post-2005, so a
+  // 2-digit year maps unambiguously into the 2000s.
+  const year = 2000 + yy;
+  const month = season === 'W' ? '01' : season === 'SP' ? '04' : season === 'S' ? '06' : season === 'F' ? '09' : '01';
+  return `${year}-${month}-01`;
+}
 
 /** "San Francisco, CA, USA" → { city, state }. Absent parts stay absent. */
 function splitLocation(loc?: string | null): { city?: string; state?: string } {
@@ -86,7 +111,12 @@ export const ycAdapter: SourceAdapter = {
         sourceId: 'yc',
         sourceName: 'Y Combinator public directory',
         sourceType: 'directory',
-        sourceUrl: `https://www.ycombinator.com/companies?q=${encodeURIComponent(r.name)}`,
+        // The company's OWN page, not a search-results URL. A generic
+        // "?q=Name" link is not evidence of anything in particular — it
+        // is a query that happens to return the company today.
+        sourceUrl: r.url && z.string().url().safeParse(r.url).success
+          ? r.url
+          : (r.slug ? `https://www.ycombinator.com/companies/${r.slug}` : `https://www.ycombinator.com/companies?q=${encodeURIComponent(r.name)}`),
         companyName: r.name,
         companyWebsite: r.website && z.string().url().safeParse(r.website).success ? r.website : undefined,
         description: descriptionParts.length > 0 ? descriptionParts.join(' — ').slice(0, 500) : undefined,
@@ -101,6 +131,11 @@ export const ycAdapter: SourceAdapter = {
           labels.length > 0 ? `YC categories: ${labels.join(', ')}.` : '',
           r.oneLiner ? `YC one-liner: ${r.oneLiner}` : '',
         ].filter(Boolean).join(' '),
+        // A batch season is the only dated fact a directory listing
+        // carries. Without it, this record cannot establish currency and
+        // the classifier will (correctly) treat it as a company lead.
+        publishedAt: batchToApproxDate(r.batch) ?? undefined,
+        retrievedAt: now.slice(0, 10),
         discoveredAt: now,
         confidence: 0.7,
       };

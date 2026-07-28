@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { fetchWithTimeout } from '../../lib/http';
-import { classifyFetchError, classifyHttpStatus } from '../errors';
-import { readJson, validateExternal, validateLeads } from '../validate';
+import { validateExternal, validateLeads } from '../validate';
+import { politeFetch, RequestBudget } from '../politeness';
 import type { AdapterOutcome, SourceAdapter } from '../types';
 
 /**
@@ -24,6 +23,10 @@ const awardSchema = z.object({
   state: z.string().optional().nullable(),
   company_url: z.string().optional().nullable(),
   award_link: z.string().optional().nullable(),
+  abstract: z.string().optional().nullable(),
+  contract: z.string().optional().nullable(),
+  branch: z.string().optional().nullable(),
+  research_institution: z.string().optional().nullable(),
 }).loose();
 
 // The API returns either a bare array or an object with a results array.
@@ -56,28 +59,58 @@ export const sbirAdapter: SourceAdapter = {
     const rows = Math.min(budget.maxResults, 25);
     const url = `https://api.www.sbir.gov/public/api/awards?keyword=${encodeURIComponent(term)}&rows=${rows}`;
 
-    let res: Response;
-    try {
-      res = await fetchWithTimeout(url, { headers: { 'User-Agent': 'vamos-deal-radar' } }, 10_000);
-    } catch (e) {
-      const { kind, message } = classifyFetchError(e);
-      return { ok: false, failure: kind, apiCalls: 1, detail: `SBIR awards API: ${message}` };
-    }
+    // Politeness layer: one request at a time to this host, a 2s minimum
+    // gap, bounded backoff, Retry-After honoured, responses cached for
+    // 30 minutes, and a hard per-run request budget. It also draws the
+    // distinction that matters in the run report — a 429 on our FIRST
+    // request is the service refusing everyone, not us being greedy.
+    const requestBudget = new RequestBudget(Math.max(1, Math.min(budget.maxApiCalls, 3)));
+    const res = await politeFetch(url, {
+      // sbir.gov returns 403 with no User-Agent at all, so identifying
+      // ourselves is mandatory rather than merely polite.
+      headers: {
+        'User-Agent': 'vamos-deal-radar research (contact: vamosventures.com)',
+        Accept: 'application/json',
+      },
+      budget: requestBudget,
+    });
+
     if (!res.ok) {
-      const { kind, message } = classifyHttpStatus(res);
-      return { ok: false, failure: kind, apiCalls: 1, detail: `SBIR awards API: ${message}` };
+      const failure =
+        res.failure === 'service-unavailable' ? 'http-error'
+        : res.failure === 'forbidden' ? 'missing-credentials'
+        : res.failure === 'rate-limited-by-us' ? 'rate-limited'
+        : res.failure === 'timeout' ? 'timeout'
+        : 'network';
+      return {
+        ok: false,
+        failure,
+        apiCalls: res.requests,
+        detail: `SBIR/STTR awards API: ${res.detail ?? 'request failed'}`,
+      };
     }
-    const body = await readJson(res);
-    if (!body.ok) return { ok: false, failure: 'invalid-response', apiCalls: 1, detail: 'SBIR awards API returned a non-JSON body.' };
-    const parsed = validateExternal(responseSchema, body.data, 'SBIR awards API', 1);
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(res.body);
+    } catch {
+      return { ok: false, failure: 'invalid-response', apiCalls: res.requests, detail: 'SBIR awards API returned a non-JSON body.' };
+    }
+    const parsed = validateExternal(responseSchema, payload, 'SBIR awards API', res.requests);
     if (!parsed.ok) return parsed.failure;
 
     const now = new Date().toISOString();
+    const todayStr = now.slice(0, 10);
     const rawLeads = parsed.data.slice(0, budget.maxResults).map((a) => {
       const amount = toNumber(a.award_amount);
-      const awardBits = [a.program, a.phase ? `Phase ${String(a.phase).replace(/^phase\s*/i, '')}` : null, a.agency]
+      const awardBits = [a.program, a.phase ? `Phase ${String(a.phase).replace(/^phase\s*/i, '')}` : null, a.agency, a.branch]
         .filter(Boolean).join(' · ');
       const sourceUrl = normalizeUrl(a.award_link) ?? `https://www.sbir.gov/awards?keyword=${encodeURIComponent(a.firm)}`;
+      // An award date may arrive as a full date or only a year. A year
+      // alone is NOT widened into a fake day — it stays absent.
+      const awardDate = a.proposal_award_date && /^\d{4}-\d{2}-\d{2}/.test(a.proposal_award_date)
+        ? a.proposal_award_date.slice(0, 10)
+        : undefined;
       return {
         sourceId: 'grants',
         sourceName: 'SBIR/STTR awards (sbir.gov)',
@@ -88,9 +121,17 @@ export const sbirAdapter: SourceAdapter = {
         hqCity: a.city ?? undefined,
         hqState: a.state && /^[A-Z]{2}$/i.test(a.state.trim()) ? a.state.trim().toUpperCase() : undefined,
         fundingAmount: amount,
-        fundingAmountText: amount !== undefined ? `$${amount.toLocaleString('en-US')} government award` : undefined,
-        evidenceText: `SBIR/STTR award${a.award_title ? `: "${a.award_title}"` : ''}${awardBits ? ` (${awardBits})` : ''}${a.award_year ? `, ${a.award_year}` : ''}.`,
-        publishedAt: a.proposal_award_date ?? undefined,
+        // Deliberately worded as a government award, never as a round:
+        // SBIR/STTR money is non-dilutive and is a commercialization
+        // signal, not equity financing.
+        fundingAmountText: amount !== undefined ? `$${amount.toLocaleString('en-US')} non-dilutive government award` : undefined,
+        evidenceText: [
+          `SBIR/STTR government award${a.award_title ? `: "${a.award_title}"` : ''}${awardBits ? ` (${awardBits})` : ''}${a.award_year ? `, ${a.award_year}` : ''}.`,
+          a.abstract ? `Project: ${String(a.abstract).slice(0, 300)}` : '',
+          'Non-dilutive award — a commercialization signal, not an equity round.',
+        ].filter(Boolean).join(' '),
+        publishedAt: awardDate,
+        retrievedAt: todayStr,
         discoveredAt: now,
         confidence: 0.65, // a government award record names a real company
       };

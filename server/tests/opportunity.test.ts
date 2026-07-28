@@ -309,6 +309,32 @@ describe('Form D parsing', () => {
     }
   });
 
+  it('rejects project-finance SPVs found in real solar Form D results', () => {
+    // A real "solar" search returned these. They file genuine Form Ds
+    // with real amounts, and the SEC's own industry group says "Other
+    // Energy" rather than a fund — so neither the industry check nor the
+    // fund-name patterns catch them. They are Roman-numeral-series
+    // single-project financing vehicles, not startups.
+    for (const name of [
+      'Scenic Hill Solar LI, LLC',
+      'Scenic Hill Solar L, LLC',
+      'Sunrise Project 12, LLC',
+      'Wind Holdings VII, LLC',
+      'Solar Project III LLC',
+    ]) {
+      expect(isOperatingIssuer(name).isOperatingCompany, name).toBe(false);
+    }
+  });
+
+  it('does not mistake a legal suffix for a Roman numeral', () => {
+    // "LLC" is made of Roman-numeral letters (L, L, C). An earlier version
+    // of the project-vehicle pattern matched "Moda Solar" + numeral "LLC"
+    // and rejected a plausible operating company.
+    for (const name of ['Moda Solar LLC', 'Susquehanna Solar, LLC', 'Solar Simplified, LLC', 'Company X Inc']) {
+      expect(isOperatingIssuer(name).isOperatingCompany, name).toBe(true);
+    }
+  });
+
   it('handles a filing with no amounts without inventing any', () => {
     const f = parseFormD('<edgarSubmission><primaryIssuer><entityName>Sparse Co</entityName></primaryIssuer></edgarSubmission>');
     expect(f.totalOfferingAmountUsd).toBeNull();
