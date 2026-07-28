@@ -71,13 +71,30 @@ async function main() {
     if (!live.ok) throw new Error(`/health/live returned ${live.status}`);
     log('/health/live: OK');
 
+    // /health/ready deliberately answers an ANONYMOUS caller with the
+    // verdict and nothing else — the checks block, the schema version,
+    // raw DB error text, and the integration inventory are all
+    // administrator-only. An orchestrator needs the status code; the
+    // open internet does not need the diagnostics. This smoke test runs
+    // unauthenticated, so it asserts both halves of that contract.
     const ready = await fetch(`http://localhost:${PORT}/health/ready`);
-    const readyBody = await ready.json() as { status: string; checks?: Record<string, { ok: boolean }> };
+    const readyBody = await ready.json() as {
+      status: string; checks?: unknown; integrations?: unknown; scheduler?: unknown;
+    };
     if (ready.status !== 200 && ready.status !== 503) throw new Error(`/health/ready returned unexpected status ${ready.status}`);
-    log(`/health/ready: ${readyBody.status} (database: ${readyBody.checks?.database?.ok}, migrations: ${readyBody.checks?.migrations?.ok})`);
-    if (!readyBody.checks?.database?.ok || !readyBody.checks?.migrations?.ok) {
-      throw new Error('Database or migrations check failed in /health/ready.');
+    if (readyBody.status !== 'ready') {
+      throw new Error(`/health/ready reported "${readyBody.status}" — the database or migrations are not healthy.`);
     }
+    log(`/health/ready: ${readyBody.status} (HTTP ${ready.status})`);
+
+    for (const [field, value] of Object.entries({
+      checks: readyBody.checks, integrations: readyBody.integrations, scheduler: readyBody.scheduler,
+    })) {
+      if (value !== undefined) {
+        throw new Error(`/health/ready leaked "${field}" to an unauthenticated caller — it must be administrator-only.`);
+      }
+    }
+    log('/health/ready withholds diagnostics from anonymous callers: OK');
 
     const frontend = await fetch(`http://localhost:${PORT}/`);
     const html = await frontend.text();

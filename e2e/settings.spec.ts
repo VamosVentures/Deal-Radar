@@ -1,16 +1,19 @@
 import { test, expect } from '@playwright/test';
-import { E2E_ADMIN_PASSWORD } from './env';
 
-async function signIn(page: import('@playwright/test').Page) {
+/**
+ * These specs inherit the signed-in session written by global-setup
+ * (see storageState in playwright.config.ts), so they open Settings
+ * directly. Signing in per test is no longer necessary — and no longer
+ * possible, since there is no login form once a session exists.
+ */
+async function openSettings(page: import('@playwright/test').Page) {
   await page.goto('/sources');
-  await page.getByLabel('Password').fill(E2E_ADMIN_PASSWORD);
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByText('System status')).toBeVisible();
 }
 
 test.describe('Settings', () => {
   test('source statuses render honestly for an authenticated administrator', async ({ page }) => {
-    await signIn(page);
+    await openSettings(page);
     await expect(page.getByText('Implemented — credentials required').first()).toBeVisible();
     // GitHub's "Connected" state only ever appears after a real health check —
     // this asserts the label exists somewhere, not that it's fabricated.
@@ -18,7 +21,7 @@ test.describe('Settings', () => {
   });
 
   test('credential-required integrations are labeled honestly, never as live', async ({ page }) => {
-    await signIn(page);
+    await openSettings(page);
     // HubSpot/Outlook/AI have no credentials in the E2E environment —
     // they must never claim "Connected".
     const hubspotCard = page.locator('text=HubSpot CRM').first().locator('xpath=ancestor::*[self::section or self::div][1]');
@@ -28,7 +31,7 @@ test.describe('Settings', () => {
   });
 
   test('sources with no adapter are never shown as an enabled, working option', async ({ page }) => {
-    await signIn(page);
+    await openSettings(page);
     // "Accelerator & fellowship sites" has no adapter — its source-quality
     // row must read Planned, and its schedule checkbox must be disabled
     // and unchecked, never selectable as if it were live.
@@ -39,14 +42,14 @@ test.describe('Settings', () => {
   });
 
   test('sourcing history loads', async ({ page }) => {
-    await signIn(page);
+    await openSettings(page);
     await expect(page.getByText('Sourcing runs (persisted history)')).toBeVisible();
     await expect(page.getByText('Last run')).toBeVisible();
     await expect(page.getByText('No run yet').first()).toBeVisible();
   });
 
   test('schedule configuration loads for an authenticated administrator', async ({ page }) => {
-    await signIn(page);
+    await openSettings(page);
     await expect(page.getByText('Scheduled sourcing')).toBeVisible();
     await expect(page.getByText('Enabled sources')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Save schedule' })).toBeVisible();

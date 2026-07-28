@@ -13,7 +13,12 @@ export type VerticalId =
   | 'ai'
   | 'aoi';
 
-export type Stage = 'Pre-seed' | 'Seed' | 'Series A' | 'Stealth';
+// 'Stealth' means the company is deliberately operating in stealth.
+// 'Unknown' means WE do not know the stage. Conflating the two was a
+// real misrepresentation: the discovery importer mapped every
+// stage-less candidate to 'Stealth', so a company that had publicly
+// raised $117M was displayed as stealth.
+export type Stage = 'Pre-seed' | 'Seed' | 'Series A' | 'Stealth' | 'Unknown';
 
 export type PolicyFlag = 'defi-adjacent' | 'hardware-heavy' | 'outside-thesis';
 

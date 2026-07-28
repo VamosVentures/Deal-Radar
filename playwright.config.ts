@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import { E2E_BACKEND_ENV, E2E_BACKEND_PORT, E2E_FRONTEND_PORT } from './e2e/env';
+import { E2E_BACKEND_ENV, E2E_BACKEND_PORT, E2E_FRONTEND_PORT, E2E_STORAGE_STATE } from './e2e/env';
 
 /**
  * Smallest reasonable Playwright config. Both the backend and the
@@ -19,6 +19,9 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${E2E_FRONTEND_PORT}`,
     trace: 'retain-on-failure',
+    // Every spec starts signed in, because the whole application is
+    // gated. auth.spec.ts opts out to test the gate itself.
+    storageState: E2E_STORAGE_STATE,
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },

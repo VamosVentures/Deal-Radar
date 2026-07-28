@@ -501,7 +501,9 @@ function candidateToImportedCompany(
     oneLiner: c.pitch !== 'Unknown' ? c.pitch : 'Unknown — pitch not yet verified',
     vertical,
     subcategory: c.subcategory !== 'Unknown' ? c.subcategory : 'Unclassified — requires manual review',
-    stage: c.stage === 'Unknown' ? 'Stealth' : c.stage,
+    // Previously 'Unknown' was rewritten to 'Stealth', which asserted
+    // something about the company that we had not established.
+    stage: c.stage,
     city: c.hqCity !== 'Unknown' ? c.hqCity : 'Unknown',
     state: c.hqState !== 'Unknown' ? c.hqState : '??',
     foundedYear: c.foundingYear ?? new Date().getFullYear(),

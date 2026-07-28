@@ -35,6 +35,9 @@ const STAGE_POINTS: Record<Company['stage'], number> = {
   'Pre-seed': 12,
   'Series A': 9,
   'Stealth': 7,
+  // Unknown is not a stage the company chose — it is a gap in OUR data.
+  // Scored low and said plainly, never guessed upward.
+  'Unknown': 5,
 };
 
 const EXCEPTION_MESSAGES: Record<PolicyFlag, string> = {
@@ -76,7 +79,9 @@ function stageFit(c: Company): ScoreComponent {
         ? 'Pre-seed is in focus; earlier than the sweet spot.'
         : c.stage === 'Series A'
           ? 'Series A is in range but latest stage the firm leads.'
-          : 'Stealth — stage unconfirmed.';
+          : c.stage === 'Stealth'
+            ? 'Stealth — the company is operating in stealth.'
+            : 'Stage is not on record. Scored low because it is unverified, not because the company is early — confirm the stage during review.';
   return { key: 'stage', label: 'Stage fit', points, max: 15, rationale };
 }
 

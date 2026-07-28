@@ -1,5 +1,6 @@
 import fs from 'node:fs';
-import { E2E_BACKEND_PORT, E2E_DATA_DIR } from './env';
+import path from 'node:path';
+import { E2E_ADMIN_PASSWORD, E2E_BACKEND_PORT, E2E_DATA_DIR, E2E_FRONTEND_PORT, E2E_STORAGE_STATE } from './env';
 
 /**
  * Runs once before the E2E suite. Predictable, deterministic test
@@ -36,9 +37,25 @@ export default async function globalSetup(): Promise<void> {
   fs.mkdirSync(E2E_DATA_DIR, { recursive: true });
   await waitForBackend(30_000);
 
-  const res = await fetch(`${baseUrl}/api/companies/import-csv`, {
+  // The whole application is gated now, so even seeding goes through a
+  // real sign-in — which is itself worth exercising once per run.
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: E2E_ADMIN_PASSWORD }),
+  });
+  if (!login.ok) {
+    throw new Error(`E2E admin sign-in failed: ${login.status} ${await login.text()}`);
+  }
+  const setCookie = login.headers.get('set-cookie');
+  if (!setCookie) throw new Error('E2E sign-in returned no session cookie.');
+  const cookiePair = setCookie.split(';')[0];
+  const [cookieName, ...rest] = cookiePair.split('=');
+  const cookieValue = rest.join('=');
+
+  const res = await fetch(`${baseUrl}/api/companies/import-csv`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookiePair },
     body: JSON.stringify({ csv: SEED_CSV }),
   });
   if (!res.ok) {
@@ -48,4 +65,22 @@ export default async function globalSetup(): Promise<void> {
   if (body.imported !== 2) {
     throw new Error(`E2E seed import expected 2 companies, got ${JSON.stringify(body)}`);
   }
+
+  // Persist the session so specs start signed in. Specs that test the
+  // gate itself opt out with an empty storageState (see auth.spec.ts).
+  fs.mkdirSync(path.dirname(E2E_STORAGE_STATE), { recursive: true });
+  fs.writeFileSync(E2E_STORAGE_STATE, JSON.stringify({
+    cookies: [{
+      name: cookieName,
+      value: cookieValue,
+      domain: 'localhost',
+      path: '/',
+      expires: Math.floor(Date.now() / 1000) + 12 * 60 * 60,
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax' as const,
+    }],
+    origins: [],
+  }, null, 2));
+  void E2E_FRONTEND_PORT;
 }

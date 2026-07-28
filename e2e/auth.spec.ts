@@ -1,13 +1,23 @@
 import { test, expect } from '@playwright/test';
 import { E2E_ADMIN_PASSWORD, E2E_BACKEND_PORT } from './env';
 
+// This file tests the gate itself, so it must start SIGNED OUT — it
+// opts out of the shared signed-in session every other spec inherits.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.describe('Authentication', () => {
-  test('Settings shows the administrator login gate when unauthenticated', async ({ page }) => {
-    await page.goto('/sources');
-    await expect(page.getByText('Administrator sign-in required')).toBeVisible();
-    await expect(page.getByLabel('Password')).toBeVisible();
-    // The gated admin panels must not render before sign-in.
-    await expect(page.getByText('System status')).not.toBeVisible();
+  test('the WHOLE application is gated when unauthenticated, not just Settings', async ({ page }) => {
+    // Every route must land on the sign-in screen. Overview and
+    // Companies are the important ones: they used to render every
+    // persisted company to an anonymous visitor.
+    for (const route of ['/', '/companies', '/discovery', '/stealth', '/sources']) {
+      await page.goto(route);
+      await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+      await expect(page.getByLabel('Password')).toBeVisible();
+      // No application content leaks behind the gate.
+      await expect(page.getByText('System status')).not.toBeVisible();
+      await expect(page.getByRole('link', { name: 'Companies' })).not.toBeVisible();
+    }
   });
 
   test('an incorrect password is rejected', async ({ page }) => {

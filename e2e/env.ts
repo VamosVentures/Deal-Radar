@@ -29,3 +29,6 @@ export const E2E_BACKEND_ENV = {
   RUN_SCHEDULER: 'false',
   NODE_ENV: 'test',
 };
+
+/** Where global-setup writes the signed-in session for all specs to reuse. */
+export const E2E_STORAGE_STATE = path.join(dataDir, 'storage-state.json');

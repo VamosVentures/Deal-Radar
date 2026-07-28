@@ -20,7 +20,7 @@ import type { Company } from '../../src/types';
  */
 
 const VERTICALS = VERTICAL_ID_VALUES;
-const STAGES = ['Pre-seed', 'Seed', 'Series A', 'Stealth'] as const;
+const STAGES = ['Pre-seed', 'Seed', 'Series A', 'Stealth', 'Unknown'] as const;
 const EVIDENCE_TYPES = ['Filing', 'News', 'Founder statement', 'Product', 'Accelerator', 'Hiring signal', 'Database record'] as const;
 
 export const importedCompanySchema = z.object({
