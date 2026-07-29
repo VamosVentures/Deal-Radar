@@ -30,14 +30,46 @@ function today(): string {
 
 // ── Deal evidence ─────────────────────────────────────────────────
 
-export function addDealEvidence(companyId: string, evidence: DealEvidence): { added: boolean } {
-  const res = getDb().prepare(`
+export function addDealEvidence(
+  companyId: string,
+  evidence: DealEvidence,
+): { added: boolean; dateBackfilled: boolean } {
+  const db = getDb();
+  const existing = db.prepare(
+    'SELECT id, published_at FROM deal_evidence WHERE company_id = ? AND url = ? AND opportunity_type = ?',
+  ).get(companyId, evidence.url, evidence.opportunityType) as
+    { id: number; published_at: string | null } | undefined;
+
+  if (existing) {
+    /**
+     * Append-only means a stored FACT is never rewritten. A row carrying
+     * no publication date is not a fact being contradicted — it is a
+     * gap, and re-reading the same article with a parser that works can
+     * fill it.
+     *
+     * This is not hypothetical. The RSS date bug fixed in Phase 14 wrote
+     * every funding-news row with published_at NULL. Re-running sourcing
+     * afterwards hit this ON CONFLICT path and changed nothing, so those
+     * records stayed permanently undated and permanently un-current, and
+     * no amount of correct code downstream could rescue them.
+     *
+     * Strictly null → non-null. A date already on record is never
+     * touched, so a later source can never move an event in time.
+     */
+    if (existing.published_at === null && evidence.publishedAt !== null) {
+      db.prepare('UPDATE deal_evidence SET published_at = ? WHERE id = ?')
+        .run(evidence.publishedAt, existing.id);
+      return { added: false, dateBackfilled: true };
+    }
+    return { added: false, dateBackfilled: false };
+  }
+
+  db.prepare(`
     INSERT INTO deal_evidence (
       company_id, opportunity_type, source_id, source_name, tier, url,
       published_at, retrieved_at, summary, why_current,
       amount_usd, amount_text, round_type, investors, confidence
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (company_id, url, opportunity_type) DO NOTHING
   `).run(
     companyId, evidence.opportunityType, evidence.sourceId, evidence.sourceName,
     evidence.tier, evidence.url, evidence.publishedAt, evidence.retrievedAt,
@@ -45,7 +77,7 @@ export function addDealEvidence(companyId: string, evidence: DealEvidence): { ad
     evidence.amountUsd, evidence.amountText, evidence.roundType,
     JSON.stringify(evidence.investors), evidence.confidence,
   );
-  return { added: res.changes > 0 };
+  return { added: true, dateBackfilled: false };
 }
 
 export function listDealEvidence(companyId: string): DealEvidence[] {

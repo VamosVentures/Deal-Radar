@@ -76,6 +76,13 @@ export function createApp() {
     '/api/companies/:id/refresh-research',
     rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false }),
   );
+  // Confirming a website re-qualifies the company, which resolves the
+  // new domain, fetches it, and may query SEC. The preview is cheap
+  // (one DNS resolution) and shares the general /api limit.
+  app.use(
+    '/api/companies/:id/website-confirmation/confirm',
+    rateLimit({ windowMs: 60_000, limit: 20, standardHeaders: true, legacyHeaders: false }),
+  );
   app.use('/api', idempotencyGuard);
 
   // ── Whole-application gate ─────────────────────────────────────

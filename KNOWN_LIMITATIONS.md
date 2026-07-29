@@ -252,36 +252,63 @@ before validating, so a literal copy of the example file boots cleanly.
 RSS is live and importing real, corroborated opportunities. These are its real
 edges.
 
-### Two sectors have no qualified opportunity at all
+### Future of Work still has no qualified opportunity
 
-Future of Work: **0 of 5**. Space Tech: **0 of 5**. This is a genuine shortage,
-not a bug and not a placeholder. The pipeline considered 7 FoW candidates and
-12 Space Tech candidates; none met the bar. Venus Aerospace was extracted
-correctly from a real $90M Series B article and classified `spacetech`, but no
-second independent source could be found for it and its website could not be
-confirmed (5 candidate domains tried), so it is held as a company lead. The
+Future of Work: **0 of 5**. This is a genuine shortage, not a bug and not a
+placeholder — the pipeline considered 7 candidates and none met the bar. The
 correct fix is another source family, not a lowered bar.
+
+Space Tech is now **1 of 5**: Venus Aerospace was extracted correctly from a
+real $90M Series B article, and Phase 15A confirmed venusaero.com against the
+article's own link to it, which supplied the second source family it was
+missing. Four slots are still empty and are left empty.
 
 ### Only two source families overall
 
-17 qualified opportunities: 8 regulatory (SEC), 9 press (RSS). The target is
-three families per sector. The accelerator family is the obvious third, and
+23 qualified opportunities: 8 regulatory (SEC), 15 press (RSS). The target is
+three families per sector, and press concentration is now 65% — worse than
+before Phase 15A, because confirming websites promoted press-derived records
+and added no new family. A verified website is web-family corroboration for
+*qualification*, but it is never the primary source of a financing claim, so
+it cannot broaden the shortlist's source mix. The accelerator family is the
+obvious third, and
 Phase 14 tightened rather than loosened it: a YC batch is now a fundraising
 signal only alongside a *verified operating website*, and it is labelled
 **"Recent accelerator signal / Financing amount unknown / Current fundraising
 not confirmed."** A directory listing is participation in a cohort, and a
 cohort is not a raise.
 
-### A common single-word name blocks domain discovery, by design
+### A common single-word name blocks *automatic* domain discovery, by design
 
-Companies called *Natural*, *Cascade*, *Enigma*, *Multiverse*, *Antares*,
-*Ramp*, *Infinity* are stored as real leads with their real articles, but no
-website is guessed for them. A page containing the word "natural" is not
-evidence about a company called Natural — a previous run "confirmed"
-natural.com and enigma.com on exactly that reasoning. Without a second source
-these stay company leads. The word list lives in
-`server/sourcing/classify.ts` (`AMBIGUOUS_NAME_WORDS`); it is curated and
-auditable rather than inferred, so it is incomplete by construction.
+No domain is derived from a company name when that name is a common English
+word. A page containing the word "natural" is not evidence about a company
+called Natural. The word list lives in `server/sourcing/classify.ts`
+(`AMBIGUOUS_NAME_WORDS`); it is curated and auditable rather than inferred, so
+it is incomplete by construction.
+
+Phase 15A is the case study for why the guard stays. An early run "confirmed"
+both natural.com and enigma.com by finding the name on the page. Checked
+against evidence afterwards: **natural.com really is** Natural AI, Inc., and
+**enigma.com really is a different company** — Enigma's site is `enigma.inc`.
+The method was invalid both times; it simply happened to be right once. A rule
+that is wrong half the time is not a rule.
+
+What Phase 15A added is a different *kind* of evidence, not a weaker bar:
+`server/services/websiteConfirmation.ts` lets a person record a website
+against a cited source (official announcement, filing, accelerator page,
+investor announcement). It requires the site URL, a supporting evidence URL,
+a written reason, and an explicit confirmation after seeing the previous and
+proposed values; all of it lands in `classification_history`. Six of the seven
+held records were resolved that way — see IMPLEMENTATION_STATUS.md, Phase 15A.
+
+Two things worth knowing about that path:
+
+- It does not touch `AMBIGUOUS_NAME_WORDS` or any automatic code path, and a
+  regression test asserts the discoverer still refuses to guess for a name
+  after a human has confirmed that same company's site.
+- It cannot be used to make a *stale* record current. A website carries no
+  publication date, so it corroborates that a business operates and nothing
+  more.
 
 ### Cybersecurity and semiconductors have no sector
 

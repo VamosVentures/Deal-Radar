@@ -18,6 +18,8 @@ import type {
   DiscoveryCandidate, DiscoveryQuery, DiscoveryRun, FounderHypothesis,
   ScheduledJob, StealthSignal,
 } from '../../shared/discovery';
+import type { OpportunityClass } from '../../shared/opportunity';
+import type { QualificationResult } from '../../shared/qualification';
 
 export type UiStatus = 'Connected' | 'Not connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error';
 export type StatusMap = Record<'hubspot' | 'outlook' | 'ai' | 'refresh', { status: UiStatus; detail: string }>;
@@ -256,6 +258,21 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ actor }),
       }),
+    /**
+     * Manual website confirmation. Two calls on purpose: `preview`
+     * writes nothing and returns the before/after, `confirm` refuses
+     * without an explicit `confirmed: true`.
+     */
+    previewWebsiteConfirmation: (id: string, input: WebsiteConfirmationInput) =>
+      call<WebsiteConfirmationPreview>(`/api/companies/${id}/website-confirmation/preview`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    confirmWebsite: (id: string, input: WebsiteConfirmationInput) =>
+      call<WebsiteConfirmationResult>(`/api/companies/${id}/website-confirmation/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ ...input, confirmed: true }),
+      }),
     bulkStatus: (ids: string[], status: CompanyStatus, actor: string) =>
       call<{ ok: boolean; status: CompanyStatus; updated: string[]; skipped: { id: string; reason: string }[] }>('/api/companies/bulk-status', {
         method: 'POST',
@@ -358,6 +375,53 @@ export interface RefreshResearchResult {
   fieldsRequiringHumanReview: string[];
   oldScore: { score: number; version: string } | null;
   newScore: { score: number; version: string };
+}
+
+/**
+ * Manual website confirmation — see server/services/websiteConfirmation.ts.
+ * Mirrored here rather than imported because the browser bundle must not
+ * pull in server code.
+ */
+export interface WebsiteConfirmationInput {
+  website: string;
+  evidenceUrl: string;
+  reason: string;
+  actor: string;
+}
+
+export interface WebsiteConfirmationPreview {
+  companyId: string;
+  companyName: string;
+  previous: {
+    website: string | null;
+    websiteOrigin: string | null;
+    classification: OpportunityClass | null;
+    qualification: QualificationResult | null;
+    independentSources: number;
+  };
+  proposed: {
+    website: string;
+    evidenceUrl: string;
+    websiteOrigin: 'verified';
+    effect: string;
+  };
+  warnings: string[];
+  blockers: string[];
+}
+
+export interface WebsiteConfirmationResult {
+  ok: boolean;
+  message: string;
+  preview: WebsiteConfirmationPreview;
+  applied?: {
+    website: string;
+    classificationBefore: OpportunityClass | null;
+    classificationAfter: OpportunityClass;
+    qualificationBefore: QualificationResult | null;
+    qualificationAfter: QualificationResult;
+    quarantined: boolean;
+    evidenceRowAdded: boolean;
+  };
 }
 
 export interface BackupMetadata {

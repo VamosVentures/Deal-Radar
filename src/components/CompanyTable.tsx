@@ -9,6 +9,7 @@ import { ExceptionBadge, FounderLine, IdentityChips, ProvenanceTag, ScoreGauge, 
 import { HubSpotModal } from './HubSpotModal';
 import { OutreachPanel } from './OutreachPanel';
 import { AiAnalysis } from './AiAnalysis';
+import { WebsiteConfirmationPanel } from './WebsiteConfirmation';
 import { useCompanies } from '../store/companies';
 import { btnGhost, btnPrimary } from './Modal';
 import { api, ApiError, type PossibleDuplicateEntry, type RefreshResearchResult } from '../lib/api';
@@ -749,6 +750,22 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
                 <ReportingSources evidence={evidenceRows} />
               </div>
             )}
+            {/* An unverified website is the single most common reason a
+                real company is held as a lead, and it is the one gap a
+                person can close in a minute with a source in front of
+                them. So the action lives here, next to the verdict that
+                explains why it matters — not buried in an edit form. */}
+            <div className="mt-2.5 border-t border-line pt-2.5">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Official website</div>
+              <div className="mt-1.5">
+                <WebsiteConfirmationPanel
+                  companyId={c.id}
+                  companyName={c.name}
+                  currentWebsite={c.website ?? null}
+                  onDone={refresh}
+                />
+              </div>
+            </div>
           </div>
 
           <div className="mt-3 border border-line bg-panel px-3.5 py-3">

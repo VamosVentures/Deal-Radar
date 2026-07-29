@@ -1606,3 +1606,101 @@ One pre-existing record was quarantined: **"Travis Kalanick's robotics
 company"**, created by the old headline-prefix extractor. It is not a company
 name, so no amount of corroboration could ever make it a deal. Quarantined,
 not deleted — the article evidence stays auditable.
+
+---
+
+# PHASE 15A COMPLETED (2026-07-29) — Resolve the remaining company-verification problems
+
+Seven records were held as company leads for one reason: no confirmed official
+website. Six are now corroborated opportunities. This phase is mostly about
+*how* they were confirmed, because the tempting shortcut is the thing that
+already produced a wrong answer once.
+
+## The eight records that were investigated
+
+| Record | Website confirmed | Established by | Result |
+|---|---|---|---|
+| Natural | `https://www.natural.com` | Its own PR Newswire release: "Natural (www.natural.com) is building payments infrastructure for AI agents." | Recent Financing |
+| Enigma | `https://www.enigma.inc` | The TechCrunch article on record links to it; the site is Enigma AI Labs, Inc., the robot-AI company the article describes | Recent Financing |
+| Multiverse | `https://multiversecomputing.com` | The company's own Series C announcement is hosted on that domain, matching SiliconANGLE's $570M / $1.7B | Recent Financing |
+| Antares | `https://antaresindustries.com` | The company's own `/updates/antares-raises-seriesc` page, linked by GovConWire, matching TechCrunch's $470M | Recent Financing |
+| Ramp | `https://ramp.com` | Its own PR Newswire release, "Learn more at www.ramp.com"; TechCrunch also links to a post by the co-CEO on that domain | Recent Financing |
+| Venus Aerospace | `https://www.venusaero.com` | The TechCrunch article links to it; the site is Venus Aerospace Corp. and its product is the RDRE the article is about | Recent Financing |
+| Infinity | `https://infinity.inc` | SiliconANGLE names "Infinity Inc." and links to `infinity.inc`; TechCrunch links to `infinity.inc/research/dmatrix-corsair` | **Unverified — human review** |
+| Cascade | — | **No such record exists**, in the live database or in any of the eight backups | Documentation error, corrected |
+
+Two of these were near-misses worth recording. **Antares'** domain is
+`antaresindustries.com` while the company is *Antares Nuclear, Inc.* — a
+derived domain would never have found it. **Enigma** is `enigma.inc`;
+`enigma.com` is an unrelated company, which an earlier automated run had
+"confirmed". Each confirmation also states which same-named company it is
+*not* (Antares Pharma/Capital, Ramp Network, multiverse.io, the YC Infinity).
+
+**Infinity is not resolved.** Its identity is well evidenced, but every path on
+`infinity.inc` returns about eight characters of server-rendered text — the
+site renders in the browser. The verifier cannot execute JavaScript, so it
+cannot confirm the business operates, and the record sits at
+`human-review-required` / `unverified-opportunity` rather than being counted as
+a deal.
+
+## What was built
+
+- **`server/services/websiteConfirmation.ts` (new)** — the manual path.
+  Requires an official website URL, a supporting evidence URL, and a written
+  reason; refuses a page offered as evidence for itself; runs the SSRF guard;
+  stores the website with `verified` provenance, adds one undated web-family
+  evidence row, re-qualifies live, re-classifies, and writes both URLs and the
+  reason into `classification_history`. Preview and confirm are separate
+  operations — the preview writes nothing, and the write refuses without an
+  explicit `confirmed: true`.
+- **`server/routes/imports.ts`, `src/components/WebsiteConfirmation.tsx`,
+  `src/lib/api.ts`, `src/components/CompanyTable.tsx`** — the same two steps in
+  the dashboard, in the Opportunity-status panel next to the verdict that
+  explains why the website matters.
+- **`server/db/repos/opportunities.ts`** — `addDealEvidence` now fills a NULL
+  `published_at` when the same article is read again with a date, and never
+  changes a date already on record. Without this, the Phase 14 parser fix could
+  not reach rows the broken parser had already written: dedupe on
+  `(company, url, type)` meant re-running sourcing changed nothing, and Natural
+  and Enigma were pinned to "no publication date" permanently.
+- **`server/services/evidenceDates.ts`, `scripts/backfill-evidence-dates.ts`
+  (new, `npm run db:backfill-dates`)** — re-reads the configured feeds and
+  writes back the publisher's own `<pubDate>` for undated rows. Nothing is
+  inferred from a URL path; an article that has rolled off its feed keeps its
+  NULL. Recovered 3 dates (Natural 2026-07-20, Enigma 2026-07-27, and the
+  quarantined Kalanick record 2026-07-22).
+- **`shared/qualification.ts`, `server/services/issuerQualification.ts`** — a
+  site that responds with almost no readable text now reports
+  `website-thin-or-client-rendered` instead of `website-parked-or-placeholder`.
+  The verdict is unchanged (unverifiable either way); calling a real company's
+  real site "parked" was simply false. Found via Infinity.
+
+The single-word guard was **not** weakened. `AMBIGUOUS_NAME_WORDS` is
+unchanged, and a regression test asserts `discoverOfficialWebsite('Natural')`
+still refuses to guess *after* a human has confirmed Natural's site.
+
+## Result
+
+| Metric | Before | After |
+|---|---|---|
+| Companies | 191 | 191 |
+| Classified opportunities (non-lead) | 35 | 42 |
+| Qualified shortlist opportunities | 17 | 23 |
+| Qualified operating companies | 30 | 36 |
+| Company leads | 156 | 149 |
+| Sectors with any opportunity | 5 of 7 | 6 of 7 |
+| Unit tests | 464 | 477 |
+| Playwright tests | 35 | 38 |
+
+Shortlists after the rebuild: fintech 5/5, sustainability 5/5, robotics 5/5,
+ai 5/5, health 2/5, spacetech 1/5, fow 0/5. Every classification change is one
+of the seven confirmations; the full requalification pass that followed
+reported **0 further changes**, which is the check that the targeted pass and
+the full pass agree.
+
+## Known cost of this phase
+
+Press concentration rose from 53% to 65%. Confirming a website promotes a
+press-derived record without adding a source family, so the shortlist got
+larger and less diverse at the same time. That trade is real and is recorded in
+KNOWN_LIMITATIONS.md rather than smoothed over.

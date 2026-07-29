@@ -11,6 +11,9 @@ import {
   clearImportedCompanies, importCompaniesCsv, importedCompanies,
 } from '../services/imports';
 import { refreshCompanyResearch } from '../services/companyRefresh';
+import {
+  confirmWebsite, previewWebsiteConfirmation, websiteConfirmationSchema,
+} from '../services/websiteConfirmation';
 
 export const importsRouter = Router();
 
@@ -156,5 +159,50 @@ importsRouter.post('/companies/:id/refresh-research', wrap(async (req, res) => {
   const id = req.params.id as string;
   const { actor } = z.object({ actor: z.string().default('team') }).parse(req.body ?? {});
   const result = await refreshCompanyResearch(id, actor);
+  res.json(result);
+}));
+
+/**
+ * Manual website confirmation — two deliberately separate steps.
+ *
+ * The automatic discoverer will not derive a domain for a common
+ * single-word name, and that guard is not relaxed here (see
+ * server/services/websiteConfirmation.ts). This is the human path: a
+ * reviewer supplies the official site AND the source that establishes
+ * it, sees the before/after, and only then confirms.
+ *
+ * PREVIEW WRITES NOTHING. It exists so "show the previous and proposed
+ * values" is enforced by the API shape rather than by a UI convention —
+ * a caller cannot reach the write without having been able to see the
+ * change first, and the write itself still refuses without an explicit
+ * `confirmed: true`.
+ */
+importsRouter.post('/companies/:id/website-confirmation/preview', wrap(async (req, res) => {
+  const id = req.params.id as string;
+  const input = websiteConfirmationSchema.parse(req.body);
+  const preview = await previewWebsiteConfirmation(id, input);
+  if (!preview) {
+    res.status(404).json({ error: 'not_found', message: 'Company not found.' });
+    return;
+  }
+  res.json(preview);
+}));
+
+importsRouter.post('/companies/:id/website-confirmation/confirm', wrap(async (req, res) => {
+  const id = req.params.id as string;
+  const { confirmed, ...rest } = z
+    .object({ confirmed: z.literal(true, { message: 'A website confirmation requires an explicit human confirmation.' }) })
+    .passthrough()
+    .parse(req.body);
+  const input = websiteConfirmationSchema.parse(rest);
+  const result = await confirmWebsite(id, input, confirmed);
+  if (!result) {
+    res.status(404).json({ error: 'not_found', message: 'Company not found.' });
+    return;
+  }
+  if (!result.ok) {
+    res.status(422).json({ error: 'unprocessable', message: result.message, preview: result.preview });
+    return;
+  }
   res.json(result);
 }));

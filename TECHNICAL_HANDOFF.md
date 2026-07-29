@@ -168,7 +168,44 @@ npm run db:backup           # create a timestamped VACUUM INTO snapshot
 npm run db:list-backups     # list backups + metadata
 npm run db:integrity        # PRAGMA integrity_check on the active database
 npm run db:restore -- <file> --yes   # CLI-only restore (see below) — never a browser button
+npm run db:backfill-dates [-- --dry-run]  # re-read the feeds and fill NULL publication dates (see below)
 ```
+
+## Confirming an official website by hand
+
+`server/services/websiteConfirmation.ts`, surfaced in the company detail view
+under **Opportunity status → Confirm website**.
+
+The automatic discoverer (`discoverOfficialWebsite`) refuses to derive a domain
+when the company name is a common English word, because finding "natural" on a
+page proves nothing. That guard stays. This is the other path: a person
+supplies the site *and* a source that establishes it is theirs.
+
+Two API calls, deliberately:
+
+- `POST /api/companies/:id/website-confirmation/preview` — validates, runs the
+  SSRF guard, returns previous vs proposed and any warnings/blockers. **Writes
+  nothing.**
+- `POST /api/companies/:id/website-confirmation/confirm` — same body plus
+  `confirmed: true`, which is mandatory. Stores the website with `verified`
+  provenance, appends the cited evidence to `evidence` and one undated
+  web-family row to `deal_evidence`, re-qualifies live, re-classifies, and
+  writes both URLs and the reason to `classification_history`.
+
+Blocked: a page offered as evidence for itself, a non-http(s) URL, a bare IP,
+embedded credentials, an SSRF-unsafe host, or a reason under 10 characters.
+Warned but allowed: evidence on the same host as the site (that is what a
+company's own announcement looks like), and a common single-word name.
+
+## Filling missing publication dates
+
+`server/services/evidenceDates.ts` / `npm run db:backfill-dates`. Re-reads the
+configured RSS feeds and writes the publisher's own `<pubDate>` into any
+`funding-news` evidence row whose `published_at` is NULL. Dates are never
+inferred from a URL path or from fetch time; an article that has rolled off its
+feed keeps its NULL and the company stays honestly un-current. Idempotent.
+`addDealEvidence` enforces the direction: NULL → a date is allowed, changing an
+existing date is not.
 
 ## How live sourcing works
 

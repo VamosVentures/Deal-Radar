@@ -191,9 +191,21 @@ Outlook, the AI provider, Product Hunt) are still blocked on exactly the same
 things they were blocked on before, and the SBIR public-API outage is still a
 service-side outage rather than a credential problem.
 
-The one genuinely useful non-credential action a human could take is manual:
-seven companies are held as leads only because no second source could be found
-and their names are too common to derive a domain from — *Natural*, *Cascade*,
-*Enigma*, *Multiverse*, *Antares*, *Ramp*, *Infinity*. A person who looks up
-any of those websites and enters it turns each into a corroborated
-opportunity. That is a lookup task, not an access request.
+## Phase 15A note: the manual lookup task is done, and nothing was unblocked
+
+Phase 14 flagged one non-credential action a human could take: look up the
+websites of the companies whose names were too common to derive a domain from.
+Phase 15A did it. Six of them — *Natural*, *Enigma*, *Multiverse*, *Antares*,
+*Ramp*, *Venus Aerospace* — are now corroborated opportunities. *Infinity* is
+surfaced for human review. *Cascade* was never in the database; it was an
+error in these documents, now corrected.
+
+There is a dashboard workflow for this now (company detail → Opportunity
+status → **Confirm website**), so the next one does not need an engineer. It
+asks for the site, a supporting evidence URL, and a written reason, shows what
+it would replace, and records the change in classification history.
+
+**None of this changed the Pliancy ask.** The credential-gated items above
+(HubSpot, Outlook, the AI provider, Product Hunt) are blocked on exactly the
+same things, and the SBIR public-API outage is still a service-side outage.
+Adding website confirmations to the request would be padding it.

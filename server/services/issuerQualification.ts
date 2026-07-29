@@ -104,6 +104,15 @@ export interface WebsiteCheck {
   url: string | null;
   /** True when the page loaded but looks like a parked domain. */
   parked: boolean;
+  /**
+   * True when the page responded but served almost no readable text.
+   * Kept separate from `parked` because they are different findings and
+   * this checker was reporting the wrong one: infinity.inc is a real
+   * company's real site that renders entirely in the browser, and
+   * calling it "parked or placeholder" states something false about a
+   * business. Neither verifies, but only one of them is an accusation.
+   */
+  thin?: boolean;
   detail: string;
 }
 
@@ -137,13 +146,16 @@ export async function verifyWebsite(rawUrl: string | null | undefined): Promise<
   // nothing is not evidence of an operating business.
   const thin = res.body.replace(/<[^>]*>/g, '').trim().length < 200;
 
-  if (parked || thin) {
+  if (parked) {
+    return { verified: false, url, parked: true, thin: false, detail: 'Website appears to be a parked or placeholder domain.' };
+  }
+  if (thin) {
     return {
-      verified: false, url, parked: true,
-      detail: parked ? 'Website appears to be a parked or placeholder domain.' : 'Website returned almost no content — not evidence of an operating product.',
+      verified: false, url, parked: false, thin: true,
+      detail: 'Website responded but served almost no readable text — typically a client-rendered page. Not verified either way; needs a human.',
     };
   }
-  return { verified: true, url, parked: false, detail: 'Website responded with real content.' };
+  return { verified: true, url, parked: false, thin: false, detail: 'Website responded with real content.' };
 }
 
 // ── Corroboration ─────────────────────────────────────────────────
@@ -309,6 +321,7 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   else if (!company.website) reasons.push('website-absent');
   else if (!websiteChecked) reasons.push('website-not-checked');
   else if (websiteCheck.parked) reasons.push('website-parked-or-placeholder');
+  else if (websiteCheck.thin) reasons.push('website-thin-or-client-rendered');
   else reasons.push('website-unreachable');
 
   const hasProductDescription = !!company.oneLiner
