@@ -7,6 +7,7 @@ import {
   MAX_YC_PRIMARY_PER_SECTOR, TARGET_SOURCE_FAMILIES_PER_SECTOR,
   type DealEvidence, type DiversityReport, type Opportunity, type OpportunityType,
 } from '../../shared/opportunity';
+import { MAX_SEC_PRIMARY_PER_SECTOR } from '../../shared/qualification';
 import type { VerticalId } from '../../src/types';
 
 /**
@@ -175,6 +176,7 @@ export function selectSectorShortlist(
 
   const selected: ShortlistCandidate[] = [];
   let ycUsed = 0;
+  let secUsed = 0;
   const familiesUsed = new Set<string>();
 
   // Pass 1: prefer a NEW source family for each slot, so the shortlist
@@ -199,10 +201,23 @@ export function selectSectorShortlist(
         }
         continue;
       }
+      // The same cap applies to SEC. Without it a sector fills up with
+      // Form D filers purely because EDGAR returns the most rows, which is
+      // how "diversified" quietly became "82% one source".
+      if (src === 'sec' && secUsed >= MAX_SEC_PRIMARY_PER_SECTOR) {
+        if (pass === 2 && !heldBack.some((h) => h.name === c.name)) {
+          heldBack.push({
+            name: c.name,
+            reason: `Held back: already ${MAX_SEC_PRIMARY_PER_SECTOR} SEC-primary opportunities in this sector. A shortlist of Form D filers is one source wearing a hat.`,
+          });
+        }
+        continue;
+      }
 
       selected.push(c);
       familiesUsed.add(family);
       if (src === 'yc') ycUsed++;
+      if (src === 'sec') secUsed++;
     }
   }
 

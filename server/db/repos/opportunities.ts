@@ -1,8 +1,9 @@
 import { getDb } from '../client';
 import {
-  classifyOpportunity, tierOf,
+  classifyOpportunity, isLiveDeal, tierOf,
   type DealEvidence, type Opportunity, type OpportunityClass, type SourceTier,
 } from '../../../shared/opportunity';
+import { DISQUALIFYING_RESULTS } from '../../../shared/qualification';
 
 /**
  * Persistence for deal evidence and the opportunity classification
@@ -107,7 +108,49 @@ export function getOpportunity(companyId: string): Opportunity | null {
  */
 export function reclassifyCompany(companyId: string, opts: { today?: string } = {}): Opportunity {
   const evidence = listDealEvidence(companyId);
-  const result = classifyOpportunity({ evidence, today: opts.today });
+  let result = classifyOpportunity({ evidence, today: opts.today });
+
+  // QUALIFICATION GATE. Evidence-based classification decides what the
+  // evidence SAYS; qualification decides whether the entity is the kind
+  // of thing that can be a venture deal at all. A publicly traded
+  // company, a fund, an SPV, or an entity nothing independent
+  // corroborates cannot be a live opportunity however fresh its Form D
+  // is — so a strong classification is demoted here rather than being
+  // allowed to reach the shortlist.
+  //
+  // Read directly from the table to avoid a circular import with
+  // server/services/issuerQualification.ts, which imports this module.
+  const qual = getDb()
+    .prepare('SELECT result FROM issuer_qualification WHERE company_id = ?')
+    .get(companyId) as { result: string } | undefined;
+
+  if (qual && isLiveDeal(result.classification)) {
+    if (DISQUALIFYING_RESULTS.includes(qual.result as never)) {
+      result = {
+        ...result,
+        classification: 'company-lead',
+        reason: `Evidence would support "${result.classification}", but the issuer is qualified as ${qual.result.replace(/-/g, ' ')} — not a venture-stage operating company. Held as a lead.`,
+      };
+    } else if (qual.result === 'insufficient-evidence') {
+      result = {
+        ...result,
+        classification: 'company-lead',
+        reason: 'Insufficient evidence that this is an operating company (no verified website, no product description, no independent corroboration). Never promoted to a live opportunity.',
+      };
+    } else if (qual.result === 'company-lead-requires-corroboration') {
+      result = {
+        ...result,
+        classification: 'company-lead',
+        reason: `Evidence would support "${result.classification}", but no independent source corroborates it. A single filing is not a deal.`,
+      };
+    } else if (qual.result === 'human-review-required') {
+      result = {
+        ...result,
+        classification: 'unverified-opportunity',
+        reason: 'Corroborated but the company website could not be verified — surfaced for human review rather than counted as a live deal.',
+      };
+    }
+  }
 
   // Conflicts: two tier-1/2 sources stating different amounts for the
   // same round. Surfaced for a human — never silently reconciled.

@@ -351,6 +351,62 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_deal_evidence_source ON deal_evidence (source_id);
     `,
   },
+  {
+    version: 8,
+    name: 'issuer-qualification-and-quarantine',
+    sql: `
+      -- A Form D filing proves an exempt offering was reported. It does
+      -- NOT prove the filer is a venture-stage operating company. Real
+      -- runs surfaced a publicly traded company (Adagio Medical, ticker
+      -- ADGM), dialysis subsidiaries of a listed multinational, a PIMCO
+      -- lending vehicle, a Roman-numeral solar project series, and $100M
+      -- offerings from entities with no discoverable product.
+      --
+      -- One verdict row per company, rebuilt from evidence. Absence of a
+      -- row means "not yet qualified", which the read path treats as NOT
+      -- qualified — the cautious default.
+      CREATE TABLE issuer_qualification (
+        company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+        result TEXT NOT NULL,
+        operating_confidence REAL NOT NULL DEFAULT 0,
+        website_verified INTEGER NOT NULL DEFAULT 0,
+        website_url TEXT,
+        is_publicly_traded INTEGER NOT NULL DEFAULT 0,
+        ticker TEXT,
+        is_fund_or_spv INTEGER NOT NULL DEFAULT 0,
+        parent_entity TEXT,
+        corroborating_sources TEXT NOT NULL DEFAULT '[]',
+        reason_codes TEXT NOT NULL DEFAULT '[]',
+        fields_requiring_human_review TEXT NOT NULL DEFAULT '[]',
+        qualified_at TEXT NOT NULL,
+        version TEXT NOT NULL
+      );
+      CREATE INDEX idx_issuer_qualification_result ON issuer_qualification (result);
+
+      -- Quarantine, so a questionable record can be taken out of the live
+      -- shortlist WITHOUT destroying its evidence. Deleting would lose the
+      -- audit trail and re-import the same entity on the next run.
+      ALTER TABLE companies ADD COLUMN quarantined INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE companies ADD COLUMN quarantine_reason TEXT;
+      ALTER TABLE companies ADD COLUMN quarantined_at TEXT;
+
+      -- Classification history: every time a company's opportunity class
+      -- changes, the previous verdict is kept with the reason. Lets us
+      -- answer "why did this stop being a deal?" months later.
+      CREATE TABLE classification_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        at TEXT NOT NULL,
+        previous_classification TEXT,
+        new_classification TEXT NOT NULL,
+        previous_qualification TEXT,
+        new_qualification TEXT,
+        reason TEXT NOT NULL,
+        version TEXT NOT NULL
+      );
+      CREATE INDEX idx_classification_history_company ON classification_history (company_id);
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */
