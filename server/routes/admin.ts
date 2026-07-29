@@ -8,6 +8,8 @@ import { hubspotServiceIfAvailable } from '../services/hubspot';
 import { outlookService } from '../services/outlook';
 import { verifyAiConnection } from '../services/analysis';
 import { computeSourceAnalytics } from '../services/sourceAnalytics';
+import { diversityAnalytics } from '../services/shortlist';
+import { CORE_VERTICAL_IDS } from '../../src/data/taxonomy';
 import { backupSettingsSchema, createBackup, getBackupMetadata, getBackupPath, getBackupSettings, listBackups, setBackupSettings } from '../services/backup';
 import { fetchWithTimeout } from '../lib/http';
 import { activeModel, budgetStatus, budgetWarning, getAiSettings, setAiSettings, usageReport } from '../services/aiBudget';
@@ -256,4 +258,9 @@ adminRouter.post('/ai/kill-switch', wrap(async (req, res) => {
 adminRouter.get('/ai/usage', wrap(async (req, res) => {
   const { month } = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() }).parse(req.query);
   res.json(usageReport(month));
+}));
+
+/** Source-diversity analytics — derived only from persisted evidence and verdicts. */
+adminRouter.get('/diversity-analytics', wrap(async (_req, res) => {
+  res.json(diversityAnalytics(CORE_VERTICAL_IDS));
 }));

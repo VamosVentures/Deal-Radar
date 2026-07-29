@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { isLiveDeal, OPPORTUNITY_CLASSES, OPPORTUNITY_CLASS_LABELS, type OpportunityClass } from '../../shared/opportunity';
+import { OpportunityBadges, QualificationExplainer, EvidenceSummary } from './OpportunityBadge';
 import type { ReactNode } from 'react';
 import type { Company } from '../types';
 import { scoreCompany } from '../lib/scoring';
@@ -60,7 +62,7 @@ export function CompanyTable({
   initialVertical?: string;
   initialOpenId?: string;
 }) {
-  const { meta, refresh: refreshCompanies } = useCompanies();
+  const { meta, opportunities, qualifications, quarantine, refresh: refreshCompanies } = useCompanies();
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const [vertical, setVertical] = useState(initialVertical ?? 'all');
   const [stage, setStage] = useState('all');
@@ -71,6 +73,21 @@ export function CompanyTable({
   const [missingInfoOnly, setMissingInfoOnly] = useState(false);
   const [minEvidenceConfidence, setMinEvidenceConfidence] = useState(0);
   const [notReviewedDays, setNotReviewedDays] = useState<number | ''>('');
+  // Opportunity-trust filters. These answer the question the old queue
+  // could not: "which of these is actually a deal?"
+  const [oppClass, setOppClass] = useState<'all' | OpportunityClass>('all');
+  const [primarySource, setPrimarySource] = useState('all');
+  const [tierFilter, setTierFilter] = useState<'all' | '1' | '2' | '3'>('all');
+  const [liveOnly, setLiveOnly] = useState(false);
+  const [leadsOnly, setLeadsOnly] = useState(false);
+  const [verifiedAmountOnly, setVerifiedAmountOnly] = useState(false);
+  const [verifiedRoundOnly, setVerifiedRoundOnly] = useState(false);
+  const [missingCorroboration, setMissingCorroboration] = useState(false);
+  const [humanReviewOnly, setHumanReviewOnly] = useState(false);
+  const [publicWarnOnly, setPublicWarnOnly] = useState(false);
+  const [fundWarnOnly, setFundWarnOnly] = useState(false);
+  const [includeQuarantined, setIncludeQuarantined] = useState(false);
+  const [evidenceSince, setEvidenceSince] = useState('');
 
   const [duplicates, setDuplicates] = useState<PossibleDuplicateEntry[]>([]);
   useEffect(() => {
@@ -91,6 +108,16 @@ export function CompanyTable({
   const [bulkResult, setBulkResult] = useState<{ status: CompanyStatus; updated: number; skipped: { id: string; reason: string }[] } | null>(null);
 
   const states = useMemo(() => Array.from(new Set(companies.map((c) => c.state))).sort(), [companies]);
+  // Options come from the data actually present, so the dropdown can never
+  // offer a source that returned nothing.
+  const primarySources = useMemo(
+    () => Array.from(new Set(Object.values(opportunities).map((o) => o.primarySourceId))).sort(),
+    [opportunities],
+  );
+  const quarantinedCount = useMemo(
+    () => companies.filter((c) => quarantine[c.id]).length,
+    [companies, quarantine],
+  );
 
   const rows = useMemo(() => {
     const filtered = companies
@@ -107,6 +134,33 @@ export function CompanyTable({
           const age = daysSince(lastTouch);
           if (age === null || age < notReviewedDays) return false;
         }
+
+        const opp = opportunities[c.id];
+        const qual = qualifications[c.id];
+        const quar = quarantine[c.id];
+
+        // Quarantined records are hidden by default. They are disqualified
+        // entities kept for audit, not review-queue material — but they
+        // stay one checkbox away rather than being silently erased.
+        if (quar && !includeQuarantined) return false;
+
+        // An unclassified company counts as a lead, never as a deal.
+        const cls: OpportunityClass = opp?.classification ?? 'company-lead';
+        if (oppClass !== 'all' && cls !== oppClass) return false;
+        if (liveOnly && !isLiveDeal(cls)) return false;
+        if (leadsOnly && isLiveDeal(cls)) return false;
+        if (primarySource !== 'all' && (opp?.primarySourceId ?? 'none') !== primarySource) return false;
+        if (tierFilter !== 'all' && String(opp?.primaryTier ?? '') !== tierFilter) return false;
+        if (verifiedAmountOnly && opp?.amountUsd == null) return false;
+        if (verifiedRoundOnly && !opp?.roundType) return false;
+        if (missingCorroboration && (qual?.corroboratingSources.length ?? 0) >= 2) return false;
+        if (humanReviewOnly && qual?.result !== 'human-review-required') return false;
+        if (publicWarnOnly && !qual?.isPubliclyTraded) return false;
+        if (fundWarnOnly && !qual?.isFundOrSpv) return false;
+        if (evidenceSince) {
+          const d = opp?.evidencePublishedAt;
+          if (!d || d < evidenceSince) return false;
+        }
         const hay = [
           c.name, c.oneLiner, c.subcategory, c.city, c.state,
           c.website ?? '', c.founders.map((f) => f.name).join(' '),
@@ -119,7 +173,11 @@ export function CompanyTable({
     else if (sortMode === 'discovery-date') filtered.sort((a, b) => discoveryDate(b.c) - discoveryDate(a.c));
     else filtered.sort((a, b) => b.fit.score - a.fit.score); // strongest opportunities first
     return filtered;
-  }, [companies, vertical, stage, state, q, sortMode, possibleDuplicateOnly, missingInfoOnly, minEvidenceConfidence, notReviewedDays, duplicateCompanyIds, meta]);
+  }, [companies, vertical, stage, state, q, sortMode, possibleDuplicateOnly, missingInfoOnly,
+      minEvidenceConfidence, notReviewedDays, duplicateCompanyIds, meta,
+      opportunities, qualifications, quarantine, oppClass, primarySource, tierFilter,
+      liveOnly, leadsOnly, verifiedAmountOnly, verifiedRoundOnly, missingCorroboration,
+      humanReviewOnly, publicWarnOnly, fundWarnOnly, includeQuarantined, evidenceSince]);
 
   const select = 'rounded-[2px] border border-line bg-panel px-2 py-1.5 text-xs transition-colors focus:border-marigold';
   const allVisibleSelected = rows.length > 0 && rows.every(({ c }) => selected.has(c.id));
@@ -211,6 +269,75 @@ export function CompanyTable({
             days
           </label>
         </div>
+
+        {/* Opportunity-trust filters. Separated from the descriptive
+            filters above because these answer a different question:
+            not "which companies" but "which of these is actually a deal". */}
+        <div className="mt-2.5 border-t border-line pt-2.5">
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-mid">
+            Opportunity &amp; evidence
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-mid">
+            <select className={select} value={oppClass} onChange={(e) => setOppClass(e.target.value as typeof oppClass)}>
+              <option value="all">All classifications</option>
+              {OPPORTUNITY_CLASSES.map((c) => (
+                <option key={c} value={c}>{OPPORTUNITY_CLASS_LABELS[c]}</option>
+              ))}
+            </select>
+            <select className={select} value={primarySource} onChange={(e) => setPrimarySource(e.target.value)}>
+              <option value="all">Any primary source</option>
+              {primarySources.map((sid) => <option key={sid} value={sid}>{sid}</option>)}
+            </select>
+            <select className={select} value={tierFilter} onChange={(e) => setTierFilter(e.target.value as typeof tierFilter)}>
+              <option value="all">Any source tier</option>
+              <option value="1">Tier 1 only</option>
+              <option value="2">Tier 2 only</option>
+              <option value="3">Tier 3 only</option>
+            </select>
+            <label className="flex items-center gap-1.5">
+              Evidence since
+              <input type="date" className={select} value={evidenceSince} onChange={(e) => setEvidenceSince(e.target.value)} />
+            </label>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-mid">
+            <label className="flex items-center gap-1.5" title="Recent financing, fundraising signal, or verified opportunity.">
+              <input type="checkbox" checked={liveOnly} onChange={(e) => { setLiveOnly(e.target.checked); if (e.target.checked) setLeadsOnly(false); }} />
+              Live opportunities only
+            </label>
+            <label className="flex items-center gap-1.5" title="Companies that exist but show no current financing or fundraising evidence.">
+              <input type="checkbox" checked={leadsOnly} onChange={(e) => { setLeadsOnly(e.target.checked); if (e.target.checked) setLiveOnly(false); }} />
+              Company leads only
+            </label>
+            <label className="flex items-center gap-1.5" title="An amount actually stated by a tier 1–2 source.">
+              <input type="checkbox" checked={verifiedAmountOnly} onChange={(e) => setVerifiedAmountOnly(e.target.checked)} />
+              Verified amount
+            </label>
+            <label className="flex items-center gap-1.5" title="A round type actually stated by the source.">
+              <input type="checkbox" checked={verifiedRoundOnly} onChange={(e) => setVerifiedRoundOnly(e.target.checked)} />
+              Verified round
+            </label>
+            <label className="flex items-center gap-1.5" title="Fewer than two independent source families.">
+              <input type="checkbox" checked={missingCorroboration} onChange={(e) => setMissingCorroboration(e.target.checked)} />
+              Missing corroboration
+            </label>
+            <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={humanReviewOnly} onChange={(e) => setHumanReviewOnly(e.target.checked)} />
+              Human review required
+            </label>
+            <label className="flex items-center gap-1.5" title="Issuer has an exchange ticker or files periodic reports.">
+              <input type="checkbox" checked={publicWarnOnly} onChange={(e) => setPublicWarnOnly(e.target.checked)} />
+              Public-company warning
+            </label>
+            <label className="flex items-center gap-1.5" title="Fund, SPV, or project vehicle.">
+              <input type="checkbox" checked={fundWarnOnly} onChange={(e) => setFundWarnOnly(e.target.checked)} />
+              Fund/SPV warning
+            </label>
+            <label className="flex items-center gap-1.5" title="Disqualified records are kept for audit and hidden from the queue by default.">
+              <input type="checkbox" checked={includeQuarantined} onChange={(e) => setIncludeQuarantined(e.target.checked)} />
+              Show disqualified ({quarantinedCount})
+            </label>
+          </div>
+        </div>
       </div>
 
       {selected.size > 0 && (
@@ -298,6 +425,11 @@ export function CompanyTable({
                       <div className="font-semibold text-ink">{c.name}</div>
                       <div className="max-w-xs text-xs text-slate-mid">{c.oneLiner}</div>
                       <div className="mt-1.5 flex flex-wrap gap-1">
+                        <OpportunityBadges
+                          opportunity={opportunities[c.id]}
+                          qualification={qualifications[c.id]}
+                          quarantined={quarantine[c.id]}
+                        />
                         <span className={`rounded-[2px] border px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wide ${next.cls}`}>{next.label}</span>
                         {fit.exceptions.map((e) => <ExceptionBadge key={e.flag} flag={e.flag} />)}
                         {isDuplicate && (
@@ -400,8 +532,11 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
   onDuplicatesChange?: (updater: (prev: PossibleDuplicateEntry[]) => PossibleDuplicateEntry[]) => void;
 }) {
   const fit = scoreCompany(c);
-  const { meta, refresh } = useCompanies();
+  const { meta, opportunities, qualifications, quarantine, refresh } = useCompanies();
   const m = meta[c.id];
+  const opportunity = opportunities[c.id];
+  const qualification = qualifications[c.id];
+  const quarantined = quarantine[c.id];
   const [duplicateBusy, setDuplicateBusy] = useState<number | null>(null);
 
   const resolveDuplicate = async (id: number, resolution: 'confirmed-duplicate' | 'not-duplicate') => {
@@ -589,6 +724,24 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
                   Stale
                 </span>
               )}
+            </div>
+          </div>
+
+          {/* Opportunity status. Deliberately adjacent to the fit score:
+              a high score on a company that is not raising is not a deal,
+              and the two facts belong side by side. */}
+          <div className="mt-3 border border-line bg-panel px-3.5 py-3">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Opportunity status</div>
+            <div className="mt-1.5">
+              <OpportunityBadges opportunity={opportunity} qualification={qualification} quarantined={quarantined} />
+            </div>
+            {opportunity && (
+              <div className="mt-2.5 border-t border-line pt-2.5">
+                <EvidenceSummary opportunity={opportunity} />
+              </div>
+            )}
+            <div className="mt-2.5 border-t border-line pt-2.5">
+              <QualificationExplainer opportunity={opportunity} qualification={qualification} quarantined={quarantined} />
             </div>
           </div>
 

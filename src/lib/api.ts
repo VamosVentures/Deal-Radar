@@ -231,7 +231,13 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ csv }),
       }),
-    imported: () => call<{ companies: unknown[]; companyMeta: Record<string, CompanyMeta> }>('/api/companies/imported'),
+    imported: () => call<{
+      companies: unknown[];
+      companyMeta: Record<string, CompanyMeta>;
+      opportunities: Record<string, unknown>;
+      qualifications: Record<string, unknown>;
+      quarantine: Record<string, { reason: string; at: string }>;
+    }>('/api/companies/imported'),
     clear: () => call<{ ok: boolean }>('/api/companies/imported/clear', { method: 'POST', body: '{}' }),
     setStatus: (id: string, status: CompanyStatus, actor: string) =>
       call<{ ok: boolean; status: CompanyStatus }>(`/api/companies/${id}/status`, {
@@ -280,6 +286,7 @@ export const api = {
 
   admin: {
     status: () => call<AdminStatus>('/api/admin/status'),
+    diversityAnalytics: () => call<DiversityAnalytics>('/api/admin/diversity-analytics'),
     sourceAnalytics: () => call<{ sources: SourceAnalytics[] }>('/api/admin/source-analytics'),
     backups: {
       list: () => call<{ backups: BackupMetadata[]; settings: { maxBackups: number; maxBackupAgeDays: number } }>('/api/admin/backups'),
@@ -377,4 +384,24 @@ export interface SourceAnalytics {
   avgFitScoreOfImported: number | null;
   mostRecentSuccessfulRunAt: string | null;
   mostRecentFailedRunAt: string | null;
+}
+
+/** Source-diversity analytics, computed server-side from persisted evidence only. */
+export interface DiversityAnalytics {
+  totalCompanies: number;
+  totalOpportunities: number;
+  companyLeads: number;
+  quarantined: number;
+  humanReview: number;
+  byClassification: Record<string, number>;
+  byPrimarySource: Record<string, number>;
+  byTier: Record<string, number>;
+  byQualification: Record<string, number>;
+  sharePct: Record<string, number>;
+  singleSourceOpportunities: number;
+  multiSourceOpportunities: number;
+  perSector: { vertical: string; qualified: number; families: string[]; shortfall: number; warnings: string[] }[];
+  publicCompaniesExcluded: number;
+  fundsOrSpvsExcluded: number;
+  warnings: string[];
 }

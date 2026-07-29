@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { wrap } from './helpers';
+import { getOpportunity } from '../db/repos/opportunities';
+import { getQualification, listQuarantined } from '../services/issuerQualification';
 import { audit } from '../lib/guard';
 import { companyMetaView, getCompany, markRefreshed, setCompanyMeta } from '../db/repos/companies';
 import { recordReviewDecision } from '../db/repos/operations';
@@ -18,7 +20,30 @@ importsRouter.post('/companies/import-csv', wrap(async (req, res) => {
 }));
 
 importsRouter.get('/companies/imported', wrap(async (_req, res) => {
-  res.json({ companies: importedCompanies(), companyMeta: companyMetaView() });
+  // Opportunity classification and issuer qualification ride along with
+  // the company list. They are per-company lookups the review queue needs
+  // for EVERY row, so returning them here avoids the UI firing 176
+  // follow-up requests to render one table.
+  const companies = importedCompanies();
+  const opportunities: Record<string, unknown> = {};
+  const qualifications: Record<string, unknown> = {};
+  const quarantine: Record<string, { reason: string; at: string }> = {};
+
+  for (const q of listQuarantined()) quarantine[q.id] = { reason: q.reason, at: q.at };
+  for (const c of companies as { id: string }[]) {
+    const o = getOpportunity(c.id);
+    if (o) opportunities[c.id] = o;
+    const qual = getQualification(c.id);
+    if (qual) qualifications[c.id] = qual;
+  }
+
+  res.json({
+    companies,
+    companyMeta: companyMetaView(),
+    opportunities,
+    qualifications,
+    quarantine,
+  });
 }));
 
 importsRouter.post('/companies/imported/clear', wrap(async (_req, res) => {

@@ -1,3 +1,4 @@
+import { getDb } from '../db/client';
 import { getCompany, listCompanies } from '../db/repos/companies';
 import { addDealEvidence, listDealEvidence, reclassifyCompany } from '../db/repos/opportunities';
 import { latestScore } from '../db/repos/operations';
@@ -290,3 +291,121 @@ export function companyLeads(): { id: string; name: string; vertical: string; re
 }
 
 export { addDealEvidence, listDealEvidence, getCompany, TARGET_SOURCE_FAMILIES_PER_SECTOR };
+
+// ── Diversity analytics ───────────────────────────────────────────
+
+export interface DiversityAnalytics {
+  totalCompanies: number;
+  totalOpportunities: number;
+  companyLeads: number;
+  quarantined: number;
+  humanReview: number;
+  byClassification: Record<string, number>;
+  byPrimarySource: Record<string, number>;
+  byTier: Record<string, number>;
+  byQualification: Record<string, number>;
+  sharePct: Record<string, number>;
+  singleSourceOpportunities: number;
+  multiSourceOpportunities: number;
+  perSector: {
+    vertical: string;
+    qualified: number;
+    families: string[];
+    shortfall: number;
+    warnings: string[];
+  }[];
+  publicCompaniesExcluded: number;
+  fundsOrSpvsExcluded: number;
+  warnings: string[];
+}
+
+/**
+ * Operational analytics computed ENTIRELY from persisted evidence and
+ * qualification verdicts. Nothing here is estimated or modelled — if a
+ * number cannot be derived from a stored row it is not shown.
+ */
+export function diversityAnalytics(verticals: VerticalId[], opts: SelectOptions = {}): DiversityAnalytics {
+  const db = getDb();
+  const companies = listCompanies();
+
+  const quals = db.prepare('SELECT company_id, result, corroborating_sources FROM issuer_qualification').all() as
+    { company_id: string; result: string; corroborating_sources: string }[];
+  const qualByCompany = new Map(quals.map((q) => [q.company_id, q]));
+
+  const quarantinedRows = db.prepare('SELECT id FROM companies WHERE quarantined = 1').all() as { id: string }[];
+  const quarantinedIds = new Set(quarantinedRows.map((r) => r.id));
+
+  const byClassification: Record<string, number> = {};
+  const byPrimarySource: Record<string, number> = {};
+  const byTier: Record<string, number> = {};
+  const byQualification: Record<string, number> = {};
+  let opportunities = 0;
+  let leads = 0;
+  let singleSource = 0;
+  let multiSource = 0;
+  let humanReview = 0;
+
+  for (const c of companies) {
+    const o = reclassifyCompany(c.id, opts);
+    byClassification[o.classification] = (byClassification[o.classification] ?? 0) + 1;
+
+    const q = qualByCompany.get(c.id);
+    if (q) {
+      byQualification[q.result] = (byQualification[q.result] ?? 0) + 1;
+      if (q.result === 'human-review-required') humanReview++;
+    }
+
+    if (isLiveDeal(o.classification) && !quarantinedIds.has(c.id)) {
+      opportunities++;
+      byPrimarySource[o.primarySourceId] = (byPrimarySource[o.primarySourceId] ?? 0) + 1;
+      byTier[`tier${o.primaryTier}`] = (byTier[`tier${o.primaryTier}`] ?? 0) + 1;
+      const n = q ? (JSON.parse(q.corroborating_sources) as unknown[]).length : 0;
+      if (n >= 2) multiSource++; else singleSource++;
+    } else {
+      leads++;
+    }
+  }
+
+  const sharePct: Record<string, number> = {};
+  for (const [src, n] of Object.entries(byPrimarySource)) {
+    sharePct[src] = opportunities > 0 ? Math.round((n / opportunities) * 1000) / 10 : 0;
+  }
+
+  const shortlists = buildShortlists(verticals, opts);
+  const perSector = shortlists.map((s) => ({
+    vertical: s.vertical,
+    qualified: s.selected.length,
+    families: Object.keys(s.diversity.byFamily),
+    shortfall: s.shortfall,
+    warnings: s.diversity.warnings,
+  }));
+
+  const warnings: string[] = [];
+  for (const [src, pct] of Object.entries(sharePct)) {
+    if (pct > 40) warnings.push(`${pct}% of all opportunities come from a single source (${src}). Above 40% the pipeline is really one source wearing a hat.`);
+  }
+  for (const s of perSector) {
+    if (s.families.length > 0 && s.families.length < TARGET_SOURCE_FAMILIES_PER_SECTOR) {
+      warnings.push(`${s.vertical} draws on only ${s.families.length} source famil${s.families.length === 1 ? 'y' : 'ies'} (target ${TARGET_SOURCE_FAMILIES_PER_SECTOR}).`);
+    }
+    if (s.shortfall > 0) warnings.push(`${s.vertical} has ${s.qualified} qualified opportunit${s.qualified === 1 ? 'y' : 'ies'} — short by ${s.shortfall}. Shown short rather than padded.`);
+  }
+  if (singleSource > 0) {
+    warnings.push(`${singleSource} opportunit${singleSource === 1 ? 'y' : 'ies'} rest on a single source family. A lone filing is not corroboration.`);
+  }
+
+  return {
+    totalCompanies: companies.length,
+    totalOpportunities: opportunities,
+    companyLeads: leads,
+    quarantined: quarantinedIds.size,
+    humanReview,
+    byClassification, byPrimarySource, byTier, byQualification, sharePct,
+    singleSourceOpportunities: singleSource,
+    multiSourceOpportunities: multiSource,
+    perSector,
+    publicCompaniesExcluded: byQualification['public-company'] ?? 0,
+    fundsOrSpvsExcluded: (byQualification['investment-fund'] ?? 0) + (byQualification['spv-or-project-entity'] ?? 0),
+    warnings,
+  };
+}
