@@ -36,6 +36,7 @@ export const QUALIFICATION_RESULTS = [
   'spv-or-project-entity',
   'corporate-subsidiary',
   'unverified-foreign-entity',
+  'not-a-company-name',
   'insufficient-evidence',
   'human-review-required',
 ] as const;
@@ -49,6 +50,7 @@ export const QUALIFICATION_LABELS: Record<QualificationResult, string> = {
   'spv-or-project-entity': 'SPV / project entity',
   'corporate-subsidiary': 'Corporate subsidiary',
   'unverified-foreign-entity': 'Unverified foreign entity',
+  'not-a-company-name': 'Not a company name',
   'insufficient-evidence': 'Insufficient evidence',
   'human-review-required': 'Human review required',
 };
@@ -65,8 +67,27 @@ export function isQualifiedForOpportunity(r: QualificationResult): boolean {
  */
 export const DISQUALIFYING_RESULTS: QualificationResult[] = [
   'public-company', 'investment-fund', 'spv-or-project-entity',
-  'corporate-subsidiary', 'unverified-foreign-entity',
+  'corporate-subsidiary', 'unverified-foreign-entity', 'not-a-company-name',
 ];
+
+/**
+ * Verdicts that describe the ENTITY ITSELF rather than the state of the
+ * evidence about it.
+ *
+ * The distinction matters because the two age differently. "Insufficient
+ * evidence" is a rolling judgement — find a second source and it changes.
+ * "This string is not a company name" is a property of the record that no
+ * future filing can revise, so it must outrank the rolling verdict rather
+ * than be overwritten by it every time requalification runs. It did get
+ * overwritten, which is why this list exists.
+ */
+export const DURABLE_ENTITY_RESULTS: QualificationResult[] = [
+  'not-a-company-name', 'investment-fund', 'spv-or-project-entity',
+];
+
+export function isDurableEntityFinding(r: QualificationResult): boolean {
+  return DURABLE_ENTITY_RESULTS.includes(r);
+}
 
 export function isDisqualified(r: QualificationResult): boolean {
   return DISQUALIFYING_RESULTS.includes(r);
@@ -77,6 +98,7 @@ export const REASON_CODES = [
   'name-matches-fund-pattern',
   'name-matches-spv-pattern',
   'name-matches-subsidiary-pattern',
+  'name-is-not-a-company',
   'sec-industry-group-is-pooled-fund',
   'has-exchange-ticker',
   'files-periodic-reports',
@@ -102,6 +124,7 @@ export const REASON_TEXT: Record<ReasonCode, string> = {
   'name-matches-fund-pattern': 'The entity name matches a fund-vehicle naming pattern.',
   'name-matches-spv-pattern': 'The entity name matches a single-project or numbered-series vehicle.',
   'name-matches-subsidiary-pattern': 'The entity name matches a subsidiary of a known large operator.',
+  'name-is-not-a-company': 'The stored name describes a company rather than naming one — usually a headline subject that attributes a company to a person. No corroboration can make this a deal, because there is no named entity to corroborate.',
   'sec-industry-group-is-pooled-fund': 'The issuer told the SEC its industry group is a pooled investment fund.',
   'has-exchange-ticker': 'The issuer has an exchange ticker on record with the SEC.',
   'files-periodic-reports': 'The issuer files 10-K/10-Q periodic reports — it is a public reporting company.',

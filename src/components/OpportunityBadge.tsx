@@ -71,6 +71,7 @@ export function QualificationBadge({ result }: { result: QualificationResult }) 
     'spv-or-project-entity': 'bg-alerta-soft text-alerta border-alerta/40',
     'corporate-subsidiary': 'bg-alerta-soft text-alerta border-alerta/40',
     'unverified-foreign-entity': 'bg-alerta-soft text-alerta border-alerta/40',
+    'not-a-company-name': 'bg-alerta-soft text-alerta border-alerta/40',
   };
   const short: Partial<Record<QualificationResult, string>> = {
     'qualified-operating-company': 'Qualified',
@@ -80,6 +81,7 @@ export function QualificationBadge({ result }: { result: QualificationResult }) 
     'spv-or-project-entity': 'SPV / project',
     'corporate-subsidiary': 'Subsidiary',
     'unverified-foreign-entity': 'Unverified foreign',
+    'not-a-company-name': 'Not a company name',
     'insufficient-evidence': 'Insufficient evidence',
     'human-review-required': 'Human Review',
   };

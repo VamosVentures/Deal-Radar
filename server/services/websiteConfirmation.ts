@@ -2,9 +2,10 @@ import { z } from 'zod';
 import { getCompany, getProvenance, applyFieldUpdate, appendEvidence } from '../db/repos/companies';
 import { addDealEvidence, getOpportunity, reclassifyCompany } from '../db/repos/opportunities';
 import {
-  getQualification, qualifyIssuer, quarantine, recordClassificationChange, unquarantine,
+  getQualification, qualifyIssuer, quarantine, quarantineReasonFor,
+  recordClassificationChange, unquarantine,
 } from './issuerQualification';
-import { isDisqualified, QUALIFICATION_LABELS, explainQualification } from '../../shared/qualification';
+import { isDisqualified } from '../../shared/qualification';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { isAmbiguousCompanyName } from '../sourcing/classify';
 import { tierOf } from '../../shared/opportunity';
@@ -250,7 +251,7 @@ export async function confirmWebsite(
   //    been fetched), then re-classify from the stored evidence.
   const qualification = await qualifyIssuer(companyId);
   if (isDisqualified(qualification.result) || qualification.result === 'insufficient-evidence') {
-    quarantine(companyId, `${QUALIFICATION_LABELS[qualification.result]} — ${explainQualification(qualification)}`);
+    quarantine(companyId, quarantineReasonFor(companyId, qualification));
   } else {
     unquarantine(companyId);
   }

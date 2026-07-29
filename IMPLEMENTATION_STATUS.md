@@ -1704,3 +1704,79 @@ Press concentration rose from 53% to 65%. Confirming a website promotes a
 press-derived record without adding a source family, so the shortlist got
 larger and less diverse at the same time. That trade is real and is recorded in
 KNOWN_LIMITATIONS.md rather than smoothed over.
+
+---
+
+# PHASE 15B (2026-07-29) — Preserve specific quarantine reasons during requalification
+
+A follow-up to a regression Phase 15A surfaced in its own full
+requalification pass.
+
+## Root cause
+
+`scripts/qualify-all.ts` rewrote every disqualified record's
+`quarantine_reason` from the fresh qualifier verdict. That is correct for
+evidence-based verdicts — "insufficient evidence" *should* be restated as
+evidence arrives — but one record carried a finding the qualifier could not
+make. `opp-travis-kalanick-s-robotics-company` had a hand-written explanation
+that the string is not a company name; the RSS extractor knows this
+(`PERSON_POSSESSIVE`, reason code `company-name-is-person`) but
+`qualifyIssuer` did not, so every pass replaced the specific finding with a
+generic one. The record stayed correctly quarantined and correctly classified
+throughout — only the explanation degraded.
+
+## Design
+
+Re-derivation, not memory. Remembering the string would only have moved the
+problem: the next pass would still not know *why*.
+
+- `server/sourcing/classify.ts` gains `classifyPossessiveName`, one pure
+  detector for both callers, handling straight and curly apostrophes. It
+  returns a graded verdict rather than a boolean, because the two callers
+  need different thresholds and both are right: a **headline subject**
+  containing any possessive names no company ("Kalshi's rival raises $20M"),
+  while a **stored legal name** may legitimately own one — McDonald's
+  Corporation, Lowe's Companies, Ben's Original, Trader Joe's. Only
+  `possessive-descriptor` (lowercase remainder, or a remainder ending in a
+  category noun) is a finding on the second path.
+- `checkEntityType` returns a structured `kind` alongside its sentence.
+- `server/sourcing/fundingEvent.ts` calls the shared detector instead of its
+  own copy of the regex, so extraction and qualification cannot drift.
+- `shared/qualification.ts` gains the `not-a-company-name` verdict, the
+  `name-is-not-a-company` reason code, and `DURABLE_ENTITY_RESULTS` — the
+  verdicts that describe the entity rather than the evidence about it.
+- `qualifyIssuer` decides `not-a-company-name` first, ahead of the
+  public-company check: everything below that line reasons about an entity,
+  and this is the branch that says there isn't one. It also skips the website
+  fetch and scores operating confidence 0.
+- `quarantineReasonFor()` is now the single place a quarantine reason is
+  composed, used by both `qualify-all` and the website-confirmation service.
+  For an evidence verdict it returns the rolling explanation, which still
+  updates on every pass. For `not-a-company-name` it leads with the entity
+  sentence, re-derived from the stored name.
+
+No migration. The existing tables already carry everything needed once the
+finding is re-derivable.
+
+## Verification
+
+`server/tests/requalification-entity-findings.test.ts` drives the **real
+`scripts/qualify-all.ts`** against a throwaway database, offline. A unit test
+of `qualifyIssuer` would not have caught the original bug, because the bug was
+in what the script did with the verdict afterwards. It asserts the record stays
+quarantined and a company lead, that its specific explanation is regenerated,
+that a second pass is byte-identical, that an ordinary insufficient-evidence
+record still gets its generic reason refreshed, and that seven real
+apostrophe-owning company names are not rejected.
+
+481 unit tests, 38 Playwright tests, typecheck, lint, build, `git diff --check`
+all clean.
+
+## Live data
+
+One record was re-qualified on the live database, after a verified backup
+(`deal-radar-2026-07-29T20-29-59-172Z.db`, 191 companies, schema v8): the
+Kalanick record moved from `insufficient-evidence` to `not-a-company-name` and
+recovered its specific explanation. Classification (`company-lead`), quarantine
+status, and every other record are unchanged; a scan confirmed exactly one of
+the 191 stored names matches the detector.

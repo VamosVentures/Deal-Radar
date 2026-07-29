@@ -1,5 +1,5 @@
 import { normalizeCompanyKey, isHighConfidenceFuzzy } from './identity';
-import { classifyCandidate, isAmbiguousCompanyName } from './classify';
+import { classifyCandidate, classifyPossessiveName, isAmbiguousCompanyName } from './classify';
 import type { VerticalId } from '../../src/types';
 
 /**
@@ -407,8 +407,19 @@ const DESCRIPTOR_TAIL = /\b(?:platform|startup|startups|company|companies|firm|f
 /** Words that mean the subject is a reference, not a name. */
 const DESCRIPTOR_HEAD = /^(?:this|that|these|those|the|a|an|another|former|ex|one|two|three|several|some|its|his|her|their|my|our|yet)\b/i;
 
-/** A possessive attributes the company to a PERSON, so the name is absent. */
-const PERSON_POSSESSIVE = /[’']s\s+\S/;
+/**
+ * A possessive attributes the company to a PERSON, so the name is absent.
+ *
+ * Any possessive disqualifies a HEADLINE SUBJECT — "Kalshi's rival raises
+ * $20M" is about the rival, and the rival is not named. That is a
+ * stricter threshold than the one the issuer qualifier applies to stored
+ * legal names, where McDonald's Corporation is a perfectly good name; see
+ * classifyPossessiveName for why both are right. The pattern itself is
+ * shared so the two cannot drift.
+ */
+function isPersonPossessive(span: string): boolean {
+  return classifyPossessiveName(span).kind !== 'none';
+}
 
 /**
  * Category nouns that can precede the real name inside a headline
@@ -469,7 +480,7 @@ function validateName(candidate: string): { ok: boolean; name: string; code: Rss
   const fail = (code: RssReasonCode, detail: string) => ({ ok: false as const, name: span, code, detail });
 
   if (span.length < 2) return fail('company-name-not-extractable', `"${candidate}"`);
-  if (PERSON_POSSESSIVE.test(span)) return fail('company-name-is-person', `"${span}"`);
+  if (isPersonPossessive(span)) return fail('company-name-is-person', `"${span}"`);
   if (DESCRIPTOR_HEAD.test(span)) return fail('company-name-is-descriptor', `leading word in "${span}"`);
   if (DESCRIPTOR_TAIL.test(span)) return fail('company-name-is-descriptor', `trailing category noun in "${span}"`);
 

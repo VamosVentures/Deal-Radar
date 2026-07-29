@@ -4,10 +4,11 @@ import { listDealEvidence } from '../db/repos/opportunities';
 import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { isOperatingIssuer } from '../sourcing/formd';
+import { checkEntityType } from '../sourcing/classify';
 import { familyOf } from '../../shared/opportunity';
 import {
-  isDisqualified, isQualifiedForOpportunity, MIN_INDEPENDENT_SOURCES,
-  QUALIFICATION_VERSION,
+  explainQualification, isDisqualified, isQualifiedForOpportunity,
+  MIN_INDEPENDENT_SOURCES, QUALIFICATION_LABELS, QUALIFICATION_VERSION,
   type IssuerQualification, type QualificationResult, type ReasonCode,
 } from '../../shared/qualification';
 
@@ -257,6 +258,18 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
 
   // 1. Name patterns — a cheap first pass ONLY. Never the final word, but
   //    it saves a request on entities that are obviously vehicles.
+  //
+  //    The entity-name check runs first and is the one exception to
+  //    "never the final word": if the stored string does not NAME a
+  //    company, there is no entity for any later check to be about. This
+  //    uses the same detector the RSS extractor uses (see
+  //    server/sourcing/classify.ts), so the finding is re-derivable on
+  //    every pass instead of being discovered once at import time and
+  //    then overwritten by the rolling evidence verdict.
+  const entityVerdict = checkEntityType(company.name);
+  const nameIsNotACompany = entityVerdict.kind === 'person-possessive';
+  if (nameIsNotACompany) reasons.push('name-is-not-a-company');
+
   const nameVerdict = isOperatingIssuer(company.name);
   let nameFundOrSpv = false;
   if (!nameVerdict.isOperatingCompany) {
@@ -309,7 +322,7 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   //    certain signal (public ticker, fund/SPV name), because no website
   //    could change that answer — and that case is recorded honestly as
   //    "not checked" rather than as a failure.
-  const alreadyDisqualified = publicCheck.isPubliclyTraded || nameFundOrSpv;
+  const alreadyDisqualified = publicCheck.isPubliclyTraded || nameFundOrSpv || nameIsNotACompany;
   let websiteCheck: WebsiteCheck = opts.websiteCheck
     ?? { verified: false, url: company.website ?? null, parked: false, detail: 'Not checked.' };
   let websiteChecked = !!opts.websiteCheck;
@@ -345,8 +358,16 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   else if (jurisdictionUnknown) reasons.push('jurisdiction-not-stated');
 
   // ── Decide, most-certain disqualifier first ────────────────────
+  //
+  // "Not a company name" leads, ahead even of the public-company check.
+  // Everything below this line reasons about an entity; this branch is
+  // the one that says there isn't one. It is also the only verdict here
+  // that cannot be revised by new evidence, which is precisely why it
+  // must be re-derived every pass rather than remembered.
   let result: QualificationResult;
-  if (publicCheck.isPubliclyTraded) {
+  if (nameIsNotACompany) {
+    result = 'not-a-company-name';
+  } else if (publicCheck.isPubliclyTraded) {
     result = 'public-company';
   } else if (nameFundOrSpv && reasons.includes('name-matches-fund-pattern')) {
     result = 'investment-fund';
@@ -379,6 +400,7 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
     hasProductDescription,
     isPublic: publicCheck.isPubliclyTraded,
     isFundOrSpv: nameFundOrSpv,
+    isNotACompany: nameIsNotACompany,
     withinYear,
   });
 
@@ -404,9 +426,10 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
 
 function scoreOperating(f: {
   websiteVerified: boolean; independentCount: number; hasProductDescription: boolean;
-  isPublic: boolean; isFundOrSpv: boolean; withinYear: boolean;
+  isPublic: boolean; isFundOrSpv: boolean; isNotACompany?: boolean; withinYear: boolean;
 }): number {
-  if (f.isPublic || f.isFundOrSpv) return 0;
+  // No confidence is expressible about an entity that was never named.
+  if (f.isPublic || f.isFundOrSpv || f.isNotACompany) return 0;
   let s = 0;
   if (f.websiteVerified) s += 0.45;
   if (f.hasProductDescription) s += 0.2;
@@ -481,6 +504,30 @@ export function getQualification(companyId: string): IssuerQualification | null 
 }
 
 // ── Quarantine ────────────────────────────────────────────────────
+
+/**
+ * The reason to store when quarantining, given a fresh verdict.
+ *
+ * One helper rather than a format string at each call site, because the
+ * two call sites disagreeing is how the specific finding got lost.
+ *
+ * For an evidence-based verdict the rolling explanation is the whole
+ * answer, and it SHOULD be rewritten on every pass — that is what makes
+ * "insufficient evidence" honest as evidence arrives. For
+ * `not-a-company-name` the useful part is which string failed and why,
+ * so the entity sentence leads. It is re-derived from the stored name by
+ * the same pure detector the extractor uses, so it is stable across runs
+ * without anything having to remember it.
+ */
+export function quarantineReasonFor(companyId: string, q: IssuerQualification): string {
+  const evidenceVerdict = explainQualification(q);
+  if (q.result === 'not-a-company-name') {
+    const company = getCompany(companyId);
+    const specific = company ? checkEntityType(company.name).reason : '';
+    if (specific) return `${specific} ${evidenceVerdict}`;
+  }
+  return `${QUALIFICATION_LABELS[q.result]} — ${evidenceVerdict}`;
+}
 
 export function quarantine(companyId: string, reason: string): void {
   getDb().prepare('UPDATE companies SET quarantined = 1, quarantine_reason = ?, quarantined_at = ? WHERE id = ?')

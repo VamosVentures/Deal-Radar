@@ -135,25 +135,111 @@ const NON_COMPANY_PATTERNS: { pattern: RegExp; kind: string }[] = [
   { pattern: /\b(?:ministry|department\s+of\s+(?:energy|defense|defence)|national\s+laborator)\b/i, kind: 'government body' },
 ];
 
+// ── Possessive person names ───────────────────────────────────────
+
+/**
+ * "Travis Kalanick's robotics company" attributes a company to a PERSON
+ * instead of naming it. The record is real — the article exists, the
+ * round happened — but the string is a description, and no amount of
+ * corroboration can turn it into a company name.
+ *
+ * This lives here, next to the other entity-type rules, so extraction
+ * and qualification share ONE detector. They previously did not: the RSS
+ * extractor caught this at import time and the qualifier could not, so
+ * every full requalification pass overwrote the specific finding with a
+ * generic "insufficient evidence" and the reason had to be rediscovered
+ * by a human each time.
+ *
+ * Straight and curly apostrophes both count. Publishers use ’ and
+ * databases use ', and a rule that sees only one of them is a rule that
+ * works on Tuesdays.
+ */
+const POSSESSIVE = /([’'])s(\s+)/;
+
+/**
+ * Category nouns that make the text after a possessive a DESCRIPTION of
+ * a company rather than the rest of its name. "…'s robotics company" is
+ * a description; "…'s Original" is a brand.
+ */
+const POSSESSIVE_DESCRIPTOR_NOUN = /\b(?:company|companies|startup|startups|firm|business|venture|outfit|app|platform|lab|labs|studio|project|effort|spinout|spin-?off|unicorn|maker|shop)\b\.?$/i;
+
+export type PossessiveVerdict =
+  | { kind: 'none' }
+  /** A possessive whose remainder describes rather than names: confident. */
+  | { kind: 'possessive-descriptor'; owner: string; descriptor: string }
+  /** A possessive with a proper-noun remainder: "McDonald's Corporation". */
+  | { kind: 'possessive'; owner: string; descriptor: string };
+
+/**
+ * Classify a possessive in a name, without deciding what to do about it.
+ *
+ * The two callers need different thresholds and both are right:
+ *
+ *  - A HEADLINE SUBJECT containing any possessive never names the
+ *    company — "Kalshi's rival raises…" is about the rival, whoever it
+ *    is. `server/sourcing/fundingEvent.ts` rejects on either kind.
+ *  - A STORED LEGAL NAME is different, because plenty of real companies
+ *    own an apostrophe: McDonald's Corporation, Lowe's Companies, Ben's
+ *    Original, Trader Joe's. Only `possessive-descriptor` is a finding
+ *    there.
+ *
+ * Keeping the pattern in one place and the thresholds at the call sites
+ * is what stops the two from drifting apart again.
+ */
+export function classifyPossessiveName(companyName: string): PossessiveVerdict {
+  const name = (companyName ?? '').trim();
+  const m = name.match(POSSESSIVE);
+  if (!m || m.index === undefined) return { kind: 'none' };
+
+  const owner = name.slice(0, m.index).trim();
+  const descriptor = name.slice(m.index + m[0].length).trim();
+  if (owner.length === 0 || descriptor.length === 0) return { kind: 'none' };
+
+  // A lowercase remainder is prose — a name would be capitalised. A
+  // remainder ending in a category noun is a description even when it
+  // starts with a capital, which is what "Elon Musk's AI startup" is.
+  const startsLowercase = /^\p{Ll}/u.test(descriptor);
+  if (startsLowercase || POSSESSIVE_DESCRIPTOR_NOUN.test(descriptor)) {
+    return { kind: 'possessive-descriptor', owner, descriptor };
+  }
+  return { kind: 'possessive', owner, descriptor };
+}
+
 export interface EntityCheck {
   isOperatingCompany: boolean;
   /** Why it was rejected, for the run report. Empty when accepted. */
   reason: string;
+  /**
+   * Machine-readable finding, so a caller can act on WHICH problem this
+   * is rather than parsing the sentence. Absent when accepted.
+   */
+  kind?: 'no-name' | 'person-possessive' | (string & {});
 }
 
 /**
  * Is this name plausibly an operating company rather than a fund,
- * university, or government body? Name-only, deterministic.
+ * university, government body, or a description of someone's company?
+ * Name-only, deterministic, no network.
  */
 export function checkEntityType(companyName: string): EntityCheck {
   const name = (companyName ?? '').trim();
-  if (name.length === 0) return { isOperatingCompany: false, reason: 'No company name.' };
+  if (name.length === 0) return { isOperatingCompany: false, reason: 'No company name.', kind: 'no-name' };
+
+  const possessive = classifyPossessiveName(name);
+  if (possessive.kind === 'possessive-descriptor') {
+    return {
+      isOperatingCompany: false,
+      kind: 'person-possessive',
+      reason: `Not a company name — it attributes a company to "${possessive.owner}" and then describes it ("${possessive.descriptor}") instead of naming it.`,
+    };
+  }
 
   for (const { pattern, kind } of NON_COMPANY_PATTERNS) {
     const m = name.match(pattern);
     if (m) {
       return {
         isOperatingCompany: false,
+        kind,
         reason: `Looks like a ${kind}, not an operating company ("${m[0].trim()}").`,
       };
     }

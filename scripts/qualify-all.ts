@@ -13,10 +13,11 @@
 import { listCompanies } from '../server/db/repos/companies';
 import { getOpportunity, reclassifyCompany } from '../server/db/repos/opportunities';
 import {
-  getQualification, qualifyIssuer, quarantine, recordClassificationChange, unquarantine,
+  getQualification, qualifyIssuer, quarantine, quarantineReasonFor,
+  recordClassificationChange, unquarantine,
 } from '../server/services/issuerQualification';
 import {
-  isDisqualified, QUALIFICATION_LABELS, explainQualification,
+  isDisqualified, QUALIFICATION_LABELS,
   type QualificationResult,
 } from '../shared/qualification';
 
@@ -45,7 +46,7 @@ for (const [i, c] of companies.entries()) {
 
   // Quarantine or release, based purely on the fresh verdict.
   if (isDisqualified(q.result) || q.result === 'insufficient-evidence') {
-    quarantine(c.id, `${QUALIFICATION_LABELS[q.result]} — ${explainQualification(q)}`);
+    quarantine(c.id, quarantineReasonFor(c.id, q));
     quarantined++;
   } else {
     unquarantine(c.id);
@@ -74,7 +75,7 @@ const order: QualificationResult[] = [
   'qualified-operating-company', 'human-review-required',
   'company-lead-requires-corroboration', 'insufficient-evidence',
   'public-company', 'investment-fund', 'spv-or-project-entity',
-  'corporate-subsidiary', 'unverified-foreign-entity',
+  'corporate-subsidiary', 'unverified-foreign-entity', 'not-a-company-name',
 ];
 for (const r of order) {
   const names = byResult.get(r) ?? [];
