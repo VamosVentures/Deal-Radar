@@ -1,5 +1,5 @@
 import { getDb } from '../db/client';
-import { listCompanies, getCompany } from '../db/repos/companies';
+import { listCompanies, getCompany, discoverySourceOf } from '../db/repos/companies';
 import { listDealEvidence } from '../db/repos/opportunities';
 import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
@@ -150,38 +150,59 @@ export async function verifyWebsite(rawUrl: string | null | undefined): Promise<
 
 export interface CorroborationResult {
   sources: IssuerQualification['corroboratingSources'];
-  /** Distinct source FAMILIES, which is what independence actually means. */
+  /**
+   * Distinct independent sources. Usually one per source family, except
+   * that two DIFFERENT news publishers count separately — see
+   * corroborationKey below.
+   */
   independentFamilies: string[];
   onlyEvidenceIsFormD: boolean;
 }
 
 /**
+ * The identity that independence is counted by.
+ *
+ * Family alone is the right rule for filings: three SEC pages about one
+ * Form D are one source, not three, and counting URLs is exactly the
+ * trick that let single-filing entities look well-evidenced.
+ *
+ * The press family needs one refinement. TechCrunch and SiliconAngle
+ * reporting the same round are two newsrooms that each decided the story
+ * was true — that is real corroboration, and collapsing them to a single
+ * "press" source would make a well-reported round look unverified. Two
+ * syndicated copies from the SAME publisher still count once, which is
+ * why the key is the publisher and not the URL.
+ */
+function corroborationKey(sourceId: string, sourceName: string): string {
+  const family = familyOf(sourceId);
+  if (family !== 'press') return family;
+  const publisher = sourceName.match(/([a-z0-9-]+(?:\.[a-z0-9-]+)+)/i)?.[1]?.toLowerCase();
+  return publisher ? `press:${publisher}` : 'press';
+}
+
+/**
  * Count independent corroboration for a company from its stored deal
  * evidence.
- *
- * Independence is measured by source FAMILY, not by URL. Three SEC pages
- * about one filing are one source, not three — that is exactly the trick
- * that let single-filing entities look well-evidenced.
  */
 export function assessCorroboration(companyId: string): CorroborationResult {
   const evidence = listDealEvidence(companyId);
-  const byFamily = new Map<string, typeof evidence[number]>();
+  const byKey = new Map<string, typeof evidence[number]>();
   for (const e of evidence) {
-    const fam = familyOf(e.sourceId);
-    // Keep the strongest (lowest tier) example per family.
-    const existing = byFamily.get(fam);
-    if (!existing || e.tier < existing.tier) byFamily.set(fam, e);
+    const key = corroborationKey(e.sourceId, e.sourceName);
+    // Keep the strongest (lowest tier) example per source.
+    const existing = byKey.get(key);
+    if (!existing || e.tier < existing.tier) byKey.set(key, e);
   }
-  const families = [...byFamily.keys()];
-  const nonRegulatory = families.filter((f) => f !== 'regulatory');
+  const keys = [...byKey.keys()];
+  const nonRegulatory = keys.filter((f) => f !== 'regulatory');
 
   return {
-    sources: [...byFamily.values()].map((e) => ({
-      sourceId: e.sourceId, family: familyOf(e.sourceId), url: e.url, publishedAt: e.publishedAt,
+    sources: [...byKey.values()].map((e) => ({
+      sourceId: e.sourceId, family: corroborationKey(e.sourceId, e.sourceName), url: e.url, publishedAt: e.publishedAt,
     })),
-    independentFamilies: families,
+    independentFamilies: keys,
     // "Only a Form D" means: regulatory is the ONLY family present.
-    onlyEvidenceIsFormD: families.length > 0 && nonRegulatory.length === 0,
+    onlyEvidenceIsFormD: keys.length > 0 && nonRegulatory.length === 0,
   };
 }
 
@@ -199,6 +220,12 @@ export interface QualifyOptions {
 }
 
 const DAY = 86_400_000;
+
+/**
+ * Sources whose records always carry a registered address, so a missing
+ * US state is informative rather than merely absent.
+ */
+const ADDRESS_BEARING_SOURCES = new Set(['sec', 'grants']);
 
 export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}): Promise<IssuerQualification> {
   const company = getCompany(companyId);
@@ -292,8 +319,17 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   // A non-US address with no verifiable website is exactly the shape of
   // AEGIS FINTECH LTD. and DZHLWK FINTECH Ltd. — large offerings, no
   // discoverable business.
-  const foreignNoWebsite = company.state === '??' && !websiteCheck.verified;
+  //
+  // But a blank state only MEANS a foreign address when the source always
+  // records one. An SEC Form D does; a funding article usually does not.
+  // Applying this rule to press-derived records labelled Ramp and Venus
+  // Aerospace "unverified foreign entity", which is simply false — we did
+  // not know where they were based, which is a different statement.
+  const addressAlwaysOnFile = ADDRESS_BEARING_SOURCES.has(discoverySourceOf(companyId) ?? '');
+  const jurisdictionUnknown = company.state === '??';
+  const foreignNoWebsite = jurisdictionUnknown && addressAlwaysOnFile && !websiteCheck.verified;
   if (foreignNoWebsite) reasons.push('foreign-address-no-website');
+  else if (jurisdictionUnknown) reasons.push('jurisdiction-not-stated');
 
   // ── Decide, most-certain disqualifier first ────────────────────
   let result: QualificationResult;

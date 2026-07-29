@@ -41,6 +41,32 @@ export const leadEvidenceSchema = z.object({
   /** The amount exactly as the source printed it (e.g. "$5M"). */
   fundingAmountText: z.string().optional(),
   lastFundingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /**
+   * The round as the source named it ("Seed", "Series B", "Growth").
+   * Wider than `stage`, which only models the three stages this fund
+   * invests in — a Series D is a real fact about a real company even
+   * though it is out of thesis, and dropping it would be a lie of
+   * omission.
+   */
+  roundType: z.string().optional(),
+  /** Investors the source explicitly named. Never inferred. */
+  investors: z.array(z.string().min(2)).default([]),
+  /** Publishing outlet, e.g. "techcrunch.com". */
+  publisher: z.string().optional(),
+  /** Headline of the article this lead came from. */
+  articleTitle: z.string().optional(),
+  /**
+   * Other articles reporting the SAME event, after duplicate merging.
+   * Kept so a reviewer sees every source, not just the first one found.
+   */
+  corroboratingUrls: z.array(z.string().url()).default([]),
+  /** Disagreements between sources about amount or round. */
+  conflictNotes: z.array(z.string()).default([]),
+  /**
+   * The company name is a single common word, so a matching domain would
+   * not prove identity. Blocks domain guessing downstream.
+   */
+  nameAmbiguous: z.boolean().default(false),
   accelerator: z.string().optional(),
   tractionSignals: z.array(z.string()).default([]),
 

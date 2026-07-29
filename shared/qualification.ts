@@ -91,6 +91,7 @@ export const REASON_CODES = [
   'filing-within-12-months',
   'filing-older-than-12-months',
   'foreign-address-no-website',
+  'jurisdiction-not-stated',
   'product-or-service-described',
   'no-product-description',
 ] as const;
@@ -114,6 +115,7 @@ export const REASON_TEXT: Record<ReasonCode, string> = {
   'filing-within-12-months': 'The filing is dated within the last 12 months.',
   'filing-older-than-12-months': 'The filing is older than 12 months and cannot describe a current opportunity.',
   'foreign-address-no-website': 'A non-US address with no verifiable website — cannot confirm an operating business.',
+  'jurisdiction-not-stated': 'No source stated where this company is based. Unknown, not foreign.',
   'product-or-service-described': 'A product or service description is on record.',
   'no-product-description': 'No product or service description is on record.',
 };

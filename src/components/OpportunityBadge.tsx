@@ -1,4 +1,4 @@
-import type { Opportunity, OpportunityClass, SourceTier } from '../../shared/opportunity';
+import type { DealEvidence, Opportunity, OpportunityClass, SourceTier } from '../../shared/opportunity';
 import type { IssuerQualification, QualificationResult } from '../../shared/qualification';
 import { OPPORTUNITY_CLASS_MEANINGS, isLiveDeal } from '../../shared/opportunity';
 import { QUALIFICATION_LABELS, REASON_TEXT } from '../../shared/qualification';
@@ -241,7 +241,18 @@ export function EvidenceSummary({ opportunity }: { opportunity: Opportunity }) {
         <span className="font-mono text-[10px] uppercase tracking-widest text-slate-mid">Primary evidence</span>
         <TierBadge tier={opportunity.primaryTier} />
         <span className="font-mono text-[10px] text-slate-mid">{opportunity.primarySourceId}</span>
-        <span className="font-mono text-[10px] text-slate-mid">
+        {publisherOf(opportunity.evidenceUrl) && (
+          <span
+            className="font-mono text-[10px] text-ink"
+            title="The outlet that published this. Two articles from the same publisher are one source, not two."
+          >
+            {publisherOf(opportunity.evidenceUrl)}
+          </span>
+        )}
+        <span
+          className="font-mono text-[10px] text-slate-mid"
+          title="The date the SOURCE published or filed this — not the date we fetched it."
+        >
           {opportunity.evidencePublishedAt ?? 'undated — cannot establish currency'}
         </span>
       </div>
@@ -261,10 +272,130 @@ export function EvidenceSummary({ opportunity }: { opportunity: Opportunity }) {
         </span>
         <span>Evidence confidence: {Math.round(opportunity.evidenceConfidence * 100)}%</span>
       </div>
+      {opportunity.investors.length > 0 && (
+        <div className="font-mono text-[10px] text-slate-mid">
+          Investors named by the source: <span className="text-ink">{opportunity.investors.join(', ')}</span>
+        </div>
+      )}
       <a href={opportunity.evidenceUrl} target="_blank" rel="noreferrer"
         className="inline-block break-all text-marigold underline decoration-dotted">
         {opportunity.evidenceUrl}
       </a>
+    </div>
+  );
+}
+
+/** Host only, so a publisher is nameable without showing a whole URL. */
+export function publisherOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Every article and record behind a company, grouped by the event it
+ * reports.
+ *
+ * This exists because deduplication is invisible otherwise. When three
+ * outlets cover one round, the pipeline stores three evidence rows and
+ * counts ONE event — and a reviewer who cannot see that grouping has no
+ * way to tell a well-corroborated round from three separate ones. The
+ * grouping key is what the sources actually stated (date + round +
+ * amount), so a disagreement shows up as two groups rather than being
+ * quietly averaged away.
+ */
+export function ReportingSources({ evidence }: { evidence: DealEvidence[] }) {
+  if (evidence.length === 0) return null;
+
+  // Financing events and supporting records are counted separately: a
+  // company website is real evidence that the business exists, but it is
+  // not an event and must not inflate the event count.
+  const events = evidence.filter((e) => e.opportunityType !== 'none');
+  const supporting = evidence.filter((e) => e.opportunityType === 'none');
+
+  // Group by the EVENT, not by URL and not by exact date. Two outlets
+  // publishing a day apart are covering one round; keying on the date
+  // would have reported "3 events" for one Series B plus a website.
+  const groups = new Map<string, DealEvidence[]>();
+  for (const e of events) {
+    const key = [e.opportunityType, e.roundType ?? '—', e.amountUsd ?? '—'].join('|');
+    groups.set(key, [...(groups.get(key) ?? []), e]);
+  }
+
+  return (
+    <div className="space-y-2 text-[11px]">
+      <div className="font-mono text-[10px] uppercase tracking-widest text-slate-mid">
+        Reporting on record ({groups.size} event{groups.size === 1 ? '' : 's'} from {events.length} article
+        {events.length === 1 ? '' : 's'}
+        {supporting.length > 0 && `, plus ${supporting.length} supporting record${supporting.length === 1 ? '' : 's'}`})
+      </div>
+      {[...groups.values()].map((rows) => {
+        const [first] = rows;
+        const publishers = [...new Set(rows.map((r) => publisherOf(r.url)).filter(Boolean))];
+        return (
+          <div key={first.url} className="border border-line border-l-[3px] border-l-line bg-panel px-2 py-1.5">
+            <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] text-slate-mid">
+              <span className="text-ink">{first.opportunityType.replace(/-/g, ' ')}</span>
+              <span>
+                {[...new Set(rows.map((r) => r.publishedAt ?? 'undated'))].sort().join(' – ')}
+              </span>
+              {first.amountText && <span className="text-ink">{first.amountText}</span>}
+              {first.roundType && <span className="text-ink">{first.roundType}</span>}
+              {rows.length > 1 && (
+                <span
+                  className="text-marigold"
+                  title="Several articles report this same event. It is counted once."
+                >
+                  {rows.length} articles · counted once
+                </span>
+              )}
+              {publishers.length > 1 && (
+                <span className="text-verde" title="Different publishers are independent sources.">
+                  {publishers.length} independent publishers
+                </span>
+              )}
+            </div>
+            <ul className="mt-0.5 space-y-0.5">
+              {rows.map((r) => (
+                <li key={r.url} className="break-all">
+                  <span className="font-mono text-[10px] text-slate-mid">{r.sourceName}</span>
+                  {r.amountText && <span className="font-mono text-[10px] text-slate-mid"> · {r.amountText}</span>}{' '}
+                  <a href={r.url} target="_blank" rel="noreferrer" className="text-marigold underline decoration-dotted">
+                    {r.url}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+
+      {supporting.length > 0 && (
+        <div className="border border-line border-l-[3px] border-l-line bg-panel px-2 py-1.5">
+          <div className="font-mono text-[10px] text-slate-mid">
+            Supporting records — corroborate that the company exists and operates. Undated, so they cannot
+            establish currency, and they cannot verify a financing amount.
+          </div>
+          <ul className="mt-0.5 space-y-0.5">
+            {supporting.map((r) => (
+              <li key={r.url} className="break-all">
+                <span className="font-mono text-[10px] text-slate-mid">{r.sourceName}</span>{' '}
+                <a href={r.url} target="_blank" rel="noreferrer" className="text-marigold underline decoration-dotted">
+                  {r.url}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {groups.size > 1 && (
+        <p className="text-[10px] text-slate-mid">
+          More than one event is on record for this company. Separate rounds are kept separate; sources that
+          disagree about the same round are shown as conflicting evidence above rather than reconciled.
+        </p>
+      )}
     </div>
   );
 }

@@ -640,3 +640,73 @@ the read-only self-audits already performed in Phase 8, Phase 9, and Phase
   reviewer. Don't assume a UI label alone means something is enforced;
   check whether the route actually has `requireAdmin` before relying on it.
   And it's still one shared password, not per-user accounts.
+
+---
+
+# Phase 14 — the funding-news pipeline
+
+## Where things live
+
+| File | Responsibility |
+|---|---|
+| `server/sourcing/fundingEvent.ts` | Feed parsing (RSS + Atom), funding-event extraction, name validation, dedup, conflicts. **Pure — no network, no DB.** Every rule here is unit-testable against real article text. |
+| `server/sourcing/adapters/rss.ts` | Fetches the configured feeds, calls the extractor, reports per-feed health. `collectFundingEvents` is the shared entry point so live verification and the discovery pipeline cannot drift apart. |
+| `server/services/fundingNews.ts` | The end-to-end run: publisher check → entity check → sector gate → website resolution → persistence → reclassification. |
+| `scripts/source-funding-news.ts` | Live verification with the 11 required metrics. `--dry-run` writes nothing. |
+| `scripts/corroborate-all.ts` | Goes looking for a second independent source for companies that have one. |
+| `server/tests/funding-news.test.ts` | 67 tests, each named after the real article that exposed the defect. |
+
+## The invariant that matters
+
+**Nothing is dropped silently.** An article either becomes a `FundingEvent` or
+produces a `Rejection` with one of the 31 codes in `RSS_REASON_CODES`. The
+original bug was not that candidates were rejected — it was that nobody could
+find out why. If you add a filter anywhere in this pipeline, give it a reason
+code and add it to `RSS_REASON_TEXT`; the exhaustiveness of that map is
+asserted by a test.
+
+## Things that will bite you
+
+- **`dateAccessed` is not a publication date.** It is when *we fetched*
+  something. Use `publishedAt`. This distinction is the entire Phase 14 root
+  cause; the field comments say so at every layer.
+- **Disqualifier scope depends on attribution.** When the headline states that
+  a named company raised, only the *headline* may disqualify the article.
+  Otherwise a story about Bluecore Energy's pre-seed gets thrown out because
+  its lead investor's own `$100M Fund II` is mentioned in the body. See the
+  `scope` variable in `extractFundingEvent`.
+- **Name-extraction attempts are ordered, and the order is load-bearing.**
+  After-descriptor → after-comma → before-comma → whole subject. Reorder them
+  and you get companies called "Inference startup Infinity" and "Bucking EV".
+- **Veto before narrowing.** `validateName` checks descriptor head/tail on the
+  *whole* span first, because "Edtech platform" is only recognisable as a
+  description while the word "platform" is still attached — narrow first and
+  you get a company called "Edtech".
+- **Each source keeps its own figures.** `FundingEventSource` carries
+  `amountUsd` / `amountText` / `roundType`. Do not write the merged event's
+  primary amount onto every row: that misquotes publishers, and it destroys
+  the record of a conflict.
+- **Independence is per publisher inside the press family** but per family
+  everywhere else (`corroborationKey` in `issuerQualification.ts`). Three SEC
+  pages are one source; TechCrunch plus SiliconAngle are two.
+- **A blank `state` means different things per source.** For SEC and grants it
+  means the registered address was non-US. For press it means nobody said.
+  `ADDRESS_BEARING_SOURCES` encodes this; getting it wrong labelled Ramp and
+  Venus Aerospace "unverified foreign entity".
+- **`isAmbiguousCompanyName` gates two separate things** — domain discovery
+  and YC name matching. Both for the same reason: a common word matching is a
+  collision, not an identity.
+
+## Re-running it
+
+```
+npx tsx scripts/db-backup.ts                      # always first
+npx tsx scripts/source-funding-news.ts --dry-run   # see it without writing
+npx tsx scripts/source-funding-news.ts             # real import
+npx tsx scripts/corroborate-all.ts --source funding-news
+npx tsx scripts/qualify-all.ts                     # re-qualify + reclassify
+```
+
+Feeds carry roughly the last 20 items, so repeated runs accumulate coverage and
+find second publishers for events that had only one at first pass. That is the
+intended way for corroboration to improve — not a lowered threshold.

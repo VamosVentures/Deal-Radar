@@ -35,8 +35,17 @@ const RULES: SectorRule[] = [
   },
   {
     id: 'spacetech',
-    strong: [/\bspace\s?(tech|craft|flight)\b/i, /\bsatellite/i, /\borbit(al)?\b/i, /\blaunch\s+vehicle\b/i, /\bearth\s+observation\b/i, /\bin-?space\b/i, /\bconstellation\s+of\s+satellites\b/i],
-    weak: [/\baerospace\b/i, /\bgeospatial\b/i, /\bremote\s+sensing\b/i, /\bground\s+station\b/i, /\bpayload\b/i, /\bLEO\b/],
+    strong: [
+      /\bspace\s?(tech|craft|flight)\b/i, /\bsatellite/i, /\borbit(al)?\b/i, /\blaunch\s+vehicle\b/i,
+      /\bearth\s+observation\b/i, /\bin-?space\b/i, /\bconstellation\s+of\s+satellites\b/i,
+      // Product nouns, not the word "space". A rocket engine, a
+      // spaceport, or a re-entry vehicle IS the space industry; a company
+      // that merely says "aerospace" is not.
+      /\brocket\s+(?:engine|motor|propulsion|stage)\b/i, /\brockets?\b/i, /\bhypersonic\b/i,
+      /\bspaceport\b/i, /\blunar\b/i, /\bre-?entry\s+vehicle\b/i, /\bspace\s+station\b/i,
+      /\bdeep\s+space\b/i,
+    ],
+    weak: [/\baerospace\b/i, /\bgeospatial\b/i, /\bremote\s+sensing\b/i, /\bground\s+station\b/i, /\bpayload\b/i, /\bLEO\b/, /\bpropulsion\b/i],
   },
   {
     id: 'health',
@@ -55,12 +64,31 @@ const RULES: SectorRule[] = [
   },
   {
     id: 'fow',
-    strong: [/\bfuture\s+of\s+work\b/i, /\bcopilot\b/i, /\bworkflow\s+automation\b/i, /\bhiring\b/i, /\brecruit/i, /\bHR\s+(tech|platform)\b/i, /\bfrontline\s+worker/i, /\bemployee\s+(experience|engagement)\b/i, /\bproductivity\s+(tool|platform)\b/i],
-    weak: [/\bcollaborat/i, /\bteam(s)?\s+(tool|platform)\b/i, /\bknowledge\s+(base|work)\b/i, /\bscheduling\b/i, /\bfreelanc/i, /\bcontractor/i],
+    strong: [
+      /\bfuture\s+of\s+work\b/i, /\bcopilot\b/i, /\bworkflow\s+automation\b/i, /\bhiring\b/i, /\brecruit/i,
+      /\bHR\s+(tech|platform|software)\b/i, /\bfrontline\s+worker/i, /\bemployee\s+(experience|engagement|onboarding)\b/i,
+      /\bproductivity\s+(tool|platform)\b/i,
+      // Named products rather than category language.
+      /\bapplicant\s+tracking\b/i, /\bworkforce\s+management\b/i, /\bshift\s+(?:scheduling|swap|management)\b/i,
+      /\bupskill/i, /\breskill/i, /\bperformance\s+(?:review|management)\s+(?:software|platform|tool)\b/i,
+      /\btalent\s+(?:marketplace|acquisition|platform)\b/i, /\bstaffing\s+(?:platform|marketplace|agency\s+software)\b/i,
+      /\blearning\s+management\b/i, /\bdeskless\s+worker/i, /\bwage\s+access\b/i, /\btime\s+(?:and\s+attendance|tracking\s+software)\b/i,
+    ],
+    weak: [/\bcollaborat/i, /\bteam(s)?\s+(tool|platform)\b/i, /\bknowledge\s+(base|work)\b/i, /\bscheduling\b/i, /\bfreelanc/i, /\bcontractor/i, /\bonboarding\b/i, /\bemployer\b/i],
   },
   {
     id: 'ai',
-    strong: [/\bfoundation\s+model/i, /\bLLM(s)?\b/, /\blarge\s+language\s+model/i, /\binference\s+(engine|infrastructure|serving)\b/i, /\bvector\s+(database|search)\b/i, /\bfine-?tun/i, /\bRAG\b/, /\bAI\s+(infrastructure|tooling|observability|evaluation|safety)\b/i, /\bMLOps\b/i, /\bmachine\s+learning\s+(platform|infrastructure)\b/i],
+    strong: [
+      /\bfoundation\s+model/i, /\bLLM(s)?\b/, /\blarge\s+language\s+model/i,
+      /\binference\s+(engine|infrastructure|serving)\b/i, /\bvector\s+(database|search)\b/i,
+      /\bfine-?tun/i, /\bRAG\b/, /\bAI\s+(infrastructure|tooling|observability|evaluation|safety)\b/i,
+      /\bMLOps\b/i, /\bmachine\s+learning\s+(platform|infrastructure)\b/i,
+      // The product IS a model or an agent runtime.
+      /\b(?:voice|speech|video|image|world|code|coding)\s+model(s)?\b/i,
+      /\bAI\s+(?:voice|video|image|coding|agent)\s+(?:model|platform|assistant|tool)/i,
+      /\bagentic\s+(?:infrastructure|runtime|platform)\b/i, /\bmodel\s+(?:serving|weights|training)\b/i,
+      /\bAI-generated\s+content\s+detection\b/i, /\bAI\s+coding\s+(?:assistant|agent|tool)\b/i,
+    ],
     weak: [/\bAI\b/, /\bartificial\s+intelligence\b/i, /\bneural\s+net/i, /\bmodel\s+training\b/i, /\bGPU\b/, /\bagent(ic|s)?\b/i, /\bdeep\s+learning\b/i],
   },
 ];
@@ -324,4 +352,52 @@ export function classifyFromTaxonomy(labels: string[]): TaxonomyMatch {
   const confidence = Math.round(Math.min(1, (top.score / 5) * 0.6 + separation * 0.4) * 100) / 100;
 
   return { vertical, confidence, matched: [...new Set(top.matched)] };
+}
+
+// ── Name ambiguity ────────────────────────────────────────────────
+
+/**
+ * Common English words used as company names.
+ *
+ * These matter for exactly one decision: whether a domain derived from
+ * the name can be treated as evidence of identity. It cannot. A real run
+ * "confirmed" natural.com for a company called Natural and enigma.com
+ * for Enigma, because a page that contains the word "natural" tells you
+ * nothing — the word is everywhere. For a distinctive name like
+ * "Greyparrot" the same check IS meaningful, which is why this is a word
+ * list and not a word count. An earlier version required two words or a
+ * twelve-character stem, and that rule threw away every genuine
+ * single-word company along with the ambiguous ones.
+ *
+ * Curated and auditable rather than inferred. A name absent from this
+ * list is still verified by finding it on the page before it is trusted.
+ */
+const AMBIGUOUS_NAME_WORDS = new Set([
+  'natural', 'cascade', 'enigma', 'infinity', 'origin', 'apex', 'nova', 'atlas', 'vertex',
+  'summit', 'beacon', 'prism', 'catalyst', 'momentum', 'pulse', 'forge', 'anchor', 'compass',
+  'horizon', 'lattice', 'helix', 'nexus', 'cipher', 'aurora', 'multiverse', 'ramp', 'spur',
+  'cadence', 'harbor', 'harbour', 'haven', 'lighthouse', 'foundry', 'kernel', 'vector',
+  'matrix', 'quantum', 'fusion', 'orbit', 'current', 'spark', 'ember', 'ridge', 'valley',
+  'mesa', 'delta', 'alpha', 'omega', 'zenith', 'pinnacle', 'keystone', 'bedrock', 'slate',
+  'onyx', 'quartz', 'cobalt', 'indigo', 'antares', 'sierra', 'tide', 'wave', 'surge', 'drift',
+  'stride', 'pace', 'tempo', 'rhythm', 'chord', 'echo', 'signal', 'relay', 'conduit',
+  'circuit', 'node', 'mesh', 'weave', 'thread', 'fabric', 'canvas', 'palette', 'chapter',
+  'ledger', 'tally', 'bridge', 'gateway', 'portal', 'summit', 'crest', 'bloom', 'sprout',
+  'harvest', 'meridian', 'axiom', 'theorem', 'quotient', 'tangent', 'radius', 'quorum',
+  'cohort', 'legacy', 'heritage', 'frontier', 'expanse', 'terrain', 'basalt', 'granite',
+  'obsidian', 'lumen', 'candela', 'photon', 'proton', 'neutron', 'axis', 'pivot', 'fulcrum',
+  'lever', 'ratchet', 'cogent', 'lucid', 'candid', 'earnest', 'prosper', 'thrive', 'flourish',
+]);
+
+/**
+ * Is this name too common a word for a matching domain to prove identity?
+ *
+ * Only single-word names can be ambiguous this way: two distinctive words
+ * together ("Bluecore Energy", "Pine Park Health") are already specific
+ * enough that a domain collision is unlikely.
+ */
+export function isAmbiguousCompanyName(name: string): boolean {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length !== 1) return false;
+  return AMBIGUOUS_NAME_WORDS.has(words[0].toLowerCase().replace(/[^a-z]/g, ''));
 }

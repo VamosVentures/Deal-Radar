@@ -79,13 +79,41 @@ describe('opportunity classification', () => {
           url: 'https://www.ycombinator.com/companies/acme',
           publishedAt: daysAgo(20), amountUsd: null, amountText: null,
         }),
+        evidence({
+          opportunityType: 'none', sourceId: 'websites', tier: 3,
+          url: 'https://acme.example.com', publishedAt: null,
+          amountUsd: null, amountText: null,
+        }),
       ],
       today: TODAY,
     });
     expect(r.classification).toBe('verified-current-opportunity');
   });
 
-  it('classifies an accelerator batch alone as a credible fundraising signal', () => {
+  it('treats a recent accelerator batch WITH a verified website as a fundraising signal', () => {
+    const r = classifyOpportunity({
+      evidence: [
+        evidence({
+          opportunityType: 'accelerator-batch', sourceId: 'yc', tier: 1,
+          publishedAt: daysAgo(15), amountUsd: null, amountText: null,
+          // A direct company page, never a search-results URL.
+          url: 'https://www.ycombinator.com/companies/acme',
+        }),
+        evidence({
+          opportunityType: 'none', sourceId: 'websites', tier: 3,
+          url: 'https://acme.example.com', publishedAt: null,
+          amountUsd: null, amountText: null,
+        }),
+      ],
+      today: TODAY,
+    });
+    expect(r.classification).toBe('credible-fundraising-signal');
+  });
+
+  it('refuses to call an accelerator batch a fundraising signal without a verified website', () => {
+    // A directory row proves participation in a cohort. On its own it does
+    // not establish that the company is an operating business, and a
+    // cohort is not a raise — so it is surfaced for judgement, not counted.
     const r = classifyOpportunity({
       evidence: [evidence({
         opportunityType: 'accelerator-batch', sourceId: 'yc', tier: 1,
@@ -94,7 +122,8 @@ describe('opportunity classification', () => {
       })],
       today: TODAY,
     });
-    expect(r.classification).toBe('credible-fundraising-signal');
+    expect(r.classification).toBe('unverified-opportunity');
+    expect(isLiveDeal(r.classification)).toBe(false);
   });
 
   it('treats a government award as commercialization, NOT equity financing', () => {

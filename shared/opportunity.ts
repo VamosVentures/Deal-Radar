@@ -238,9 +238,18 @@ export function classifyOpportunity(input: ClassifyInput): ClassificationResult 
   const financing = current.filter(
     (e) => FINANCING_EVENT_TYPES.includes(e.opportunityType) && e.tier <= 2,
   );
-  const raising = current.filter(
-    (e) => (e.opportunityType === 'explicit-raising-statement' || e.opportunityType === 'accelerator-batch') && e.tier <= 2,
-  );
+  /**
+   * A recent accelerator batch only counts as a fundraising signal when we
+   * have ALSO confirmed the company is an operating business with a live
+   * site. A directory row on its own proves participation in a cohort, and
+   * a cohort is not a raise — that conflation is what put 35 YC listings
+   * on the dashboard as though they were deals.
+   */
+  const hasVerifiedWebsite = input.evidence.some((e) => e.sourceId === 'websites');
+  const raising = current.filter((e) => e.tier <= 2 && (
+    e.opportunityType === 'explicit-raising-statement'
+    || (e.opportunityType === 'accelerator-batch' && hasVerifiedWebsite)
+  ));
   const commercialization = current.filter(
     (e) => COMMERCIALIZATION_EVENT_TYPES.includes(e.opportunityType) && e.tier <= 2,
   );
@@ -289,6 +298,25 @@ export function classifyOpportunity(input: ClassifyInput): ClassificationResult 
     reason: 'Recent evidence exists but none of it describes a financing or fundraising event.',
     contributingSources,
   };
+}
+
+/**
+ * What an accelerator-derived opportunity does and does not establish.
+ *
+ * A recent batch plus a verified operating website is a credible reason to
+ * believe a company is raising. It is NOT verified financing, and every
+ * surface that shows one of these must say so in these words rather than
+ * leaving a reader to assume the amount is simply missing from the page.
+ */
+export const ACCELERATOR_SIGNAL_LABELS = [
+  'Recent accelerator signal',
+  'Financing amount unknown',
+  'Current fundraising not confirmed',
+] as const;
+
+/** True when this opportunity rests on an accelerator batch rather than a financing event. */
+export function isAcceleratorSignal(o: Pick<Opportunity, 'opportunityType'>): boolean {
+  return o.opportunityType === 'accelerator-batch';
 }
 
 // ── Source diversity ──────────────────────────────────────────────

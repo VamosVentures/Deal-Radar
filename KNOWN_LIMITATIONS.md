@@ -1,6 +1,6 @@
 # Known Limitations
 
-Honest, current as of 2026-07-19 (Phase 10). This is not a marketing document —
+Honest, current as of 2026-07-29 (Phase 14). This is not a marketing document —
 it exists so the next engineer or reviewer knows exactly what to double-check
 before relying on the app for anything consequential.
 
@@ -244,3 +244,75 @@ freshly-copied `.env.example` ships every key present but blank (e.g.
 `AI_PROVIDER=`), and blank strings fail Zod's `.optional()` checks
 (`""` is not `undefined`) — `server/env.ts` now strips blank-valued keys
 before validating, so a literal copy of the example file boots cleanly.
+
+---
+
+## Funding-news (RSS) — what it can and cannot establish
+
+RSS is live and importing real, corroborated opportunities. These are its real
+edges.
+
+### Two sectors have no qualified opportunity at all
+
+Future of Work: **0 of 5**. Space Tech: **0 of 5**. This is a genuine shortage,
+not a bug and not a placeholder. The pipeline considered 7 FoW candidates and
+12 Space Tech candidates; none met the bar. Venus Aerospace was extracted
+correctly from a real $90M Series B article and classified `spacetech`, but no
+second independent source could be found for it and its website could not be
+confirmed (5 candidate domains tried), so it is held as a company lead. The
+correct fix is another source family, not a lowered bar.
+
+### Only two source families overall
+
+17 qualified opportunities: 8 regulatory (SEC), 9 press (RSS). The target is
+three families per sector. The accelerator family is the obvious third, and
+Phase 14 tightened rather than loosened it: a YC batch is now a fundraising
+signal only alongside a *verified operating website*, and it is labelled
+**"Recent accelerator signal / Financing amount unknown / Current fundraising
+not confirmed."** A directory listing is participation in a cohort, and a
+cohort is not a raise.
+
+### A common single-word name blocks domain discovery, by design
+
+Companies called *Natural*, *Cascade*, *Enigma*, *Multiverse*, *Antares*,
+*Ramp*, *Infinity* are stored as real leads with their real articles, but no
+website is guessed for them. A page containing the word "natural" is not
+evidence about a company called Natural — a previous run "confirmed"
+natural.com and enigma.com on exactly that reasoning. Without a second source
+these stay company leads. The word list lives in
+`server/sourcing/classify.ts` (`AMBIGUOUS_NAME_WORDS`); it is curated and
+auditable rather than inferred, so it is incomplete by construction.
+
+### Cybersecurity and semiconductors have no sector
+
+Real, correctly-extracted rounds — Pangram ($9M), Spur ($200M), Act Security
+($60M), AegisAI ($36M), Eliyan ($145M), ZuriQ ($25.5M) — carry no sector,
+because none of the seven verticals covers them. They are stored as leads and
+excluded from every shortlist. Forcing them into `ai` on the strength of the
+word "AI" is exactly the failure the classifier refuses to commit.
+
+### Non-USD amounts are recorded but not converted
+
+A €4M or £10M round is stored with the symbol the source printed and
+`amountUsd = null`. No conversion rate is a stated fact, so none is applied.
+Amount-based filters and sorts will not see these rounds.
+
+### The pipeline reads feeds, not articles
+
+Only the headline, summary/content, link, date, author, categories, and the
+outbound links a publisher puts *in the syndicated content* are used. Article
+pages are never fetched. So a round whose amount, round name, or investors
+appear only in the article body is recorded with those fields null.
+
+### Rounds without an attributable subject are dropped
+
+21 of 241 articles in the verification run had funding language that could not
+be attributed to a named company ("Micron, MediaTek back ChipAgents as AI
+startup extends Series A", "Fish Audio makes a splash after raising $52M").
+These are reported under `financing-not-attributed` rather than guessed at.
+
+### Two syndicated copies are one source
+
+Independence is counted per publisher, so a story rewritten by one outlet
+twice counts once. This is deliberate, and it means a widely-syndicated press
+release does not manufacture corroboration.

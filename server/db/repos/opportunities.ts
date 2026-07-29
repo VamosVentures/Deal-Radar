@@ -1,6 +1,6 @@
 import { getDb } from '../client';
 import {
-  classifyOpportunity, isLiveDeal, tierOf,
+  classifyOpportunity, isLiveDeal, tierOf, ACCELERATOR_SIGNAL_LABELS,
   type DealEvidence, type Opportunity, type OpportunityClass, type SourceTier,
 } from '../../../shared/opportunity';
 import { DISQUALIFYING_RESULTS } from '../../../shared/qualification';
@@ -172,8 +172,15 @@ export function reclassifyCompany(companyId: string, opts: { today?: string } = 
   const primary = result.primary;
   const missing: string[] = [];
   if (!primary) missing.push('No qualifying current-opportunity evidence.');
-  if (primary && primary.amountUsd === null) missing.push('Financing amount not stated by the source.');
-  if (primary && !primary.roundType) missing.push('Round type not stated by the source.');
+  if (primary && primary.opportunityType === 'accelerator-batch') {
+    // The mandated wording for an accelerator-derived signal. Stated
+    // explicitly so no reader mistakes a missing amount for an
+    // undisclosed one, or a cohort for a round.
+    missing.push(...ACCELERATOR_SIGNAL_LABELS.slice(1));
+  } else {
+    if (primary && primary.amountUsd === null) missing.push('Financing amount not stated by the source.');
+    if (primary && !primary.roundType) missing.push('Round type not stated by the source.');
+  }
   if (evidence.every((e) => e.publishedAt === null)) missing.push('No evidence carries a publication date.');
 
   const record: Opportunity = {

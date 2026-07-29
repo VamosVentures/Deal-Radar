@@ -3,6 +3,7 @@ import { addDealEvidence, listDealEvidence } from '../db/repos/opportunities';
 import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { normalizeCompanyKey, isHighConfidenceFuzzy } from '../sourcing/identity';
+import { isAmbiguousCompanyName } from '../sourcing/classify';
 import { batchToApproxDate } from '../sourcing/adapters/ycombinator';
 import { tierOf, familyOf } from '../../shared/opportunity';
 import type { DealEvidence } from '../../shared/opportunity';
@@ -64,8 +65,18 @@ interface YcRecord {
   status?: string | null; industries?: string[] | null; tags?: string[] | null;
 }
 
-/** Ask the YC directory whether it knows this company. */
+/**
+ * Ask the YC directory whether it knows this company.
+ *
+ * Refuses to answer for a common single word. A live run "corroborated" a
+ * TechCrunch-reported inference startup called Infinity against a YC
+ * company also called Infinity — a consumer app in a different country —
+ * and then adopted that company's website as its own. An exact match on
+ * one common word is a name collision, not an identity, and a false
+ * corroboration is worse than none: it manufactures confidence.
+ */
 export async function findInYc(companyName: string): Promise<{ record: YcRecord; url: string } | null> {
+  if (isAmbiguousCompanyName(companyName)) return null;
   const res = await politeFetch(
     `https://api.ycombinator.com/v0.1/companies?q=${encodeURIComponent(companyName)}`,
     { headers: { 'User-Agent': UA, Accept: 'application/json' } },
@@ -155,6 +166,11 @@ export async function corroborateCompany(companyId: string): Promise<Corroborati
           attempt.notes.push(`Discovered official website via the YC directory: ${site}`);
         }
       }
+    } else if (isAmbiguousCompanyName(company.name)) {
+      attempt.notes.push(
+        `"${company.name}" is a common English word, so a directory entry with the same name would not `
+        + 'establish identity. Not treated as corroboration; left for human lookup.',
+      );
     } else {
       attempt.notes.push('Not found in the Y Combinator directory.');
     }
@@ -229,20 +245,20 @@ export async function discoverOfficialWebsite(companyName: string): Promise<Webs
     return { url: null, confirmedBy: null, tried: [], detail: 'Company name too short to derive a candidate domain.' };
   }
 
-  // Single generic words are not identifying. A real run "confirmed"
+  // Common single words are not identifying. A real run "confirmed"
   // natural.com for a company called "Natural" and enigma.com for
-  // "Enigma" — both pass a name-on-page check trivially and almost
-  // certainly belong to someone else. Domain discovery is only trusted
-  // for names distinctive enough that a collision is unlikely: at least
-  // two meaningful words, or one long uncommon word.
-  const meaningfulWords = companyName.toLowerCase()
-    .replace(/\b(inc|incorporated|corp|corporation|llc|ltd|limited|co|company|holdings?|group|the|and)\b/g, ' ')
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 2);
-  if (meaningfulWords.length < 2 && stem.length < 12) {
+  // "Enigma" — both pass a name-on-page check trivially, because the
+  // word appears on any page about anything.
+  //
+  // The guard used to be "at least two meaningful words, or one stem of
+  // twelve characters", which was the wrong test: it also refused
+  // "Greyparrot", "Theker", and "Antares", where finding the name on the
+  // page IS real confirmation. The question is whether the WORD is
+  // common, so that is what is checked.
+  if (isAmbiguousCompanyName(companyName)) {
     return {
       url: null, confirmedBy: null, tried: [],
-      detail: `"${companyName}" is a single common word — a matching domain would not be evidence of identity. Left for human lookup rather than guessed.`,
+      detail: `"${companyName}" is a common English word — a matching domain would not be evidence of identity. Left for human lookup rather than guessed.`,
     };
   }
   // A small, ordered candidate set. Deliberately short: this runs per

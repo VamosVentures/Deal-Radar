@@ -1496,3 +1496,113 @@ npm run db:integrity
 
 Docker build was not run (`docker` unavailable in this environment) — stated
 above, not silently skipped.
+
+---
+
+# Phase 14 — Funding-news (RSS) pipeline: root cause and repair
+
+**Date:** 2026-07-29. **Starting state:** 176 companies, 8 qualified
+opportunities, 100% of them SEC-primary. The funding-news adapter had
+retrieved 77 candidates and produced **zero** usable opportunities, and the
+run report said nothing about why.
+
+## The root cause
+
+A structured field was dropped between two modules.
+
+`leadToEvidence` (`server/sourcing/normalize.ts`) knew each article's real
+publication date. It wrote that date into a free-text `notes` string
+(`"Published 2026-07-23"`) and set `dateAccessed` to the run time. Downstream,
+`candidateToDealEvidence` (`server/services/shortlist.ts`) could only read
+`dateAccessed`, and additionally required an exact `YYYY-MM-DD` — so it
+compared the run time against itself, concluded there was no publication date,
+and `classifyOpportunity` demoted every RSS candidate to `company-lead` with
+the reason *"No evidence carries a publication date, so currency cannot be
+established."*
+
+That single lost field accounted for 100% of the zero-opportunity outcome. It
+was invisible because nothing in the pipeline was required to say why a
+candidate had been dropped.
+
+Four further defects were found by the mandated five-candidate trace, each of
+which would have blocked most candidates on its own:
+
+| # | Defect | Effect |
+|---|---|---|
+| 1 | `publishedAt` lost in normalization | every candidate demoted to a lead |
+| 2 | Company name = headline prefix before "raises" | produced "Edtech platform", "Travis Kalanick's robotics company" |
+| 3 | Only the headline was classified | 3 of 5 traced candidates had no sector |
+| 4 | No website resolution at all | nothing could be confirmed as an operating company |
+| 5 | One source family (`press`) only | nothing could reach the 2-source corroboration bar |
+
+## What changed
+
+- **`shared/discovery.ts`** — `candidateEvidenceSchema` gains a structured,
+  nullable `publishedAt`. `dateAccessed` is now documented as *when we
+  fetched it*, which is not a publication date.
+- **`server/sourcing/normalize.ts`** — `toIsoDate` normalizes an RFC-822 or
+  ISO timestamp to `YYYY-MM-DD`, or returns null. Never guesses.
+- **`server/services/shortlist.ts`** — `candidateToDealEvidence` reads
+  `publishedAt` first; carries named `investors` through; tier 3 still may
+  not assert an amount, a round, or an investor.
+- **`server/sourcing/fundingEvent.ts` (new, ~700 lines)** — feed parsing for
+  RSS 2.0 *and* Atom using each format's own field names; funding-event
+  extraction; 31 named reason codes; company-name validation; deduplication
+  and conflict detection. Pure functions, no network, no database.
+- **`server/sourcing/adapters/rss.ts` (rewritten)** — 12 feeds across 4
+  publishers, per-feed item/event counts and failure rates, reason-code
+  tallies in the run detail.
+- **`server/services/fundingNews.ts` (new)** — the end-to-end run: website
+  resolution from article links then derived domains, approved-publisher
+  check, entity check, sector gate, persistence, reclassification. Every
+  event either becomes an import or appears in a rejection list with a code.
+- **`server/services/issuerQualification.ts`** — independence is now counted
+  per *publisher* within the press family, so TechCrunch and SiliconAngle
+  reporting the same round are two sources while two syndicated copies of one
+  article are one. Also: a blank US state only means "foreign" for sources
+  that always record an address (SEC, grants); for a press-derived record it
+  means the jurisdiction was not stated.
+- **`shared/opportunity.ts`** — a recent accelerator batch is a fundraising
+  signal only alongside a *verified operating website*; the three mandated
+  accelerator labels are exported and stored on the opportunity record.
+- **`src/components/OpportunityBadge.tsx`, `CompanyTable.tsx`,
+  `server/routes/imports.ts`, `src/store/companies.tsx`** — publisher,
+  event date, verified amount, verified round, named investors, every
+  corroborating source, duplicate-event grouping, and conflicting financing
+  details are all visible in the existing detail panel. The review queue was
+  not rebuilt.
+- **`scripts/source-funding-news.ts`, `scripts/corroborate-all.ts` (new)** —
+  live verification and second-source discovery.
+
+## Result
+
+| Metric | Before | After |
+|---|---|---|
+| Companies | 176 | 191 |
+| Qualified opportunities | 8 | 17 |
+| SEC-primary share | 100% | 47% |
+| RSS-primary share | 0% | 53% |
+| Sectors with any opportunity | 4 of 7 | 5 of 7 |
+| RSS companies with ≥2 independent sources | 0 | 9 |
+| Unit tests | 396 | 464 |
+
+## Corrections made during this phase
+
+Two false attributions were created and then removed inside this phase. Both
+are recorded here because a silent correction is indistinguishable from a
+cover-up:
+
+1. **A false YC corroboration.** `corroborateCompany` matched a
+   TechCrunch-reported inference startup called *Infinity* against a YC
+   company also called *Infinity* — a different business — and adopted its
+   website. `findInYc` now refuses to answer for a common single word, and
+   the falsely-attributed evidence row and website were removed.
+2. **A misattributed amount.** The merged event's primary `amountText` was
+   written onto every article's evidence row, so a TechFundingNews row read
+   *"$27M (as stated by siliconangle.com)"*. Each source now records what it
+   actually printed; the one stored row affected was corrected.
+
+One pre-existing record was quarantined: **"Travis Kalanick's robotics
+company"**, created by the old headline-prefix extractor. It is not a company
+name, so no amount of corroboration could ever make it a deal. Quarantined,
+not deleted — the article evidence stays auditable.

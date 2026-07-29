@@ -154,6 +154,21 @@ export function listCompanies(): ImportedCompany[] {
   return rows.map(rowToCompany);
 }
 
+/**
+ * Which adapter first produced this record.
+ *
+ * Needed because an absent field means different things depending on
+ * where a record came from: an SEC filing always carries an address, so a
+ * blank state means the address was non-US, whereas a funding article
+ * often just does not mention where a company is based. Treating those
+ * two as the same fact labelled real US companies as foreign entities.
+ */
+export function discoverySourceOf(companyId: string): string | null {
+  const row = getDb().prepare('SELECT discovery_source FROM companies WHERE id = ?').get(companyId) as
+    { discovery_source: string | null } | undefined;
+  return row?.discovery_source ?? null;
+}
+
 /** The meta map served alongside companies (review chips, refresh dates, merged evidence). */
 export function companyMetaView(): Record<string, CompanyMetaEntry> {
   const db = getDb();

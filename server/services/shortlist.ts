@@ -56,6 +56,8 @@ export interface DealEvidenceSource {
   }[];
   publicFunding?: string;
   mostRecentRound?: string;
+  /** Investors the source explicitly named. Never inferred. */
+  investors?: string[];
   fundingDate?: string;
   discoveredAt?: string;
 }
@@ -93,7 +95,9 @@ export function candidateToDealEvidence(c: DealEvidenceSource): DealEvidence[] {
       amountUsd: tier <= 2 ? amountUsd : null,
       amountText: tier <= 2 ? amountText : null,
       roundType: c.mostRecentRound && c.mostRecentRound !== 'Unknown' ? c.mostRecentRound : null,
-      investors: [],
+      // Tier 3 may not assert who invested, for the same reason it may
+      // not assert an amount.
+      investors: tier <= 2 ? (c.investors ?? []) : [],
       confidence: e.confidence,
     };
   });

@@ -236,6 +236,8 @@ export const api = {
       companyMeta: Record<string, CompanyMeta>;
       opportunities: Record<string, unknown>;
       qualifications: Record<string, unknown>;
+      /** Every stored deal-evidence row per company, keyed by company id. */
+      dealEvidence: Record<string, unknown[]>;
       quarantine: Record<string, { reason: string; at: string }>;
     }>('/api/companies/imported'),
     clear: () => call<{ ok: boolean }>('/api/companies/imported/clear', { method: 'POST', body: '{}' }),

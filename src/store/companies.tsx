@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 import type { Company } from '../types';
 import { api, ApiError, type CompanyMeta } from '../lib/api';
-import type { Opportunity } from '../../shared/opportunity';
+import type { DealEvidence, Opportunity } from '../../shared/opportunity';
 import type { IssuerQualification } from '../../shared/qualification';
 
 /**
@@ -21,6 +21,8 @@ interface CompaniesApi {
   opportunities: Record<string, Opportunity>;
   /** Issuer qualification verdict per company id. */
   qualifications: Record<string, IssuerQualification>;
+  /** All reporting on a company's events, so duplicates can be grouped in the UI. */
+  dealEvidence: Record<string, DealEvidence[]>;
   /** Quarantined (disqualified) companies, with the reason. */
   quarantine: Record<string, { reason: string; at: string }>;
   /** null while the first load is in flight. */
@@ -37,6 +39,7 @@ export function CompaniesProvider({ children }: { children: ReactNode }) {
   const [meta, setMeta] = useState<Record<string, CompanyMeta>>({});
   const [opportunities, setOpportunities] = useState<Record<string, Opportunity>>({});
   const [qualifications, setQualifications] = useState<Record<string, IssuerQualification>>({});
+  const [dealEvidence, setDealEvidence] = useState<Record<string, DealEvidence[]>>({});
   const [quarantine, setQuarantine] = useState<Record<string, { reason: string; at: string }>>({});
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -51,6 +54,7 @@ export function CompaniesProvider({ children }: { children: ReactNode }) {
       setMeta(data.companyMeta ?? {});
       setOpportunities((data.opportunities ?? {}) as Record<string, Opportunity>);
       setQualifications((data.qualifications ?? {}) as Record<string, IssuerQualification>);
+      setDealEvidence((data.dealEvidence ?? {}) as Record<string, DealEvidence[]>);
       setQuarantine(data.quarantine ?? {});
       setLoadError(null);
     } catch (e) {
@@ -74,7 +78,7 @@ export function CompaniesProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <Ctx.Provider value={{ companies, importedCount: imported.length, meta, opportunities, qualifications, quarantine, loaded, loadError, refresh }}>
+    <Ctx.Provider value={{ companies, importedCount: imported.length, meta, opportunities, qualifications, dealEvidence, quarantine, loaded, loadError, refresh }}>
       {children}
     </Ctx.Provider>
   );

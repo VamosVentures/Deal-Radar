@@ -1,6 +1,6 @@
 # Live Readiness
 
-Last verified: 2026-07-19 (Phase 10). Status values are assigned only from
+Last verified: 2026-07-29 (Phase 14). Status values are assigned only from
 things actually observed in this environment — a real request that actually
 succeeded, or the absence of one. Nothing here is aspirational.
 
@@ -37,3 +37,48 @@ verification. Everything else is labeled by what's actually missing.
   because no credentials for those services exist in this environment — the
   code paths are real and tested against stubs, but a stub is not a real
   request.
+
+---
+
+## Funding-news (RSS) — Live and verified, 2026-07-29
+
+Marked live on the strength of a real import, not a passing test suite. The
+run that established this fetched 12 public feeds, retrieved **241 articles**,
+extracted **38 funding events**, merged **11 duplicate articles**, and
+imported **15 new companies** — 9 of which are visible in the browser as
+`Recent Financing` opportunities with two or more independent sources.
+
+| Feed | Publisher | Robots | Observed |
+|---|---|---|---|
+| `/category/venture/feed/` | techcrunch.com | allows | 19 items → 5 events |
+| `/category/startups/feed/` | techcrunch.com | allows | 18 items → 5 events |
+| `/category/artificial-intelligence/feed/` | techcrunch.com | allows | 20 items → 4 events |
+| `/category/fintech/feed/` | techcrunch.com | allows | 20 items → 2 events |
+| `/category/climate/feed/` | techcrunch.com | allows | 20 items → 4 events |
+| `/category/space/feed/` | techcrunch.com | allows | 20 items → 1 event |
+| `/category/robotics/feed/` | techcrunch.com | allows | 20 items → 3 events |
+| `/category/enterprise/feed/` | techcrunch.com | allows | 20 items → 1 event |
+| `/category/transportation/feed/` | techcrunch.com | allows | 20 items → 1 event |
+| `/feed/` | techfundingnews.com | allows | 10 items → 5 events |
+| `/feed/` | siliconangle.com | allows | 30 items → 5 events |
+| `/feed` | sifted.eu | allows | 24 items → 2 events |
+
+A ~85% "not a financing event" rate is the expected, healthy figure: most of
+what a startup publication writes is not a funding announcement, and the
+pipeline now says so per article rather than dropping it silently.
+
+**Feeds deliberately excluded, with the reason** (an honest gap beats a
+silently broken source):
+
+| Feed | Reason |
+|---|---|
+| tech.eu | `robots.txt` disallows `/feed` |
+| eu-startups.com | `robots.txt` returns 403 — permission unverifiable |
+| finsmes.com | 403 to automated readers |
+| axios.com | 403 to automated readers |
+| news.crunchbase.com | reachable, but Crunchbase is a `RESTRICTED_SOURCE` for this project and the rule is not bent for its editorial arm |
+| venturebeat.com | reachable and permitted, but produced 0 funding events across a full feed — it does not cover rounds |
+| businesswire.com | the subject page is not a feed |
+
+**No credential is required for any of this.** RSS must not be added to the
+Pliancy access request.

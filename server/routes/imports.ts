@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { wrap } from './helpers';
-import { getOpportunity } from '../db/repos/opportunities';
+import { getOpportunity, listDealEvidence } from '../db/repos/opportunities';
 import { getQualification, listQuarantined } from '../services/issuerQualification';
 import { audit } from '../lib/guard';
 import { companyMetaView, getCompany, markRefreshed, setCompanyMeta } from '../db/repos/companies';
@@ -27,6 +27,7 @@ importsRouter.get('/companies/imported', wrap(async (_req, res) => {
   const companies = importedCompanies();
   const opportunities: Record<string, unknown> = {};
   const qualifications: Record<string, unknown> = {};
+  const dealEvidence: Record<string, unknown[]> = {};
   const quarantine: Record<string, { reason: string; at: string }> = {};
 
   for (const q of listQuarantined()) quarantine[q.id] = { reason: q.reason, at: q.at };
@@ -35,6 +36,11 @@ importsRouter.get('/companies/imported', wrap(async (_req, res) => {
     if (o) opportunities[c.id] = o;
     const qual = getQualification(c.id);
     if (qual) qualifications[c.id] = qual;
+    // Every reporting article, not just the primary one. A round covered
+    // by three outlets is ONE event with three sources, and a reviewer
+    // has to be able to see all three to judge it.
+    const rows = listDealEvidence(c.id);
+    if (rows.length > 0) dealEvidence[c.id] = rows;
   }
 
   res.json({
@@ -42,6 +48,7 @@ importsRouter.get('/companies/imported', wrap(async (_req, res) => {
     companyMeta: companyMetaView(),
     opportunities,
     qualifications,
+    dealEvidence,
     quarantine,
   });
 }));

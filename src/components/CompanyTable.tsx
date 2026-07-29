@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { isLiveDeal, OPPORTUNITY_CLASSES, OPPORTUNITY_CLASS_LABELS, type OpportunityClass } from '../../shared/opportunity';
-import { OpportunityBadges, QualificationExplainer, EvidenceSummary } from './OpportunityBadge';
+import { OpportunityBadges, QualificationExplainer, EvidenceSummary, ReportingSources } from './OpportunityBadge';
 import type { ReactNode } from 'react';
 import type { Company } from '../types';
 import { scoreCompany } from '../lib/scoring';
@@ -532,10 +532,11 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
   onDuplicatesChange?: (updater: (prev: PossibleDuplicateEntry[]) => PossibleDuplicateEntry[]) => void;
 }) {
   const fit = scoreCompany(c);
-  const { meta, opportunities, qualifications, quarantine, refresh } = useCompanies();
+  const { meta, opportunities, qualifications, dealEvidence, quarantine, refresh } = useCompanies();
   const m = meta[c.id];
   const opportunity = opportunities[c.id];
   const qualification = qualifications[c.id];
+  const evidenceRows = dealEvidence[c.id] ?? [];
   const quarantined = quarantine[c.id];
   const [duplicateBusy, setDuplicateBusy] = useState<number | null>(null);
 
@@ -743,6 +744,11 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             <div className="mt-2.5 border-t border-line pt-2.5">
               <QualificationExplainer opportunity={opportunity} qualification={qualification} quarantined={quarantined} />
             </div>
+            {evidenceRows.length > 0 && (
+              <div className="mt-2.5 border-t border-line pt-2.5">
+                <ReportingSources evidence={evidenceRows} />
+              </div>
+            )}
           </div>
 
           <div className="mt-3 border border-line bg-panel px-3.5 py-3">

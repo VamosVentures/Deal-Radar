@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '../lib/store';
 import { runSource } from '../sourcing';
 import { leadEvidenceSchema } from '../sourcing/types';
-import { extractFunding, parseRssItems } from '../sourcing/adapters/rss';
+import { extractFundingEvent, parseFeed } from '../sourcing/fundingEvent';
 import { parseDisplayName } from '../sourcing/adapters/sec';
 import { filingIndexUrl } from '../sourcing/formd';
 import { clearPolitenessCacheForTests } from '../sourcing/politeness';
@@ -266,15 +266,29 @@ describe('parsing helpers', () => {
   });
 
   it('extracts funding facts only from headlines that state them', () => {
-    expect(extractFunding('Acme Robotics Raises $5M Seed Round')).toEqual({ companyName: 'Acme Robotics', amount: 5_000_000, amountText: '$5M (as stated in headline)' });
-    expect(extractFunding('Verde Lands $2.5 Million to fix the grid')?.amount).toBe(2_500_000);
-    expect(extractFunding('The state of venture in 2026')).toBeNull();
-    expect(extractFunding('How Acme raised its team spirit')).toBeNull();
+    const item = (title: string) => ({
+      title, link: 'https://news.example.com/a', publishedAt: '2026-07-20T00:00:00.000Z',
+      description: '', author: null, guid: null, categories: [] as string[], outboundLinks: [] as string[],
+    });
+    const acme = extractFundingEvent(item('Acme Robotics Raises $5M Seed Round'), '2026-07-25');
+    expect(acme.ok).toBe(true);
+    if (acme.ok) {
+      expect(acme.event.companyName).toBe('Acme Robotics');
+      expect(acme.event.amountUsd).toBe(5_000_000);
+      expect(acme.event.roundType).toBe('Seed');
+    }
+    const verde = extractFundingEvent(item('Verde Lands $2.5 Million to fix the grid'), '2026-07-25');
+    expect(verde.ok && verde.event.amountUsd).toBe(2_500_000);
+
+    expect(extractFundingEvent(item('The state of venture in 2026'), '2026-07-25').ok).toBe(false);
+    expect(extractFundingEvent(item('How Acme raised its team spirit'), '2026-07-25').ok).toBe(false);
   });
 
   it('parses RSS items and skips ones without a valid link', () => {
-    const items = parseRssItems('<rss><channel><item><title>T1</title><link>https://a.example.com/x</link></item><item><title>T2</title><link>not-a-url</link></item></channel></rss>');
-    expect(items).toHaveLength(1);
-    expect(items[0].title).toBe('T1');
+    const parsed = parseFeed('<rss><channel><item><title>T1</title><link>https://a.example.com/x</link></item><item><title>T2</title><link>not-a-url</link></item></channel></rss>');
+    expect(parsed.format).toBe('rss');
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0].title).toBe('T1');
+    expect(parsed.rejected.map((r) => r.code)).toContain('item-link-malformed');
   });
 });

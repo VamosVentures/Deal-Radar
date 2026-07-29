@@ -177,3 +177,23 @@ To be explicit, since the point of this document is to keep the ask small:
 - **The Vamos Fit Score** — deterministic, no AI, no credential.
 - **The entire review workflow** — filters, sorting, detail view, bulk status changes, duplicate detection, per-company research refresh, source analytics, stale settings, backup and restore.
 - **Authentication** — implemented and enforced application-wide. Set `ADMIN_PASSWORD` locally to use it.
+
+---
+
+## Phase 14 note: RSS needs nothing from Pliancy
+
+The funding-news pipeline is live and importing real opportunities using only
+public RSS feeds. It requires **no credential, no API key, no account, and no
+access request.** Do not add it to the Pliancy request.
+
+What Phase 14 did *not* change: the credential-gated items above (HubSpot,
+Outlook, the AI provider, Product Hunt) are still blocked on exactly the same
+things they were blocked on before, and the SBIR public-API outage is still a
+service-side outage rather than a credential problem.
+
+The one genuinely useful non-credential action a human could take is manual:
+seven companies are held as leads only because no second source could be found
+and their names are too common to derive a domain from — *Natural*, *Cascade*,
+*Enigma*, *Multiverse*, *Antares*, *Ramp*, *Infinity*. A person who looks up
+any of those websites and enters it turns each into a corroborated
+opportunity. That is a lookup task, not an access request.
