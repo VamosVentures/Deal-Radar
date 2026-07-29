@@ -71,7 +71,21 @@ export const candidateEvidenceSchema = z.object({
   claim: z.string().min(3),
   source: z.string().min(2),
   url: z.string().url(),
+  /** When WE fetched it. Not a publication date — see publishedAt. */
   dateAccessed: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /**
+   * When the SOURCE published or filed it, as YYYY-MM-DD.
+   *
+   * This field exists because its absence silently killed the entire
+   * funding-news pipeline: the RSS adapter knew each article's real
+   * publication date, but normalization wrote it into a free-text
+   * `notes` string ("Published 2026-07-23") and set `dateAccessed` to
+   * the run time. Downstream, opportunity classification could only
+   * read `dateAccessed`, concluded "no evidence carries a publication
+   * date", and demoted every single RSS candidate to a company lead.
+   * 77 candidates, 0 opportunities — entirely from a lost field.
+   */
+  publishedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
   verificationStatus: z.enum(VERIFICATION_STATUSES).default('Not verified'),
   confidence: z.number().min(0).max(1).default(0.5),
   notes: z.string().default(''),

@@ -10,8 +10,14 @@ import type { CandidateEvidence, DiscoverySourceId } from '../../../shared/disco
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-function ev(claim: string, source: string, url: string, confidence: number, notes = ''): CandidateEvidence {
-  return { claim, source, url, dateAccessed: today(), verificationStatus: 'Not verified', confidence, notes };
+function ev(
+  claim: string, source: string, url: string, confidence: number, notes = '',
+  publishedAt: string | null = null,
+): CandidateEvidence {
+  return {
+    claim, source, url, dateAccessed: today(), publishedAt,
+    verificationStatus: 'Not verified', confidence, notes,
+  };
 }
 
 export const FIXTURE_CANDIDATES: Record<string, RawCandidate[]> = {
@@ -41,7 +47,7 @@ export const FIXTURE_CANDIDATES: Record<string, RawCandidate[]> = {
       subcategory: 'Personalized care', stage: 'Seed', hqCity: 'San Antonio', hqState: 'TX',
       founderNames: ['L. Fuentes', 'M. Ochoa'], publicFunding: '$2.1M (fixture announcement)',
       mostRecentRound: 'Seed', fundingDate: '2026-06-12',
-      evidence: [ev('Fixture funding announcement', 'Fixture: funding news', 'https://example.com/fix/news/anda', 0.6, 'Test fixture')],
+      evidence: [ev('Fixture funding announcement', 'Fixture: funding news', 'https://example.com/fix/news/anda', 0.6, 'Test fixture', '2026-06-12')],
       confidence: 0.6,
     },
   ],

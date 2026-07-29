@@ -20,6 +20,15 @@ export function normalizeLead(lead: LeadEvidence): LeadEvidence {
   };
 }
 
+/** `2026-07-23T15:00:00.000Z` or `2026-07-23` → `2026-07-23`; anything else → null. */
+export function toIsoDate(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const direct = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (direct) return direct[1];
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
 /** Evidence normalization: one LeadEvidence → one citable evidence row. */
 export function leadToEvidence(lead: LeadEvidence): CandidateEvidence {
   return {
@@ -27,6 +36,9 @@ export function leadToEvidence(lead: LeadEvidence): CandidateEvidence {
     source: lead.sourceName,
     url: lead.sourceUrl,
     dateAccessed: lead.discoveredAt.slice(0, 10),
+    // Structured, not prose. An ISO timestamp is trimmed to a date; a
+    // value we cannot parse stays null rather than being guessed.
+    publishedAt: toIsoDate(lead.publishedAt),
     verificationStatus: 'Not verified',
     confidence: lead.confidence,
     notes: [
@@ -41,6 +53,14 @@ export function leadToEvidence(lead: LeadEvidence): CandidateEvidence {
  * the existing pipeline so downstream validation/dedup/import are
  * unchanged).
  */
+/**
+ * Evidence as an adapter may hand it over: `publishedAt` is optional
+ * here because most sources genuinely do not date their records, and
+ * Zod fills the null. Every other field stays required — an adapter
+ * that omits a URL or a claim is a bug, not a missing fact.
+ */
+export type RawEvidence = Omit<CandidateEvidence, 'publishedAt'> & { publishedAt?: string | null };
+
 export interface RawCandidate {
   companyName: string;
   externalId?: string;
@@ -58,7 +78,7 @@ export interface RawCandidate {
   mostRecentRound?: string;
   fundingDate?: string;
   tractionSignals?: string[];
-  evidence: CandidateEvidence[];
+  evidence: RawEvidence[];
   confidence: number;
 }
 

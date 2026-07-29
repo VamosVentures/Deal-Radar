@@ -49,7 +49,11 @@ export function opportunityTypeForSource(sourceId: string): OpportunityType {
  */
 export interface DealEvidenceSource {
   sourceId: string;
-  evidence: { claim: string; source: string; url: string; dateAccessed: string; confidence: number }[];
+  evidence: {
+    claim: string; source: string; url: string; dateAccessed: string; confidence: number;
+    /** The source's own publication date, when it gave one. */
+    publishedAt?: string | null;
+  }[];
   publicFunding?: string;
   mostRecentRound?: string;
   fundingDate?: string;
@@ -63,12 +67,14 @@ export function candidateToDealEvidence(c: DealEvidenceSource): DealEvidence[] {
   const tier = tierOf(c.sourceId);
 
   return c.evidence.map((e) => {
-    // The source's own publication date if it gave one. `dateAccessed` is
-    // when WE fetched it and must never be used as a publication date —
-    // doing so made every candidate look brand new regardless of age.
-    const published = /^\d{4}-\d{2}-\d{2}$/.test(e.dateAccessed) && e.dateAccessed !== retrievedAt
-      ? e.dateAccessed
-      : null;
+    // Prefer the source's OWN publication date. Falling back to
+    // `dateAccessed` was the old behaviour and it is wrong in both
+    // directions: it is the run time, so it either invents currency for
+    // stale evidence or — because it equals retrievedAt — evaluates to
+    // null and destroys currency for fresh evidence. The latter is what
+    // silently killed every funding-news candidate.
+    const published = e.publishedAt
+      ?? (/^\d{4}-\d{2}-\d{2}$/.test(e.dateAccessed) && e.dateAccessed !== retrievedAt ? e.dateAccessed : null);
 
     const amountText = c.publicFunding && c.publicFunding !== 'Unknown' ? c.publicFunding : null;
     const amountUsd = amountText ? parseAmount(amountText) : null;

@@ -139,7 +139,7 @@ describe('importCandidates', () => {
   it('rejects a candidate whose text carries no sector signal, with a reason', () => {
     seed(candidate({ companyName: 'Acme Holdings', pitch: 'Unknown', subcategory: 'Unknown', evidence: [{
       claim: 'A filing exists.', source: 'SEC', url: 'https://www.sec.gov/x',
-      dateAccessed: '2026-07-01', verificationStatus: 'Not verified', confidence: 0.4, notes: '',
+      dateAccessed: '2026-07-01', publishedAt: null, verificationStatus: 'Not verified', confidence: 0.4, notes: '',
     }] }));
     const out = importCandidates({ candidateIds: ['cand-1'], actor: 'test', duplicateAction: 'skip' });
 
