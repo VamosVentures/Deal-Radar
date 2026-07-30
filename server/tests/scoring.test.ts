@@ -133,3 +133,91 @@ describe('Vamos Fit scoring invariants', () => {
     expect(missionOf(unverified)).toBe(0);
   });
 });
+
+// ── Normalization over assessable components ──────────────────────
+
+describe('normalized scoring (v4)', () => {
+  /** A bare Form D record: real filing, nothing else recorded. */
+  const bare: Company = {
+    id: 'bare-co',
+    name: 'BARE FILER, INC.',
+    oneLiner: 'Unknown — not stated by the source',
+    vertical: 'health',
+    subcategory: 'Unclassified — requires manual review',
+    stage: 'Unknown',
+    city: 'Unknown',
+    state: '??',
+    foundedYear: 0,
+    teamSize: 0,
+    traction: { level: 0, note: 'Unknown — not yet researched' },
+    founders: [{ name: 'Unknown founder', role: 'Unknown', background: 'Unknown' }],
+    evidence: [
+      { claim: 'Form D', source: 'SEC', url: 'https://www.sec.gov/x', date: '2026-07-01', type: 'Filing' },
+    ],
+    flags: [],
+  };
+
+  it('is arithmetically identical to the absolute model when everything is assessable', () => {
+    // Stage, state, classification, traction rating, verified self-ID,
+    // dated evidence AND funding — every component can be judged, so
+    // normalizing must change nothing at all.
+    const fit = scoreCompany({ ...base, raising: '$4M seed', lastFundingDate: '2026-06-15' });
+    expect(fit.components.every((x) => x.assessable)).toBe(true);
+    expect(fit.assessablePoints).toBe(100);
+    expect(fit.completeness).toBe(1);
+    expect(fit.score).toBe(Math.max(1, Math.round(fit.totalPoints) / 10));
+    expect(fit.provisional).toBe(false);
+  });
+
+  it('excludes unmeasured components from the score instead of scoring them zero', () => {
+    const fit = scoreCompany(bare);
+    const unassessed = fit.components.filter((x) => !x.assessable).map((x) => x.key);
+
+    // These are gaps in our data, not findings about the company.
+    expect(unassessed).toEqual(expect.arrayContaining(['thesis', 'stage', 'mission', 'traction', 'founder', 'geo', 'funding']));
+    // Excluded from the denominator, so completeness reports the truth.
+    expect(fit.assessablePoints).toBeLessThan(100);
+    expect(fit.completeness).toBeCloseTo(fit.assessablePoints / 100, 5);
+    // And from the numerator — the score never counts an unknown as points.
+    const earned = fit.components.filter((x) => x.assessable).reduce((s, x) => s + x.points, 0);
+    expect(fit.score).toBeCloseTo(Math.max(1, Math.round((earned / fit.assessablePoints) * 100) / 10), 5);
+  });
+
+  it('marks a score provisional when nothing about the COMPANY could be judged', () => {
+    // The guard against the failure normalizing introduces: accelerator
+    // validation, evidence quality, and evidence recency all measure our
+    // own sourcing and are always assessable, so a bare filing would
+    // otherwise produce a confident number containing no statement about
+    // the company at all.
+    const fit = scoreCompany(bare);
+    expect(fit.provisional).toBe(true);
+    expect(fit.provisionalReason).toMatch(/only the quality of our own sourcing/i);
+    expect(fit.components.filter((x) => x.assessable).every((x) => x.about === 'our-evidence')).toBe(true);
+  });
+
+  it('stops being provisional as soon as one company-descriptive fact is recorded', () => {
+    // Recording a location is enough to make the score a statement about
+    // the company rather than about our sourcing.
+    const fit = scoreCompany({ ...bare, state: 'TX' });
+    expect(fit.provisional).toBe(false);
+    expect(fit.components.find((x) => x.key === 'geo')!.assessable).toBe(true);
+  });
+
+  it('never inflates: adding an unmeasured component cannot raise the score', () => {
+    const withoutStage = scoreCompany({ ...bare, state: 'TX' });
+    // Recording a stage adds an assessable component worth 15, scoring 15
+    // for Seed — the best possible. The score may rise, but the point is
+    // that leaving it UNRECORDED never quietly helped: an unknown is
+    // excluded, so it can neither help nor hurt.
+    const unknownStage = scoreCompany({ ...bare, state: 'TX', stage: 'Unknown' });
+    expect(unknownStage.score).toBe(withoutStage.score);
+    expect(unknownStage.assessablePoints).toBe(withoutStage.assessablePoints);
+  });
+
+  it('reports completeness and the gap in the explanation', () => {
+    const fit = scoreCompany(bare);
+    expect(fit.explanation).toContain('assessable points');
+    expect(fit.explanation).toMatch(/completeness/i);
+    expect(fit.explanation).toMatch(/never findings against the company/i);
+  });
+});

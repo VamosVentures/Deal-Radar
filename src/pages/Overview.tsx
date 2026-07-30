@@ -33,7 +33,11 @@ export function Overview() {
   const discoveredThisWeek = Object.values(meta).filter(
     (m) => m.discoveredAt && Date.now() - new Date(m.discoveredAt).getTime() <= 7 * DAY,
   ).length;
-  const highFit = scored.filter((s) => s.fit.score >= HIGH_FIT_THRESHOLD).length;
+  // Provisional scores are excluded: they are computed only from our own
+  // sourcing quality, so counting one as "high fit" would assert something
+  // about a company we have not assessed.
+  const highFit = scored.filter((s) => !s.fit.provisional && s.fit.score >= HIGH_FIT_THRESHOLD).length;
+  const provisionalCount = scored.filter((s) => s.fit.provisional && !quarantine[s.c.id]).length;
   // Disqualified records are not waiting on a reviewer — a publicly traded
   // company or a project SPV has already been decided. Counting them here
   // overstated the queue by every quarantined record.
@@ -88,7 +92,8 @@ export function Overview() {
         <PriorityStat
           label="High-fit companies"
           value={highFit}
-          sub={`${highFit === 1 ? '1 company' : `${highFit} companies`} scored ${HIGH_FIT_THRESHOLD.toFixed(1)} or higher`}
+          sub={`${highFit === 1 ? '1 company' : `${highFit} companies`} scored ${HIGH_FIT_THRESHOLD.toFixed(1)} or higher`
+            + (provisionalCount > 0 ? ` · ${provisionalCount} not yet scorable (no stage, location, or classification on record)` : '')}
           tone="verde"
         />
         <PriorityStat

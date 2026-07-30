@@ -160,6 +160,7 @@ Backups are also creatable from the UI: Settings → *Database backups*.
 | **GitHub API** | Works unauthenticated (60 req/hr) |
 | **SBIR / grants** | Key-free public API. Was rate-limited during earlier runs; not a credential problem. |
 | **Manual refresh, sourcing history, backups, status changes** | All working and persisted |
+| **CSV export** | Companies → **Export CSV**. Exports the rows exactly as filtered and sorted, with each score's completeness and provisional flag, the qualification verdict, any disqualification reason, and the evidence URL. Built in the browser — nothing is uploaded. |
 
 ### Awaiting credentials — shown honestly in the UI, never faked
 
@@ -180,12 +181,19 @@ real health check succeeding first.
 - **Space Tech is 2/5.** Two live deals. (It read 3/5 before qualification;
   Star Catcher rests on a single investor announcement and is now correctly a
   company lead.)
-- **No CSV export.** CSV *import* exists; export was never built.
+- **92 of 174 fit scores are provisional.** The score is normalized over the
+  parts of the model that could actually be judged, and for these records
+  *nothing company-descriptive* could be — no stage, location, or
+  classification on file. Their number reflects only how well we sourced
+  them, so it is labelled `PROVISIONAL`, ranked below every assessed
+  company, and excluded from the high-fit count. Recording a stage, a
+  location, or a classification turns one into a real fit score. The
+  remaining **82 are genuinely scored**, spanning 2.5–7.7.
+- **Nothing scores 8.0+.** Even assessed records top out at 7.7, because
+  mission alignment needs verified founder self-ID and traction needs an
+  analyst rating — neither of which a Form D or a funding article carries.
 - **No free-text notes field.** Workflow state is captured by review status
   (Research Needed / Monitor / Pass / Approved), not prose.
-- **Highest Vamos Fit score is 3.7/10.** Honest: most records are SEC filings
-  with no founder identity, no verified mission alignment, and no traction
-  data on file. The score never infers those.
 - **Single shared admin password**, not per-user accounts.
 
 ---
@@ -213,6 +221,14 @@ fill a sector. Expand **Future of Work** to show an honest 0/5.
 classification, primary source, tier, or *Live opportunities only*. Note **Show
 disqualified (35)** — publicly traded companies, funds, and SPVs are excluded
 by default and their evidence is retained, not deleted.
+
+**2:40 — Scores that can rank.** Tick **Scorable only (hide provisional)** —
+174 drops to 82. Explain the split: the score is computed over the parts of
+the model that could actually be judged, and for 92 records nothing
+company-descriptive was on file, so their number only reflects our own
+sourcing. Those are marked `prov.`, always rank below assessed companies, and
+never count as high-fit. Then **Export CSV** — the file carries every score's
+completeness and provisional flag, so the caveat survives the spreadsheet.
 
 **3:00 — Opportunity detail and evidence.** Expand **Fish Audio**. Walk down:
 primary evidence with publisher and date, a clickable TechCrunch link, *why

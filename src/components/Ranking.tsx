@@ -47,7 +47,13 @@ export function Ranking() {
         ].join(' ').toLowerCase();
         return hay.includes(q.trim().toLowerCase());
       })
-      .sort((a, b) => b.fit.score - a.fit.score); // strongest first, always
+      // Strongest first — but an assessed company always outranks a
+      // provisional one, whatever the raw numbers say. A provisional score
+      // is derived only from our own sourcing quality, so letting it top
+      // the list would put "we sourced this well" above "this fits".
+      .sort((a, b) =>
+        Number(a.fit.provisional) - Number(b.fit.provisional)
+        || b.fit.score - a.fit.score);
   }, [companies, meta, vertical, stage, state, q, quarantine, showDisqualified]);
 
   const limited =

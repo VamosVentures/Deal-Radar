@@ -117,12 +117,56 @@ export interface ScoreComponent {
   points: number;
   max: number;
   rationale: string;
+  /**
+   * False when the underlying data is ABSENT, so this component could not
+   * be judged at all — as opposed to being judged and scoring badly.
+   *
+   * The distinction is the whole point. A company with no stage on record
+   * is not a worse fit than one recorded as Series A; we simply do not
+   * know. Scoring the unknown as a low value and then dividing by the full
+   * 100 made every sparse record look mediocre, which is why 251 of 467
+   * scores landed in a single half-point band and the number could not
+   * rank anything.
+   */
+  assessable: boolean;
+  /**
+   * Whether this component describes the COMPANY or describes OUR OWN
+   * evidence about it.
+   *
+   * Accelerator validation, evidence quality, and evidence recency are all
+   * measured from the evidence set we hold, so they are always assessable
+   * — which means a record with nothing else on file still produces a
+   * confident-looking number derived entirely from how well WE sourced it.
+   * A score with no company-descriptive component behind it is not a fit
+   * score, and is marked provisional instead.
+   */
+  about: 'company' | 'our-evidence';
 }
 
 export interface FitScore {
-  /** 1.0–10.0 Vamos Fit Score */
+  /**
+   * 1.0–10.0 Vamos Fit Score, computed over the components that could
+   * actually be judged. Read it together with `completeness`.
+   */
   score: number;
-  totalPoints: number; // out of 100
+  /** Absolute points earned, out of the full 100-point model. */
+  totalPoints: number;
+  /** Points available from assessable components only. */
+  assessablePoints: number;
+  /**
+   * 0–1: the share of the 100-point model that could be judged at all.
+   * A high score at low completeness is a confident answer about a small
+   * amount of evidence, and must always be displayed alongside the score.
+   */
+  completeness: number;
+  /**
+   * True when NO company-descriptive component could be judged, so the
+   * number reflects only the quality of our own sourcing. Such records
+   * must not outrank genuinely-assessed companies.
+   */
+  provisional: boolean;
+  /** Why the score is provisional, for display. Null when it is not. */
+  provisionalReason: string | null;
   components: ScoreComponent[];
   exceptions: { flag: PolicyFlag; message: string }[];
   /** Scoring model version — stored with every snapshot. */

@@ -13,6 +13,7 @@ import {
   matchRecords, saveCompany,
 } from '../db/repos/companies';
 import { latestScore, listReviewDecisions } from '../db/repos/operations';
+import { SCORING_VERSION } from '../../src/lib/scoring';
 import {
   isHighConfidenceFuzzy, matchCompany, normalizeCompanyKey, normalizeDomainKey,
 } from '../sourcing/identity';
@@ -264,7 +265,10 @@ describe('conflicting source data and provenance', () => {
     expect(snap!.score).toBeLessThanOrEqual(10);
     expect(snap!.components.length).toBeGreaterThan(3);
     expect(snap!.components.reduce((s, c) => s + c.max, 0)).toBe(100); // weights stored
-    expect(snap!.version).toMatch(/^v3/); // scoring version stored
+    // Assert a version was stored, matching the model that produced it —
+    // not a hardcoded major, which broke on every model revision and told
+    // us nothing about whether versioning works.
+    expect(snap!.version).toBe(SCORING_VERSION);
     expect(snap!.evidenceConfidence).toBeGreaterThanOrEqual(0);
     expect(snap!.explanation).toContain('Vamos Fit Score'); // explanation stored
     expect(snap!.supportingEvidence.length).toBeGreaterThanOrEqual(1); // evidence URLs stored

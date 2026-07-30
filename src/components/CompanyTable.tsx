@@ -4,6 +4,7 @@ import { OpportunityBadges, QualificationExplainer, EvidenceSummary, ReportingSo
 import type { ReactNode } from 'react';
 import type { Company } from '../types';
 import { scoreCompany } from '../lib/scoring';
+import { downloadCsv } from '../lib/csvDownload';
 import { verticalById, VERTICALS } from '../data/taxonomy';
 import { ExceptionBadge, FounderLine, IdentityChips, ProvenanceTag, ScoreGauge, type ProvenanceKind } from './ui';
 import { HubSpotModal } from './HubSpotModal';
@@ -40,6 +41,9 @@ function nextActionTag(
   if (fit.exceptions.length > 0) return { label: 'Partner review', cls: 'border-alerta/30 bg-alerta-soft text-alerta' };
   if (m?.stale) return { label: 'Refresh — stale', cls: 'border-alerta/30 bg-alerta-soft text-alerta' };
   if (!m?.reviewStatus || m.reviewStatus === 'New' || m.reviewStatus === 'Awaiting Review') return { label: 'First review', cls: 'border-marigold/30 bg-marigold-soft text-marigold' };
+  // A provisional score says nothing about the company, so it can never
+  // earn "Prioritize" or "Track". What it needs is data.
+  if (fit.provisional) return { label: 'Needs data to score', cls: 'border-line bg-paper text-slate-mid' };
   if (fit.score >= 8) return { label: 'Prioritize', cls: 'border-verde/30 bg-verde-soft text-verde' };
   if (fit.score >= 6.5) return { label: 'Track', cls: 'border-line bg-paper text-ink' };
   return { label: 'Monitor watchlist', cls: 'border-line bg-paper text-slate-mid' };
@@ -85,6 +89,7 @@ export function CompanyTable({
   const [verifiedRoundOnly, setVerifiedRoundOnly] = useState(false);
   const [missingCorroboration, setMissingCorroboration] = useState(false);
   const [humanReviewOnly, setHumanReviewOnly] = useState(false);
+  const [assessedOnly, setAssessedOnly] = useState(false);
   const [publicWarnOnly, setPublicWarnOnly] = useState(false);
   const [fundWarnOnly, setFundWarnOnly] = useState(false);
   const [includeQuarantined, setIncludeQuarantined] = useState(false);
@@ -130,6 +135,7 @@ export function CompanyTable({
         if (possibleDuplicateOnly && !duplicateCompanyIds.has(c.id)) return false;
         if (missingInfoOnly && !hasMissingInfo(c)) return false;
         if (minEvidenceConfidence > 0 && fit.evidenceConfidence < minEvidenceConfidence) return false;
+        if (assessedOnly && fit.provisional) return false;
         if (notReviewedDays !== '') {
           const lastTouch = meta[c.id]?.lastRefreshed ?? meta[c.id]?.discoveredAt;
           const age = daysSince(lastTouch);
@@ -172,16 +178,34 @@ export function CompanyTable({
     const discoveryDate = (c: Company) => new Date(meta[c.id]?.discoveredAt ?? 0).getTime() || 0;
     if (sortMode === 'evidence-recency') filtered.sort((a, b) => evidenceRecency(b.c) - evidenceRecency(a.c));
     else if (sortMode === 'discovery-date') filtered.sort((a, b) => discoveryDate(b.c) - discoveryDate(a.c));
-    else filtered.sort((a, b) => b.fit.score - a.fit.score); // strongest opportunities first
+    // Strongest opportunities first, with assessed companies always ahead
+    // of provisional ones — a provisional score measures our sourcing, not
+    // the company, so it must not lead the queue.
+    else filtered.sort((a, b) =>
+      Number(a.fit.provisional) - Number(b.fit.provisional)
+      || b.fit.score - a.fit.score);
     return filtered;
   }, [companies, vertical, stage, state, q, sortMode, possibleDuplicateOnly, missingInfoOnly,
       minEvidenceConfidence, notReviewedDays, duplicateCompanyIds, meta,
       opportunities, qualifications, quarantine, oppClass, primarySource, tierFilter,
       liveOnly, leadsOnly, verifiedAmountOnly, verifiedRoundOnly, missingCorroboration,
-      humanReviewOnly, publicWarnOnly, fundWarnOnly, includeQuarantined, evidenceSince]);
+      humanReviewOnly, publicWarnOnly, fundWarnOnly, includeQuarantined, evidenceSince, assessedOnly]);
 
   const select = 'rounded-[2px] border border-line bg-panel px-2 py-1.5 text-xs transition-colors focus:border-marigold';
   const allVisibleSelected = rows.length > 0 && rows.every(({ c }) => selected.has(c.id));
+
+  // Exports the rows as filtered and sorted, so the file always matches
+  // what the reviewer is looking at.
+  const exportCsv = () => {
+    downloadCsv(rows.map(({ c, fit }) => ({
+      company: c,
+      fit,
+      opportunity: opportunities[c.id],
+      qualification: qualifications[c.id],
+      quarantine: quarantine[c.id],
+      reviewStatus: meta[c.id]?.reviewStatus,
+    })));
+  };
 
   const toggleSelectAll = () => {
     setSelected(allVisibleSelected ? new Set() : new Set(rows.map(({ c }) => c.id)));
@@ -241,6 +265,17 @@ export function CompanyTable({
             <option value="discovery-date">Sort: Discovery date</option>
           </select>
           <span className="ml-auto font-mono text-[11px] tabular-nums text-slate-mid">{rows.length} compan{rows.length === 1 ? 'y' : 'ies'}</span>
+          <button
+            type="button"
+            className={btnGhost}
+            disabled={rows.length === 0}
+            onClick={exportCsv}
+            title={rows.length === 0
+              ? 'Nothing to export — no companies match the current filters.'
+              : `Download these ${rows.length} row(s) as CSV, exactly as filtered and sorted. Includes the fit score with its completeness and provisional flag, the qualification verdict, any disqualification reason, and the evidence URL.`}
+          >
+            Export CSV
+          </button>
         </div>
 
         <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line pt-2.5 text-xs text-slate-mid">
@@ -324,6 +359,13 @@ export function CompanyTable({
             <label className="flex items-center gap-1.5">
               <input type="checkbox" checked={humanReviewOnly} onChange={(e) => setHumanReviewOnly(e.target.checked)} />
               Human review required
+            </label>
+            <label
+              className="flex items-center gap-1.5"
+              title="Hide records where no company-descriptive component could be judged, so the fit score reflects only our own sourcing quality. Those scores are provisional and cannot be compared with assessed ones."
+            >
+              <input type="checkbox" checked={assessedOnly} onChange={(e) => setAssessedOnly(e.target.checked)} />
+              Scorable only (hide provisional)
             </label>
             <label className="flex items-center gap-1.5" title="Issuer has an exchange ticker or files periodic reports.">
               <input type="checkbox" checked={publicWarnOnly} onChange={(e) => setPublicWarnOnly(e.target.checked)} />
@@ -421,6 +463,21 @@ export function CompanyTable({
                       <div className="mt-1 font-mono text-[9px] tabular-nums text-slate-mid" title="Evidence confidence — how well-sourced this record is">
                         {Math.round(fit.evidenceConfidence * 100)}% ev.
                       </div>
+                      {/*
+                        Marked on the ROW, not only in the triage column.
+                        Every company here is "Awaiting review", so the
+                        triage label always resolves to "First review" and
+                        would hide this entirely — leaving a provisional
+                        6.7 looking exactly like an assessed 6.7.
+                      */}
+                      {fit.provisional && (
+                        <div
+                          className="mt-0.5 font-mono text-[9px] uppercase text-marigold"
+                          title={fit.provisionalReason ?? undefined}
+                        >
+                          prov.
+                        </div>
+                      )}
                     </td>
                     <td className="cursor-pointer px-3 py-2.5" onClick={() => setOpenId(open ? null : c.id)}>
                       <div className="font-semibold text-ink">{c.name}</div>
@@ -707,10 +764,29 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             <div className="mt-0.5 flex items-baseline gap-2">
               <span className="font-display text-3xl font-bold leading-none text-ink">{fit.score.toFixed(1)}</span>
               <span className="font-mono text-xs text-slate-mid">/10</span>
+              {fit.provisional && (
+                <span className="ml-auto rounded-[2px] bg-marigold-soft px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase text-marigold">
+                  Provisional
+                </span>
+              )}
             </div>
+            {fit.provisional && (
+              <p className="mt-1.5 text-[10px] leading-relaxed text-marigold">
+                {fit.provisionalReason}
+              </p>
+            )}
             <div className="mt-2 space-y-1 border-t border-line pt-2 font-mono text-[10px] text-slate-mid">
               <div className="flex items-center justify-between gap-2">
                 <span>Vamos Fit Score:</span><span className="text-ink">{fit.score.toFixed(1)}/10</span>
+              </div>
+              <div
+                className="flex items-center justify-between gap-2"
+                title={`The score is computed over the ${fit.assessablePoints} points of the 100-point model that could actually be judged from what is on record. Unrecorded components are excluded rather than counted as zero, so a gap in our data never reads as a mark against the company.`}
+              >
+                <span>Model assessable</span>
+                <span className={fit.completeness < 0.3 ? 'text-marigold' : 'text-ink'}>
+                  {Math.round(fit.completeness * 100)}% ({fit.assessablePoints}/100)
+                </span>
               </div>
               <div className="flex items-center justify-between gap-2" title="How well-sourced this record is (count, primary sources, diversity, freshness). Separate from thesis fit.">
                 <span>Evidence confidence</span><span className="text-ink">{Math.round(fit.evidenceConfidence * 100)}%</span>
@@ -844,16 +920,36 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             </div>
           </MemoSection>
 
-          <MemoSection n="02" id={`${c.id}-thesis-fit`} title={`Thesis fit — ${fit.totalPoints}/100 pts → ${fit.score.toFixed(1)}/10`}>
+          <MemoSection
+            n="02"
+            id={`${c.id}-thesis-fit`}
+            title={`Thesis fit — ${fit.score.toFixed(1)}/10 from ${fit.assessablePoints} assessable pts (${Math.round(fit.completeness * 100)}% of the model)`}
+          >
+            <p className="mb-2.5 text-xs text-slate-mid">
+              Scored over the components that could be judged from what is on record. Components marked{' '}
+              <span className="font-mono text-[10px] uppercase text-marigold">not assessed</span> are excluded from the
+              score entirely rather than counted as zero — they are gaps in our data, not findings against the company.
+            </p>
             <ul className="space-y-2.5">
               {fit.components.map((comp) => (
-                <li key={comp.key}>
+                <li key={comp.key} className={comp.assessable ? '' : 'opacity-70'}>
                   <div className="flex items-baseline justify-between gap-2 text-sm">
-                    <span className="font-medium text-ink">{comp.label}</span>
-                    <span className="font-mono text-xs font-semibold tabular-nums">{comp.points}/{comp.max}</span>
+                    <span className="font-medium text-ink">
+                      {comp.label}
+                      {!comp.assessable && (
+                        <span className="ml-1.5 rounded-[2px] border border-marigold/40 px-1 font-mono text-[9px] uppercase text-marigold">
+                          not assessed
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono text-xs font-semibold tabular-nums">
+                      {comp.assessable ? `${comp.points}/${comp.max}` : `— /${comp.max}`}
+                    </span>
                   </div>
                   <div className="mt-1 h-1 w-full bg-line">
-                    <div className="h-1 bg-verde" style={{ width: `${(comp.points / comp.max) * 100}%` }} />
+                    {comp.assessable && (
+                      <div className="h-1 bg-verde" style={{ width: `${(comp.points / comp.max) * 100}%` }} />
+                    )}
                   </div>
                   <p className="mt-1 text-xs text-slate-mid">{comp.rationale}</p>
                 </li>

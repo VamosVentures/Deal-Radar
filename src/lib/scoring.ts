@@ -17,16 +17,38 @@ import { PREFERRED_STATES, verticalById } from '../data/taxonomy';
  *   Evidence quality .......................  5
  *   Evidence recency .......................  5
  *
- * Separate from the fit score, `evidenceConfidence` (0–1) expresses
- * how well-sourced the record is — a company can fit the thesis
- * perfectly on thin evidence, and the two must never be conflated.
+ * The score is normalized over the components that could actually be
+ * JUDGED, not over all 100 points. Each component reports `assessable`,
+ * which is false when the underlying data is absent.
+ *
+ * This exists because the absolute version could not rank anything. Of
+ * the 100 points, mission alignment (15) needs verified founder self-ID,
+ * traction (10) needs an analyst rating, stage (15) needs a recorded
+ * stage, and most of founder evidence (10) needs background text — none
+ * of which a Form D or a funding article carries. Across the 209 real
+ * records: 0 had a traction rating, 0 had founder background text, and 9
+ * had a known stage. So ~50 points were unreachable for almost every
+ * company, every score compressed into 2.0–3.7, and 251 of 467 stored
+ * scores sat in one half-point band. The number was measuring how much we
+ * knew about a company, not how good a lead it was.
+ *
+ * Normalizing does NOT inflate anything: an unmeasured component is
+ * excluded from both the numerator and the denominator rather than
+ * counted as zero, and `completeness` (the share of the model that was
+ * assessable) is reported alongside the score everywhere it appears. A
+ * high score at low completeness is a confident answer about a small
+ * amount of evidence, and the UI has to say so.
+ *
+ * Separate again from both, `evidenceConfidence` (0–1) expresses how
+ * well-sourced the record is — a company can fit the thesis perfectly on
+ * thin evidence, and the three must never be conflated.
  *
  * Policy exceptions (DeFi/blockchain, hardware-heavy, outside-thesis)
  * are FLAGS surfaced for partner review — they never auto-reject and
  * never silently zero a score.
  */
 
-export const SCORING_VERSION = 'v3.0 (2026-07)';
+export const SCORING_VERSION = 'v4.0 (2026-07, normalized)';
 
 const DAY = 86_400_000;
 
@@ -67,7 +89,9 @@ function thesisFit(c: Company): ScoreComponent {
     points = 20;
     rationale = `Direct match: ${v.name} → ${sub.name}.`;
   }
-  return { key: 'thesis', label: 'Thesis / vertical fit', points, max: 20, rationale };
+  // An unclassified subcategory is a gap in OUR classification, not a
+  // judgement that the company fits the thesis badly.
+  return { key: 'thesis', about: 'company', label: 'Thesis / vertical fit', points, max: 20, rationale, assessable: !!sub };
 }
 
 function stageFit(c: Company): ScoreComponent {
@@ -81,8 +105,8 @@ function stageFit(c: Company): ScoreComponent {
           ? 'Series A is in range but latest stage the firm leads.'
           : c.stage === 'Stealth'
             ? 'Stealth — the company is operating in stealth.'
-            : 'Stage is not on record. Scored low because it is unverified, not because the company is early — confirm the stage during review.';
-  return { key: 'stage', label: 'Stage fit', points, max: 15, rationale };
+            : 'Stage is not on record, so this component is excluded from the score rather than scored low — an unrecorded stage is a gap in our data, not evidence that the company is early. Confirm the stage during review.';
+  return { key: 'stage', about: 'company', label: 'Stage fit', points, max: 15, rationale, assessable: c.stage !== 'Unknown' };
 }
 
 function missionAlignment(c: Company): ScoreComponent {
@@ -100,21 +124,34 @@ function missionAlignment(c: Company): ScoreComponent {
 
   const rationale =
     verified.length === 0
-      ? 'No verified self-identification on record. Scored 0 by policy — never inferred from names, photos, or other proxies. Ask during outreach if the founder is open to sharing.'
+      ? 'No verified self-identification on record. Excluded from the score rather than counted as zero — and never inferred from names, photos, or other proxies. Ask during outreach if the founder is open to sharing.'
       : `Publicly identified founder signal (${verified
           .map((f) => `${f.name}: ${f.identity!.basis.toLowerCase()}, ${f.identity!.source}`)
           .join('; ')}). Indicators: ${parts.join(', ') || 'recorded, none matching focus'}.`;
-  return { key: 'mission', label: 'Mission alignment (verified only)', points, max: 15, rationale };
+  // Absent self-identification is NOT a zero — it is unmeasured, and the
+  // policy is that it may never be inferred. Counting it as 0 out of 15
+  // penalised every company whose founders simply had not been asked,
+  // which is both wrong and the largest single drag on the old score.
+  return {
+    key: 'mission', about: 'company',
+    label: 'Mission alignment (verified only)',
+    points, max: 15, rationale,
+    assessable: verified.length > 0,
+  };
 }
 
 function tractionSignal(c: Company): ScoreComponent {
   const points = Math.round(c.traction.level);
+  // An analyst rating of 0 with an "Unknown"/unresearched note means nobody
+  // has assessed traction yet. Not a company with no traction.
+  const rated = c.traction.level > 0 || !/^unknown|not yet researched/i.test(c.traction.note.trim());
   return {
-    key: 'traction',
+    key: 'traction', about: 'company',
     label: 'Traction signal',
     points: Math.min(10, Math.max(0, points)),
     max: 10,
     rationale: `Analyst rating ${c.traction.level}/10 — ${c.traction.note}`,
+    assessable: rated,
   };
 }
 
@@ -140,12 +177,19 @@ function founderSignal(c: Company): ScoreComponent {
   const relevant = /engineer|research|phd|clinic|director|operator|led |head of|scientist|product|ex-|veteran of|big tech|google|meta|amazon|microsoft|stripe/.test(bg);
   if (relevant) { points += 2; parts.push('relevant technical/industry background recorded'); }
 
+  // A placeholder "Unknown founder" row is not a founder on record. When
+  // every founder is a placeholder with no background text, there is
+  // nothing here to judge.
+  const named = c.founders.filter((f) => !/unknown/i.test(f.name)).length;
+  const anyBackground = c.founders.some((f) => f.background && !/^unknown/i.test(f.background.trim()));
+
   return {
-    key: 'founder',
+    key: 'founder', about: 'company',
     label: 'Founder & team evidence',
     points: Math.min(points, 10),
     max: 10,
     rationale: `${parts.join('; ')}. Based only on recorded backgrounds — unknowns stay unscored, and founder count alone never rejects a company.`,
+    assessable: named > 0 || anyBackground,
   };
 }
 
@@ -153,7 +197,7 @@ function geography(c: Company): ScoreComponent {
   const preferred = PREFERRED_STATES.includes(c.state);
   const unknown = c.state === '??';
   return {
-    key: 'geo',
+    key: 'geo', about: 'company',
     label: 'Geography',
     points: preferred ? 10 : unknown ? 2 : 4,
     max: 10,
@@ -162,6 +206,7 @@ function geography(c: Company): ScoreComponent {
       : unknown
         ? 'Location unknown — minimal credit until recorded.'
         : `${c.state} is outside preferred states — partial credit; US-based deals remain eligible.`,
+    assessable: !unknown,
   };
 }
 
@@ -178,11 +223,12 @@ function fundingEvidence(c: Company): ScoreComponent {
     else { points += 1; parts.push(`funding dated ${c.lastFundingDate} (older than 12 months)`); }
   }
   return {
-    key: 'funding',
+    key: 'funding', about: 'company',
     label: 'Funding evidence',
     points: Math.min(points, 5),
     max: 5,
     rationale: parts.length > 0 ? `${parts.join('; ')}.` : 'No funding information on record — unscored, not guessed.',
+    assessable: hasAmount || (!!date && !Number.isNaN(date)),
   };
 }
 
@@ -196,11 +242,15 @@ function institutionalValidation(c: Company): ScoreComponent {
   if (acceleratorEvidence > 0) { points += 1; parts.push(`${acceleratorEvidence} accelerator evidence item(s)`); }
   if (filings > 0) { points += 1; parts.push(`${filings} public filing(s)`); }
   return {
-    key: 'validation',
+    key: 'validation', about: 'our-evidence',
     label: 'Accelerator / institutional validation',
     points: Math.min(points, 5),
     max: 5,
     rationale: parts.length > 0 ? `${parts.join('; ')}.` : 'No accelerator or institutional validation on record.',
+    // Always assessable: this is measured from OUR evidence set, which we
+    // always hold in full. "No accelerator on record" is a real finding
+    // about what we sourced, not a gap we are guessing around.
+    assessable: true,
   };
 }
 
@@ -208,11 +258,13 @@ function evidenceQuality(c: Company): ScoreComponent {
   const primary = c.evidence.filter((e) => e.type === 'Filing' || e.type === 'Founder statement').length;
   const points = Math.min(5, c.evidence.length + primary);
   return {
-    key: 'evidence',
+    key: 'evidence', about: 'our-evidence',
     label: 'Evidence quality',
     points,
     max: 5,
     rationale: `${c.evidence.length} sourced item(s), ${primary} primary (filings / founder statements). Every recommendation must remain auditable.`,
+    // Our own evidence set is always fully known.
+    assessable: true,
   };
 }
 
@@ -229,7 +281,7 @@ function evidenceRecency(c: Company): ScoreComponent {
     points = age <= 30 * DAY ? 5 : age <= 90 * DAY ? 4 : age <= 180 * DAY ? 3 : age <= 365 * DAY ? 2 : 1;
     detail = `Newest evidence is ${Math.max(0, Math.floor(age / DAY))} day(s) old.`;
   }
-  return { key: 'recency', label: 'Evidence recency', points, max: 5, rationale: detail };
+  return { key: 'recency', about: 'our-evidence', label: 'Evidence recency', points, max: 5, rationale: detail, assessable: !!newest };
 }
 
 /**
@@ -266,19 +318,68 @@ export function scoreCompany(c: Company): FitScore {
     evidenceRecency(c),
   ];
   const totalPoints = components.reduce((s, x) => s + x.points, 0);
-  const score = Math.max(1, Math.round(totalPoints) / 10);
+
+  // Normalize over what could actually be judged.
+  //
+  // When every component is assessable, assessablePoints is 100 and this
+  // is arithmetically identical to the old score — the change is a no-op
+  // for a fully-known company and only affects records with genuine gaps.
+  const assessed = components.filter((x) => x.assessable);
+  const unassessed = components.filter((x) => !x.assessable);
+  const assessablePoints = assessed.reduce((s, x) => s + x.max, 0);
+  const earned = assessed.reduce((s, x) => s + x.points, 0);
+  const completeness = Math.round((assessablePoints / 100) * 100) / 100;
+
+  const score = assessablePoints > 0
+    ? Math.max(1, Math.round((earned / assessablePoints) * 100) / 10)
+    : 1;
+
+  // Accelerator validation, evidence quality, and evidence recency are all
+  // measured from the evidence set WE hold, so they are assessable for
+  // every record. On a bare Form D they are the ONLY assessable
+  // components, and normalizing over just those produced numbers like
+  // "HealthSherpa 7.6/10" out of 15 available points — a confident score
+  // containing no statement about the company at all. 92 of 174 live
+  // records are in exactly that position.
+  //
+  // So a score with no company-descriptive component behind it is marked
+  // provisional. It is still shown, because hiding it would lose the
+  // sourcing signal, but it must never outrank an actually-assessed
+  // company.
+  const assessedAboutCompany = assessed.filter((x) => x.about === 'company');
+  const provisional = assessedAboutCompany.length === 0;
+  const provisionalReason = provisional
+    ? `Provisional: none of the company-descriptive components (thesis fit, stage, mission, traction, founders, geography, funding) could be judged from what is on record. `
+      + `This number reflects only the quality of our own sourcing — accelerator validation, evidence quality, and evidence recency — so it is not a statement about the company and is ranked below assessed companies. `
+      + `Record a stage, location, or classification to make it a real fit score.`
+    : null;
+
   const exceptions = c.flags.map((flag) => ({ flag, message: EXCEPTION_MESSAGES[flag] }));
   const confidence = evidenceConfidence(c);
-  const strongest = [...components].sort((a, b) => b.points / b.max - a.points / a.max)[0];
-  const weakest = [...components].sort((a, b) => a.points / a.max - b.points / b.max)[0];
+
+  // Rank only over components that were actually judged — "weakest:
+  // mission alignment 0/15" was meaningless when the answer was simply
+  // never collected.
+  const ranked = assessed.length > 0 ? assessed : components;
+  const strongest = [...ranked].sort((a, b) => b.points / b.max - a.points / a.max)[0];
+  const weakest = [...ranked].sort((a, b) => a.points / a.max - b.points / b.max)[0];
+
+  const gapNote = unassessed.length > 0
+    ? ` Not assessable on ${unassessed.length} component(s) — ${unassessed.map((x) => x.label.toLowerCase()).join(', ')} — so ${assessablePoints} of the model's 100 points could be judged (${Math.round(completeness * 100)}% completeness). These are gaps in what we have recorded, never findings against the company, and they are excluded from the score rather than counted as zero.`
+    : ' Every component was assessable (100% completeness).';
+
   return {
     score,
     totalPoints,
+    assessablePoints,
+    completeness,
+    provisional,
+    provisionalReason,
     components,
     exceptions,
     version: SCORING_VERSION,
     evidenceConfidence: confidence,
-    explanation: `Vamos Fit Score ${score.toFixed(1)}/10 (${totalPoints}/100 points, model ${SCORING_VERSION}). Strongest component: ${strongest.label} (${strongest.points}/${strongest.max}). Weakest: ${weakest.label} (${weakest.points}/${weakest.max}). Evidence confidence ${Math.round(confidence * 100)}% — a separate measure of how well-sourced the record is, not of thesis fit.`,
+    explanation: `Vamos Fit Score ${score.toFixed(1)}/10 — ${earned} of ${assessablePoints} assessable points (model ${SCORING_VERSION}). Strongest assessed component: ${strongest.label} (${strongest.points}/${strongest.max}). Weakest: ${weakest.label} (${weakest.points}/${weakest.max}).${gapNote}${provisionalReason ? ` ${provisionalReason}` : ''} Evidence confidence ${Math.round(confidence * 100)}% — a separate measure of how well-sourced the record is, not of thesis fit.`,
   };
 }
 
