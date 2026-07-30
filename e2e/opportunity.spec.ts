@@ -100,4 +100,20 @@ test.describe('Source-diversity analytics', () => {
     await page.goto('/sources');
     await expect(page.getByText(/never estimated/i)).toBeVisible();
   });
+
+  test('concentration is reported by source family, not only by source id', async ({ page }) => {
+    await page.goto('/sources');
+    // Family is the level at which concentration means anything: adding
+    // publishers must not be able to make a press-only pipeline look
+    // diversified, and the panel has to show the number that cannot be
+    // gamed that way.
+    await expect(page.getByRole('heading', { name: 'Opportunities by source family' })).toBeVisible();
+    await expect(page.getByText(/Four newspapers are still one family/i)).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'By primary source' })).toBeVisible();
+  });
+
+  test('the investor-primary source is listed honestly on the settings page', async ({ page }) => {
+    await page.goto('/sources');
+    await expect(page.getByText('Investor funding announcements (official newsrooms)').first()).toBeVisible();
+  });
 });

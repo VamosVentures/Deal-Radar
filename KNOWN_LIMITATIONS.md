@@ -71,6 +71,12 @@ actually fetches a URL.
   reachability-only connector of the same name exists under Settings →
   "Refresh connectors" — that one is a connectivity test for the dashboard,
   not part of the sourcing pipeline; don't confuse the two.)
+- **Added in Phase 15B**: **investor-primary funding announcements**
+  (`investor-news`) — 17 VC firms' own public RSS feeds, credential-free, each
+  probed for a permissive robots.txt. Live-verified: a real run read 177 items
+  and imported 18 financing events. A page counts only when it is hosted on
+  the firm's verified domain *and* states the firm took part in the financing;
+  see "Source families" below for what that does and does not establish.
 - **Added in Phase 9**: **arXiv** (public research publications) — real,
   key-free, live-verified against the actual API. A weak, honestly-labeled
   signal: it only creates a candidate when a paper's `<arxiv:affiliation>`
@@ -247,36 +253,108 @@ before validating, so a literal copy of the example file boots cleanly.
 
 ---
 
-## Funding-news (RSS) — what it can and cannot establish
+## Funding evidence (press RSS and investor newsrooms) — what it can and cannot establish
 
-RSS is live and importing real, corroborated opportunities. These are its real
-edges.
+Both feed-driven families are live and importing real opportunities: the press
+family (`funding-news`, Phase 14) and the investor-primary family
+(`investor-news`, Phase 15B). These are their real edges.
 
 ### Future of Work still has no qualified opportunity
 
-Future of Work: **0 of 5**. This is a genuine shortage, not a bug and not a
-placeholder — the pipeline considered 7 candidates and none met the bar. The
-correct fix is another source family, not a lowered bar.
+Future of Work: **0 of 5**, unchanged by the investor-primary family added in
+Phase 15B. This is a genuine shortage, not a bug and not a placeholder. All 17
+registered investor newsrooms produced zero Future-of-Work events: the firms
+whose thesis actually covers workforce, HR and staffing tech either publish no
+feed at all (Emergence Capital, Owl Ventures, GSV, SemperVirens — HTTP 404 at
+every conventional path) or publish essays rather than announcements (Reach
+Capital: 10 items, 0 financing events). The correct fix remains another source
+family or a workforce-focused investor that publishes announcements — not a
+lowered bar.
 
-Space Tech is now **1 of 5**: Venus Aerospace was extracted correctly from a
-real $90M Series B article, and Phase 15A confirmed venusaero.com against the
-article's own link to it, which supplied the second source family it was
-missing. Four slots are still empty and are left empty.
+Space Tech is now **3 of 5** (was 1). Venus Aerospace came from press; Star
+Catcher and Code Metal came from B Capital's own investment announcements. Two
+slots are still empty and are left empty — Seraphim Space, the one dedicated
+space fund with a working feed, publishes news roundups about other people's
+rounds and correctly produced zero investor-primary events.
 
-### Only two source families overall
+### Source families: three now, and what each can carry
 
-23 qualified opportunities: 8 regulatory (SEC), 15 press (RSS). The target is
-three families per sector, and press concentration is now 65% — worse than
-before Phase 15A, because confirming websites promoted press-derived records
-and added no new family. A verified website is web-family corroboration for
-*qualification*, but it is never the primary source of a financing claim, so
-it cannot broaden the shortlist's source mix. The accelerator family is the
-obvious third, and
-Phase 14 tightened rather than loosened it: a YC batch is now a fundraising
-signal only alongside a *verified operating website*, and it is labelled
-**"Recent accelerator signal / Financing amount unknown / Current fundraising
-not confirmed."** A directory listing is participation in a cohort, and a
-cohort is not a raise.
+54 live-deal records: **regulatory 38.9%** (SEC), **investor-primary 33.3%**
+(Phase 15B), **press 27.8%** (RSS). On the 28-opportunity shortlist,
+press-primary fell from 65% to 46%. The per-sector target is three families;
+most sectors now draw on two.
+
+`investor-primary` is a financing announcement published by a firm that
+**states it took part in the financing**, on that firm's own verified domain.
+What it is not:
+
+- **Not a second press family.** A VC republishing a Reuters story is press;
+  the evidence lives at reuters.com. Items linking off-domain are rejected
+  (`investor-page-off-domain`), which is why m12.vc is not registered at all.
+- **Not multiple sources when a syndicate all announce.** Two investors in one
+  round are one side of one transaction and collapse to one family. Only the
+  press family splits per publisher, because two newsrooms each independently
+  decided the story was true.
+- **Not tier 1.** It is first-party but it is marketing copy, not a filing
+  with legal exposure. It sits at tier 2 alongside press and must never
+  outrank a Form D.
+
+The accelerator family remains the obvious fourth, and Phase 14 tightened
+rather than loosened it: a YC batch is a fundraising signal only alongside a
+*verified operating website*, labelled **"Recent accelerator signal /
+Financing amount unknown / Current fundraising not confirmed."** A directory
+listing is participation in a cohort, and a cohort is not a raise.
+
+### Investor announcements rarely disclose an amount
+
+Unlike a press headline, a "why we invested" post usually states no figure and
+often no round. 12 of the 18 imported records carry **no amount at all**, and
+that is recorded as absent rather than estimated from the firm's typical
+cheque size. An investor-primary opportunity therefore proves *that* a
+financing happened and *when*, more often than *how much*.
+
+### No domain is ever derived for an investor-primary record
+
+The press pipeline may derive a candidate domain from a company name and
+confirm it by finding the name on the page. The investor pipeline may not: the
+announcing firm knows which company it funded, so accepting a guess alongside
+that trades certainty for a coin flip. A dry run proposed `bespoke.health` for
+Bespoke Labs (real site: bespokelabs.ai) and `lantern.ai` for Lantern — both
+pages name a real company, neither names *that* one.
+
+Consequence: only 6 of 18 imported records have a confirmed website, each one
+followed from a link the investor itself published. The other 12 are left for
+human lookup and cannot reach `qualified-operating-company` until someone
+supplies one (Settings → website confirmation).
+
+### Website discovery had no parked-domain check until Phase 15B
+
+Worth knowing because it affected the **press** pipeline too, silently, for as
+long as website discovery has existed. Only `verifyWebsite` tested for parked
+and placeholder pages; `discoverOfficialWebsite` tested only that the page had
+200+ characters and mentioned the name — and a for-sale listing for
+`bespoke.com` contains the word "bespoke". All three paths now share
+`server/sourcing/pageSignals.ts`. Any website recorded by an earlier run was
+not subject to this check and may warrant a spot audit.
+
+### Imported records are not automatically qualified
+
+`runInvestorNews` stores companies and evidence and reclassifies them; it does
+**not** run `qualifyIssuer`. This matches what the funding-news pipeline
+already does, and it is why the 18 new records are live deals by
+classification while carrying no qualification verdict. Running `qualify-all`
+would produce verdicts for them — and re-derive verdicts for the existing 191,
+which is why it was deliberately not run in the same pass as an import.
+
+### A qualified opportunity can drop off a full shortlist without being flagged
+
+`selectSectorShortlist` reports `heldBack` only for records blocked by the
+per-source caps. A record that simply ranks below the top five — as Sila
+(sustainability) and General Intuition (AI) now do, having been outranked
+after the family-diversity pass — is absent from both the shortlist and the
+held-back list. Both remain `recent-financing-signal` live deals in the
+database; neither was de-qualified. Worth fixing so a full sector is as
+legible as a short one.
 
 ### A common single-word name blocks *automatic* domain discovery, by design
 

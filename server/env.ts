@@ -34,6 +34,13 @@ const envSchema = z.object({
   SEC_CONTACT_EMAIL: z.string().optional(),
   /** Comma-separated public RSS feed URLs for the funding-news source (overrides defaults). */
   FUNDING_NEWS_FEEDS: z.string().optional(),
+  /**
+   * Comma-separated investor newsroom feed URLs (overrides the registry).
+   * Entries on a domain that is not in server/sourcing/investorRegistry.ts
+   * are dropped: an unregistered domain cannot be attributed to a firm,
+   * so nothing under it could count as investor-primary evidence.
+   */
+  INVESTOR_NEWS_FEEDS: z.string().optional(),
   /** Product Hunt developer token — required for the producthunt source; refuses to run without it. */
   PRODUCTHUNT_TOKEN: z.string().optional(),
 

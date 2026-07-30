@@ -7,6 +7,7 @@ import { githubAdapter } from './adapters/github';
 import { secAdapter } from './adapters/sec';
 import { sbirAdapter } from './adapters/sbir';
 import { rssAdapter } from './adapters/rss';
+import { investorNewsAdapter } from './adapters/investorNews';
 import { ycAdapter } from './adapters/ycombinator';
 import { arxivAdapter } from './adapters/arxiv';
 import { productHuntAdapter } from './adapters/producthunt';
@@ -24,6 +25,7 @@ export const ADAPTERS: Partial<Record<DiscoverySourceId, SourceAdapter>> = {
   sec: secAdapter,
   grants: sbirAdapter,
   'funding-news': rssAdapter,
+  'investor-news': investorNewsAdapter,
   yc: ycAdapter,
   research: arxivAdapter,
   producthunt: productHuntAdapter,
@@ -63,6 +65,7 @@ export function getSourceMeta(): SourceMeta[] {
     meta('sec', 'SEC EDGAR (Form D filings)', 'live', 'Outbound network to efts.sec.gov. Set SEC_CONTACT_EMAIL — the SEC asks automated clients to identify themselves.'),
     meta('grants', 'SBIR/STTR government awards', 'live', 'Nothing — public key-free JSON API at api.www.sbir.gov.'),
     meta('funding-news', 'Public funding announcements (RSS)', 'live', 'Outbound network to public RSS feeds (configurable via FUNDING_NEWS_FEEDS). Only parseable funding headlines become leads.'),
+    meta('investor-news', 'Investor funding announcements (official newsrooms)', 'live', 'Outbound network to the public feeds of the VC firms registered in server/sourcing/investorRegistry.ts (override via INVESTOR_NEWS_FEEDS). No credential. A page only becomes evidence when it is hosted on that firm\'s verified domain AND states that the firm took part in the financing.'),
     meta('yc', 'Y Combinator public directory', 'live', 'Outbound network to the public YC directory endpoint. No login.'),
     meta('websites', 'Company websites', 'unavailable', 'Not a discovery source — used only by the Settings → Refresh connectors website-reachability check. Selecting it here would return zero results.'),
     meta('accelerators', 'Accelerator & fellowship sites', 'planned', 'Per-program adapters where automated access is permitted — no adapter built yet.'),

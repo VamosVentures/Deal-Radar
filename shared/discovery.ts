@@ -5,7 +5,7 @@ import { z } from 'zod';
 // nothing is fabricated to fill a field.
 
 export const DISCOVERY_SOURCES = [
-  'yc', 'accelerators', 'websites', 'funding-news', 'sec', 'github',
+  'yc', 'accelerators', 'websites', 'funding-news', 'investor-news', 'sec', 'github',
   'grants', 'patents', 'research', 'hackathons', 'producthunt',
   'registries', 'upload', 'licensed',
 ] as const;

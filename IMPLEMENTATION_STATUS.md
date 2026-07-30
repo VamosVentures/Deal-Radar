@@ -1780,3 +1780,131 @@ Kalanick record moved from `insufficient-evidence` to `not-a-company-name` and
 recovered its specific explanation. Classification (`company-lead`), quarantine
 status, and every other record are unchanged; a scan confirmed exactly one of
 the 191 stored names matches the detector.
+
+---
+
+# PHASE 15B (continued, 2026-07-29) — A third source family: investor-primary funding announcements
+
+Recorded under the same phase number as the quarantine-reason work above; the
+two shipped in the same session and are otherwise unrelated.
+
+The pipeline had two meaningful source families — regulatory (SEC Form D) and
+press (funding RSS) — and 65% of the 23-opportunity shortlist rested on press.
+Health was 2 of 5, Space Tech 1 of 5, Future of Work 0 of 5. Adding more
+publications would not have fixed any of that: four newspapers are still one
+family, and a sector short of evidence stays short.
+
+## Source approaches evaluated (three, then stop)
+
+1. **Official investor / VC-firm newsrooms** — chosen. Credential-free RSS on
+   firms' own domains, and the announcement is made by a party to the
+   transaction rather than a reporter of it.
+2. **Company-website newsrooms** — rejected. A company's own site confirms
+   identity, which the pipeline already uses it for; a company confirming its
+   own round is not independent evidence of it.
+3. **Government award databases beyond SBIR** — rejected on the terms already
+   settled in `shared/opportunity.ts`: a grant is a commercialization signal,
+   not an equity round, and treating one as financing would be the same
+   category error the codebase already refuses.
+
+Feed discovery was bounded: ~90 candidate feed URLs were probed once for
+HTTP 200, a parseable body, on-domain item links, and a permissive
+robots.txt. 17 firms passed and are registered; the rest are recorded with
+their reasons in `EXCLUDED_INVESTOR_FEEDS`.
+
+## What makes a page investor-primary
+
+Three gates, all of which must pass (`server/sourcing/investorAnnouncement.ts`):
+
+1. **On the firm's own verified domain.** An item linking to reuters.com is
+   press that a VC happened to link to; the evidence lives at reuters.com. A
+   subdomain of a registered domain counts; a host that merely *ends with* a
+   registered name (`notarchventure.com`) does not.
+2. **An actual financing event.** The press pipeline's disqualifiers are
+   reused unchanged — IPOs, fund closes, acquisitions, grants, rumours — plus
+   the shapes only a VC blog has: a new partner, an annual report, a podcast,
+   a portfolio page with no round on it. A firm announcing capital for
+   *itself* is a fund raise, checked against the registry.
+3. **This firm took part.** The page must SAY so, either in first person
+   ("we invested in X", "our investment in X", "ARCH-backed X") or by naming
+   itself inside financing language ("…from Salesforce Ventures and Echo
+   Health Ventures"). A bare mention in an "About us" footer does not count,
+   and neither does another firm's investment republished on this one's site.
+
+Gate 3 is the whole design. It rejected **100 of 177 items** — mostly real
+articles about real rounds, hosted on a VC's server, that the VC was not in.
+
+## What changed
+
+- `server/sourcing/investorRegistry.ts` — 17 verified firms (name, domain,
+  feed, participation aliases, focus) and the exclusion list with reasons.
+- `server/sourcing/investorAnnouncement.ts` — pure extraction: the three
+  gates, participation detection, company-span trimming, 31 reason codes.
+- `server/sourcing/adapters/investorNews.ts` — fetch, per-feed reporting,
+  merge, adapter registration.
+- `server/services/investorNews.ts` — resolve, attach-or-create, persist.
+- `server/sourcing/pageSignals.ts` — **new, and a real bug fix.** Website
+  *discovery* had no parked-domain check at all, only *verification* did. A
+  live dry run consequently proposed `bespoke.com` ("BESPOKE.COM - For Sale")
+  for Bespoke Labs, `fervoenergy.io` ("Coming Soon") for Fervo Energy, and
+  `lantern.com`/`when.io`/`starcatcher.ai` (bare-domain titles) for three
+  more. All three paths now share one detector.
+- `shared/opportunity.ts` — the `investor-primary` family at tier 2, plus
+  `SOURCE_FAMILY_LABELS` / `SOURCE_LABELS` so dashboards stop printing raw ids.
+- `server/services/shortlist.ts` — `byFamily` and `familySharePct`, and a
+  family-level concentration warning that adding publishers cannot game.
+- `src/components/DiversityAnalytics.tsx` — family table first, source table
+  second, both labelled.
+
+Tier 2, not tier 1, on purpose: a firm announcing a round it led is
+first-party, but it is marketing copy, not a filing with legal exposure. It
+must not outrank a Form D. Its value is that it is a *different family*, not a
+stronger tier.
+
+Two investors announcing the same round still count as **one** family
+(`corroborationKey`, `server/services/issuerQualification.ts`) — the mirror of
+the press rule, and for the opposite reason: two newsrooms each decided the
+story was true, whereas a syndicate is one side of one transaction.
+
+## Dry run (real feeds, nothing written)
+
+177 items across 17 feeds → 30 investor-primary events → 18 stored, 17
+network requests. Rejections: `investor-not-participant` 100,
+`not-a-financing-announcement` 22, `company-name-not-extractable` 9,
+`acquisition-without-financing` 9, `public-offering` 5,
+`portfolio-listing-no-event` 2, plus 12 dropped for no sector signal.
+
+The dry run is what caught the parked-domain defect, and it was run again
+after the fix before anything was written.
+
+## Live import
+
+Backup first: `deal-radar-2026-07-30T03-09-11-279Z.db`, validated by opening
+it read-only (`integrity_check` ok, 20 tables, 191 companies, 261 evidence
+rows, 191 qualification records).
+
+191 → **209 companies**; shortlist 23 → **28 opportunities**.
+
+| Sector | Before | After |
+| --- | --- | --- |
+| Health | 2/5 | **5/5** |
+| FinTech | 5/5 | 5/5 |
+| Sustainability | 5/5 | 5/5 |
+| Robotics | 5/5 | 5/5 |
+| General AI | 5/5 | 5/5 |
+| Space Tech | 1/5 | **3/5** |
+| Future of Work | 0/5 | **0/5** |
+
+Press-primary concentration on the shortlist: **65% → 46%**. Across all 54
+live-deal records: regulatory 38.9%, investor-primary 33.3%, press 27.8%.
+
+**Zero classification changes and zero primary-source changes** across all 191
+pre-existing companies, verified by re-classifying every one of them against
+the backup. Infinity's `human-review-required` verdict, the 35 quarantined
+records, and all 191 qualification rows are byte-identical.
+
+## Verification
+
+531 unit tests (44 new), 40 Playwright tests (2 new), typecheck, lint,
+production build, smoke test, `db:integrity`, backup validation, and
+`git diff --check` all clean.

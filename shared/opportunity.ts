@@ -41,6 +41,14 @@ export const SOURCE_TIER_BY_ID: Record<string, SourceTier> = {
   grants: 1,       // SBIR/STTR — a government award database
   yc: 1,           // official accelerator directory (of PARTICIPATION, not of financing)
   'funding-news': 2,
+  /**
+   * An investor's own announcement of a round it took part in. First
+   * party to the transaction — but marketing copy, not a filing with
+   * legal exposure behind it, so it sits alongside the funding press at
+   * tier 2 rather than above a Form D. What makes it valuable is that it
+   * is a DIFFERENT FAMILY, not that it is a stronger tier.
+   */
+  'investor-news': 2,
   producthunt: 2,
   upload: 2,       // human-curated import; a person vouched for it
   github: 3,
@@ -330,6 +338,21 @@ export const SOURCE_FAMILY: Record<string, string> = {
   grants: 'government',
   yc: 'accelerator',
   'funding-news': 'press',
+  /**
+   * A financing announcement published by a firm that took part in the
+   * financing, on that firm's own verified domain.
+   *
+   * Separate from `press` because the two answer different questions: a
+   * publication REPORTS that a round happened, a participating investor
+   * STATES that it happened and that they were in it. Two outlets
+   * rewriting one press release remain one family; an outlet and an
+   * investor are two.
+   *
+   * The corollary is enforced elsewhere and matters just as much: two
+   * different investors announcing the SAME round are still one family.
+   * See corroborationKey in server/services/issuerQualification.ts.
+   */
+  'investor-news': 'investor-primary',
   producthunt: 'launch-platform',
   github: 'code',
   research: 'academic',
@@ -339,6 +362,47 @@ export const SOURCE_FAMILY: Record<string, string> = {
 
 export function familyOf(sourceId: string): string {
   return SOURCE_FAMILY[sourceId] ?? 'other';
+}
+
+/**
+ * Display names. The raw ids are internal handles ("funding-news",
+ * "investor-primary") and reading them off a dashboard invites a viewer
+ * to guess what they mean — which is how "press" and "an investor who
+ * wrote the cheque" end up looking interchangeable.
+ */
+export const SOURCE_FAMILY_LABELS: Record<string, string> = {
+  regulatory: 'Regulatory filing',
+  government: 'Government award',
+  accelerator: 'Accelerator directory',
+  press: 'Funding press',
+  'investor-primary': 'Investor (primary)',
+  'launch-platform': 'Launch platform',
+  code: 'Code repository',
+  academic: 'Academic preprint',
+  manual: 'Human-curated import',
+  web: 'Company website',
+  other: 'Other',
+};
+
+export function familyLabel(family: string): string {
+  return SOURCE_FAMILY_LABELS[family] ?? family;
+}
+
+export const SOURCE_LABELS: Record<string, string> = {
+  sec: 'SEC EDGAR (Form D)',
+  grants: 'SBIR/STTR awards',
+  yc: 'Y Combinator directory',
+  'funding-news': 'Funding press (RSS)',
+  'investor-news': 'Investor announcements',
+  producthunt: 'Product Hunt',
+  github: 'GitHub',
+  research: 'arXiv',
+  upload: 'Uploaded CSV/JSON',
+  websites: 'Company website',
+};
+
+export function sourceLabel(sourceId: string): string {
+  return SOURCE_LABELS[sourceId] ?? sourceId;
 }
 
 /** No single accelerator may dominate a sector's shortlist. */

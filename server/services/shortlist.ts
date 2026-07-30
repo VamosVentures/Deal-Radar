@@ -4,7 +4,7 @@ import { addDealEvidence, listDealEvidence, reclassifyCompany } from '../db/repo
 import { latestScore } from '../db/repos/operations';
 import { tierOf } from '../../shared/opportunity';
 import {
-  assessDiversity, familyOf, isLiveDeal,
+  assessDiversity, familyLabel, familyOf, isLiveDeal, sourceLabel,
   MAX_YC_PRIMARY_PER_SECTOR, TARGET_SOURCE_FAMILIES_PER_SECTOR,
   type DealEvidence, type DiversityReport, type Opportunity, type OpportunityType,
 } from '../../shared/opportunity';
@@ -30,6 +30,10 @@ export function opportunityTypeForSource(sourceId: string): OpportunityType {
   switch (sourceId) {
     case 'sec': return 'form-d-filing';
     case 'funding-news': return 'funding-announcement';
+    // An investor stating it took part in a round is describing the same
+    // KIND of event a press report describes; what differs is who is
+    // saying it, which is captured by the source family, not the type.
+    case 'investor-news': return 'funding-announcement';
     case 'grants': return 'government-award';
     case 'yc': return 'accelerator-batch';
     case 'producthunt': return 'product-launch';
@@ -312,9 +316,19 @@ export interface DiversityAnalytics {
   humanReview: number;
   byClassification: Record<string, number>;
   byPrimarySource: Record<string, number>;
+  /**
+   * The same opportunities counted by source FAMILY.
+   *
+   * Concentration is only meaningful at this level. Splitting the funding
+   * press across four publisher ids would make no source look dominant
+   * while the pipeline still rested entirely on journalism — which is the
+   * exact illusion these numbers exist to prevent.
+   */
+  byFamily: Record<string, number>;
   byTier: Record<string, number>;
   byQualification: Record<string, number>;
   sharePct: Record<string, number>;
+  familySharePct: Record<string, number>;
   singleSourceOpportunities: number;
   multiSourceOpportunities: number;
   perSector: {
@@ -347,6 +361,7 @@ export function diversityAnalytics(verticals: VerticalId[], opts: SelectOptions 
 
   const byClassification: Record<string, number> = {};
   const byPrimarySource: Record<string, number> = {};
+  const byFamily: Record<string, number> = {};
   const byTier: Record<string, number> = {};
   const byQualification: Record<string, number> = {};
   let opportunities = 0;
@@ -368,6 +383,8 @@ export function diversityAnalytics(verticals: VerticalId[], opts: SelectOptions 
     if (isLiveDeal(o.classification) && !quarantinedIds.has(c.id)) {
       opportunities++;
       byPrimarySource[o.primarySourceId] = (byPrimarySource[o.primarySourceId] ?? 0) + 1;
+      const family = familyOf(o.primarySourceId);
+      byFamily[family] = (byFamily[family] ?? 0) + 1;
       byTier[`tier${o.primaryTier}`] = (byTier[`tier${o.primaryTier}`] ?? 0) + 1;
       const n = q ? (JSON.parse(q.corroborating_sources) as unknown[]).length : 0;
       if (n >= 2) multiSource++; else singleSource++;
@@ -376,10 +393,11 @@ export function diversityAnalytics(verticals: VerticalId[], opts: SelectOptions 
     }
   }
 
+  const pct = (n: number) => (opportunities > 0 ? Math.round((n / opportunities) * 1000) / 10 : 0);
   const sharePct: Record<string, number> = {};
-  for (const [src, n] of Object.entries(byPrimarySource)) {
-    sharePct[src] = opportunities > 0 ? Math.round((n / opportunities) * 1000) / 10 : 0;
-  }
+  for (const [src, n] of Object.entries(byPrimarySource)) sharePct[src] = pct(n);
+  const familySharePct: Record<string, number> = {};
+  for (const [fam, n] of Object.entries(byFamily)) familySharePct[fam] = pct(n);
 
   const shortlists = buildShortlists(verticals, opts);
   const perSector = shortlists.map((s) => ({
@@ -391,8 +409,13 @@ export function diversityAnalytics(verticals: VerticalId[], opts: SelectOptions 
   }));
 
   const warnings: string[] = [];
-  for (const [src, pct] of Object.entries(sharePct)) {
-    if (pct > 40) warnings.push(`${pct}% of all opportunities come from a single source (${src}). Above 40% the pipeline is really one source wearing a hat.`);
+  for (const [src, share] of Object.entries(sharePct)) {
+    if (share > 40) warnings.push(`${share}% of all opportunities come from a single source (${sourceLabel(src)}). Above 40% the pipeline is really one source wearing a hat.`);
+  }
+  // The family-level warning is the one that cannot be gamed by adding
+  // publishers. Reported separately so a reader sees both numbers.
+  for (const [fam, share] of Object.entries(familySharePct)) {
+    if (share > 40) warnings.push(`${share}% of all opportunities rest on one source family (${familyLabel(fam)}). Adding more sources of the same kind would not change this.`);
   }
   for (const s of perSector) {
     if (s.families.length > 0 && s.families.length < TARGET_SOURCE_FAMILIES_PER_SECTOR) {
@@ -410,7 +433,7 @@ export function diversityAnalytics(verticals: VerticalId[], opts: SelectOptions 
     companyLeads: leads,
     quarantined: quarantinedIds.size,
     humanReview,
-    byClassification, byPrimarySource, byTier, byQualification, sharePct,
+    byClassification, byPrimarySource, byFamily, byTier, byQualification, sharePct, familySharePct,
     singleSourceOpportunities: singleSource,
     multiSourceOpportunities: multiSource,
     perSector,

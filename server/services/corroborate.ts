@@ -4,6 +4,7 @@ import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { normalizeCompanyKey, isHighConfidenceFuzzy } from '../sourcing/identity';
 import { isAmbiguousCompanyName } from '../sourcing/classify';
+import { pageDisqualifiedAsOfficialSite } from '../sourcing/pageSignals';
 import { batchToApproxDate } from '../sourcing/adapters/ycombinator';
 import { tierOf, familyOf } from '../../shared/opportunity';
 import type { DealEvidence } from '../../shared/opportunity';
@@ -245,6 +246,7 @@ export async function discoverOfficialWebsite(companyName: string): Promise<Webs
     return { url: null, confirmedBy: null, tried: [], detail: 'Company name too short to derive a candidate domain.' };
   }
 
+
   // Common single words are not identifying. A real run "confirmed"
   // natural.com for a company called "Natural" and enigma.com for
   // "Enigma" — both pass a name-on-page check trivially, because the
@@ -261,6 +263,21 @@ export async function discoverOfficialWebsite(companyName: string): Promise<Webs
       detail: `"${companyName}" is a common English word — a matching domain would not be evidence of identity. Left for human lookup rather than guessed.`,
     };
   }
+
+  // The STEM can be ambiguous even when the NAME is not. "Bespoke Labs"
+  // is two words and passes the check above, but stripping the generic
+  // "Labs" leaves "bespoke" — and bespoke.com is a for-sale listing whose
+  // page contains the word "bespoke", so the name-on-page test passes on
+  // a domain nobody operates. The real question is whether the string we
+  // are about to guess a domain FROM identifies anyone, so that is what
+  // is asked.
+  if (isAmbiguousCompanyName(stem)) {
+    return {
+      url: null, confirmedBy: null, tried: [],
+      detail: `"${companyName}" reduces to the common word "${stem}" once generic suffixes are removed — `
+        + 'a matching domain would not be evidence of identity. Left for human lookup rather than guessed.',
+    };
+  }
   // A small, ordered candidate set. Deliberately short: this runs per
   // company and each miss costs a request.
   const candidates = [
@@ -271,6 +288,7 @@ export async function discoverOfficialWebsite(companyName: string): Promise<Webs
     `https://${stem}.health`,
   ];
   const tried: string[] = [];
+  const refused: string[] = [];
 
   for (const url of candidates) {
     tried.push(url);
@@ -278,7 +296,11 @@ export async function discoverOfficialWebsite(companyName: string): Promise<Webs
     const res = await politeFetch(url, { headers: { 'User-Agent': UA } });
     if (!res.ok) continue;
     const body = res.body.slice(0, 60_000);
-    if (body.replace(/<[^>]*>/g, '').trim().length < 200) continue;
+    // Parking first. A registrar page for `lantern.com` contains the word
+    // "lantern", so the name check below would confirm it — the order
+    // here is what stops a for-sale listing becoming a company's site.
+    const disqualified = pageDisqualifiedAsOfficialSite(body);
+    if (disqualified) { refused.push(`${url} (${disqualified})`); continue; }
     if (!pageMentionsCompany(body, companyName)) continue;
     return {
       url, confirmedBy: 'name-on-page', tried,
@@ -287,7 +309,8 @@ export async function discoverOfficialWebsite(companyName: string): Promise<Webs
   }
   return {
     url: null, confirmedBy: null, tried,
-    detail: `No candidate domain both responded and named the company (tried ${tried.length}).`,
+    detail: `No candidate domain both responded and named the company (tried ${tried.length})`
+      + `${refused.length > 0 ? `; refused ${refused.join(', ')}` : ''}.`,
   };
 }
 

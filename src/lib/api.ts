@@ -461,9 +461,12 @@ export interface DiversityAnalytics {
   humanReview: number;
   byClassification: Record<string, number>;
   byPrimarySource: Record<string, number>;
+  /** The same opportunities counted by source family — the level at which concentration is meaningful. */
+  byFamily: Record<string, number>;
   byTier: Record<string, number>;
   byQualification: Record<string, number>;
   sharePct: Record<string, number>;
+  familySharePct: Record<string, number>;
   singleSourceOpportunities: number;
   multiSourceOpportunities: number;
   perSector: { vertical: string; qualified: number; families: string[]; shortfall: number; warnings: string[] }[];

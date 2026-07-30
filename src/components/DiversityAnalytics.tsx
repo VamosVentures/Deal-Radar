@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { SOURCE_FAMILY_LABELS as FAMILY_LABELS, SOURCE_LABELS } from '../../shared/opportunity';
 import type { DiversityAnalytics as Analytics } from '../lib/api';
 
 /**
@@ -71,16 +72,40 @@ export function DiversityAnalyticsPanel() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
-          <h3 className="mb-1 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Opportunities by primary source</h3>
-          {Object.keys(data.byPrimarySource).length === 0 ? (
+          <h3 className="mb-1 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Opportunities by source family</h3>
+          <p className="mb-1 text-[11px] text-slate-mid">
+            The level at which concentration means something. Four newspapers are still one family; a publication and
+            an investor who wrote the cheque are two.
+          </p>
+          {Object.keys(data.byFamily ?? {}).length === 0 ? (
             <p className="text-xs text-slate-mid">No live opportunities yet, so there is no concentration to report.</p>
+          ) : (
+            <table className="w-full border border-line text-xs">
+              <thead className="bg-paper"><tr><th className={th}>Family</th><th className={th}>Count</th><th className={th}>Share</th></tr></thead>
+              <tbody>
+                {Object.entries(data.byFamily).sort((a, b) => b[1] - a[1]).map(([fam, n]) => (
+                  <tr key={fam} className="border-t border-line">
+                    <td className={cell}>{FAMILY_LABELS[fam] ?? fam}</td>
+                    <td className={`${cell} tabular-nums`}>{n}</td>
+                    <td className={`${cell} tabular-nums ${(data.familySharePct?.[fam] ?? 0) > 40 ? 'font-semibold text-marigold' : ''}`}>
+                      {data.familySharePct?.[fam] ?? 0}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          <h3 className="mb-1 mt-4 font-mono text-[11px] uppercase tracking-widest text-slate-mid">By primary source</h3>
+          {Object.keys(data.byPrimarySource).length === 0 ? (
+            <p className="text-xs text-slate-mid">No live opportunities yet.</p>
           ) : (
             <table className="w-full border border-line text-xs">
               <thead className="bg-paper"><tr><th className={th}>Source</th><th className={th}>Count</th><th className={th}>Share</th></tr></thead>
               <tbody>
                 {Object.entries(data.byPrimarySource).sort((a, b) => b[1] - a[1]).map(([src, n]) => (
                   <tr key={src} className="border-t border-line">
-                    <td className={cell}>{src}</td>
+                    <td className={cell}>{SOURCE_LABELS[src] ?? src}</td>
                     <td className={`${cell} tabular-nums`}>{n}</td>
                     <td className={`${cell} tabular-nums ${(data.sharePct[src] ?? 0) > 40 ? 'font-semibold text-marigold' : ''}`}>
                       {data.sharePct[src] ?? 0}%
@@ -116,7 +141,7 @@ export function DiversityAnalyticsPanel() {
                   <td className={cell}>{s.vertical}</td>
                   <td className={`${cell} tabular-nums`}>{s.qualified}</td>
                   <td className={`${cell} tabular-nums ${s.families.length > 0 && s.families.length < 3 ? 'text-marigold' : ''}`}>
-                    {s.families.length === 0 ? '—' : `${s.families.length} (${s.families.join(', ')})`}
+                    {s.families.length === 0 ? '—' : `${s.families.length} (${s.families.map((f) => FAMILY_LABELS[f] ?? f).join(', ')})`}
                   </td>
                   <td className={`${cell} tabular-nums ${s.shortfall > 0 ? 'text-marigold' : ''}`}>
                     {s.shortfall > 0 ? s.shortfall : '—'}

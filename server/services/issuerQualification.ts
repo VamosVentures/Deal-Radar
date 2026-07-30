@@ -5,6 +5,7 @@ import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { isOperatingIssuer } from '../sourcing/formd';
 import { checkEntityType } from '../sourcing/classify';
+import { isThinPage, looksParkedOrPlaceholder, titleIsBareDomain } from '../sourcing/pageSignals';
 import { familyOf } from '../../shared/opportunity';
 import {
   explainQualification, isDisqualified, isQualifiedForOpportunity,
@@ -117,12 +118,6 @@ export interface WebsiteCheck {
   detail: string;
 }
 
-const PARKED_MARKERS = [
-  'domain is for sale', 'buy this domain', 'parked domain', 'godaddy.com/domainfind',
-  'this domain may be for sale', 'coming soon', 'under construction',
-  'default web page', 'welcome to nginx', 'apache2 default',
-];
-
 /**
  * Confirm a company website actually resolves and looks like a real site.
  *
@@ -141,11 +136,12 @@ export async function verifyWebsite(rawUrl: string | null | undefined): Promise<
   if (!res.ok) {
     return { verified: false, url, parked: false, detail: `Website did not respond (${res.failure ?? res.status}).` };
   }
-  const lower = res.body.slice(0, 20_000).toLowerCase();
-  const parked = PARKED_MARKERS.some((m) => lower.includes(m));
+  // The same detectors website DISCOVERY uses, so a domain cannot be
+  // recorded by one path and rejected by the other.
+  const parked = looksParkedOrPlaceholder(res.body) || titleIsBareDomain(res.body);
   // A real product site has some substance. A 200 that returns almost
   // nothing is not evidence of an operating business.
-  const thin = res.body.replace(/<[^>]*>/g, '').trim().length < 200;
+  const thin = isThinPage(res.body);
 
   if (parked) {
     return { verified: false, url, parked: true, thin: false, detail: 'Website appears to be a parked or placeholder domain.' };
@@ -185,6 +181,14 @@ export interface CorroborationResult {
  * "press" source would make a well-reported round look unverified. Two
  * syndicated copies from the SAME publisher still count once, which is
  * why the key is the publisher and not the URL.
+ *
+ * The investor-primary family gets the OPPOSITE treatment, deliberately.
+ * Two firms that co-invested in one round are describing the transaction
+ * they were both in; that is one account of one event from one side of
+ * the table, however many websites it appears on. Splitting them per firm
+ * — the mirror of what press gets — would let a syndicate of five
+ * investors manufacture five "independent sources" for a single round.
+ * So every investor announcement collapses to `investor-primary`.
  */
 function corroborationKey(sourceId: string, sourceName: string): string {
   const family = familyOf(sourceId);

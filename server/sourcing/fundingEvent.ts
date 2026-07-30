@@ -1,5 +1,6 @@
 import { normalizeCompanyKey, isHighConfidenceFuzzy } from './identity';
 import { classifyCandidate, classifyPossessiveName, isAmbiguousCompanyName } from './classify';
+import { familyOf } from '../../shared/opportunity';
 import type { VerticalId } from '../../src/types';
 
 /**
@@ -392,6 +393,57 @@ const DISQUALIFIERS: { code: RssReasonCode; pattern: RegExp }[] = [
 /** Equity-round language that overrides the debt disqualifier. */
 const EQUITY_LANGUAGE = /\b(?:pre-?seed|seed|series\s+[a-f]|equity\s+round|equity\s+financing|priced\s+round|valuation\s+of|post-money|led\s+by)\b/i;
 
+export function hasEquityLanguage(text: string): boolean {
+  return EQUITY_LANGUAGE.test(text);
+}
+
+/**
+ * Run the shared non-event disqualifiers over one span of text.
+ *
+ * Exported so the investor-announcement pipeline applies the SAME rules
+ * as the press pipeline. An IPO is not a venture round whoever published
+ * the page, and a firm closing its own fund is not a portfolio company
+ * raising — having two copies of that judgement is how they drift apart.
+ *
+ * `hasSubject` reproduces the press pipeline's scoping rule: once a named
+ * company is established as the one that raised, an acquisition mentioned
+ * in the same sentence is a detail of the story rather than the story.
+ */
+export function disqualifyEvent(
+  scope: string,
+  opts: { hasEquity: boolean; hasSubject: boolean; label?: string; skip?: RssReasonCode[] },
+): Rejection | null {
+  for (const { code, pattern } of DISQUALIFIERS) {
+    if (opts.skip?.includes(code)) continue;
+    const m = scope.match(pattern);
+    if (!m) continue;
+    if (code === 'debt-or-project-finance' && opts.hasEquity) continue;
+    if (code === 'acquisition-without-financing' && opts.hasSubject) continue;
+    return { code, detail: `"${m[0].trim()}" in "${(opts.label ?? scope).slice(0, 80)}"` };
+  }
+  return null;
+}
+
+/**
+ * Read "<subject> raises <amount>" / "<subject> raises a <round>" out of
+ * one span of text, returning what was STATED and nothing more.
+ *
+ * Exported for reuse: investor newsrooms republish company press releases
+ * in exactly this shape ("Optura secures $17.5 Million Series A from …"),
+ * and re-implementing the amount parsing there would be a second place
+ * for "$4.5" with no unit to become four and a half dollars.
+ */
+export function readStatedRaise(text: string): { subject: string; amount: { usd: number | null; text: string } | null } | null {
+  const withAmount = text.match(RAISE_PATTERN);
+  if (withAmount) {
+    const amount = parseStatedAmount(withAmount[3], withAmount[4], withAmount[2]);
+    if (amount) return { subject: withAmount[1], amount };
+  }
+  const noAmount = text.match(RAISE_NO_AMOUNT_PATTERN);
+  if (noAmount) return { subject: noAmount[1], amount: null };
+  return null;
+}
+
 // ── Company-name validation ───────────────────────────────────────
 
 /**
@@ -699,6 +751,22 @@ export interface FundingEventSource {
   roundType: string | null;
   /** Links this article pointed at, used to resolve the company's own site. */
   outboundLinks: string[];
+  /**
+   * Which adapter produced this source row, so a merged event keeps
+   * per-source attribution across source FAMILIES and not just across
+   * publishers. Absent means the press pipeline, which is the only thing
+   * that produced sources before investor announcements existed.
+   */
+  sourceId?: string;
+  /**
+   * For an investor-primary source only: which firm published the page,
+   * on which verified domain, and the exact words that say the firm took
+   * part in this financing. Never inferred — a page that does not state
+   * participation never becomes an investor source in the first place.
+   */
+  investor?: string;
+  investorDomain?: string;
+  participation?: string;
 }
 
 export interface EventConflict {
@@ -781,17 +849,9 @@ export function extractFundingEvent(item: FeedItem, today: string): ExtractResul
   // about Bluecore Energy's pre-seed mentions its lead investor's own
   // $100M Fund II in the body, and reading that as a fund launch threw
   // away a real deal.
-  let subject: string | null = null;
-  let amount: { usd: number | null; text: string } | null = null;
-  const withAmount = title.match(RAISE_PATTERN);
-  if (withAmount) {
-    amount = parseStatedAmount(withAmount[3], withAmount[4], withAmount[2]);
-    if (amount) subject = withAmount[1];
-  }
-  if (!subject) {
-    const noAmount = title.match(RAISE_NO_AMOUNT_PATTERN);
-    if (noAmount) subject = noAmount[1];
-  }
+  const fromTitle = readStatedRaise(title);
+  let subject: string | null = fromTitle?.subject ?? null;
+  let amount: { usd: number | null; text: string } | null = fromTitle?.amount ?? null;
   // The headline may be a teaser ("A new way to pay for AI agents") while
   // the body's first sentence carries the real statement.
   if (!subject && item.description) {
@@ -802,19 +862,16 @@ export function extractFundingEvent(item: FeedItem, today: string): ExtractResul
       if (parsed) { amount = parsed; subject = m[1]; }
     }
   }
-  // Disqualifiers, scoped by what we found.
-  const hasEquity = EQUITY_LANGUAGE.test(lead);
-  const scope = subject ? title : lead;
-  for (const { code, pattern } of DISQUALIFIERS) {
-    const m = scope.match(pattern);
-    if (!m) continue;
-    // A round that mixes debt and equity is still a venture round.
-    if (code === 'debt-or-project-finance' && hasEquity) continue;
-    // "Acme raises $5M and acquires Foo" is a financing event that also
-    // mentions an acquisition, not an acquisition story.
-    if (code === 'acquisition-without-financing' && subject) continue;
-    return reject(code, `"${m[0].trim()}" in "${title.slice(0, 80)}"`);
-  }
+  // Disqualifiers, scoped by what we found. A round that mixes debt and
+  // equity is still a venture round, and "Acme raises $5M and acquires
+  // Foo" is a financing event that mentions an acquisition rather than an
+  // acquisition story — both exceptions live in disqualifyEvent.
+  const disqualified = disqualifyEvent(subject ? title : lead, {
+    hasEquity: hasEquityLanguage(lead),
+    hasSubject: subject !== null,
+    label: title,
+  });
+  if (disqualified) return reject(disqualified.code, disqualified.detail);
 
   if (!subject) {
     // Distinguishing these two matters: one means the article is not about
@@ -878,6 +935,7 @@ export function extractFundingEvent(item: FeedItem, today: string): ExtractResul
         amountText: amount ? `${amount.text} (as stated by ${publisher})` : null,
         roundType,
         outboundLinks: item.outboundLinks,
+        sourceId: 'funding-news',
       }],
       conflicts: [],
       needsHumanReview: false,
@@ -1013,4 +1071,16 @@ function addConflict(event: FundingEvent, field: 'amount' | 'round', values: str
 /** Distinct publishers behind an event. Syndicated copies do not count twice. */
 export function independentPublishers(event: FundingEvent): string[] {
   return [...new Set(event.sources.map((s) => s.publisher))];
+}
+
+/**
+ * Distinct source FAMILIES behind an event.
+ *
+ * Two outlets are two publishers but one family; two investors who both
+ * announced the same round are two firms but still one family. Only a
+ * press article AND an investor announcement — organisations with
+ * genuinely different reasons to publish — make this return two.
+ */
+export function independentSourceFamilies(event: FundingEvent): string[] {
+  return [...new Set(event.sources.map((s) => familyOf(s.sourceId ?? 'funding-news')))];
 }

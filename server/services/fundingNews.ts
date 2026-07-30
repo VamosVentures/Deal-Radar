@@ -1,6 +1,7 @@
 import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { checkEntityType } from '../sourcing/classify';
+import { pageDisqualifiedAsOfficialSite } from '../sourcing/pageSignals';
 import { matchCompany } from '../sourcing/identity';
 import { normalizeDomain } from '../../shared/integrations';
 import {
@@ -74,7 +75,28 @@ function pageNamesCompany(html: string, name: string): boolean {
  * A single common word like "Natural" or "Cascade" skips step 2
  * entirely: a matching domain would be a coincidence, not evidence.
  */
-export async function resolveCompanyWebsite(event: FundingEvent, articleLinks: string[]): Promise<WebsiteResolution> {
+export interface ResolveWebsiteOptions {
+  /**
+   * Whether a domain may be DERIVED from the company name and confirmed
+   * by finding the name on the page.
+   *
+   * The investor-primary pipeline sets this to false. The reason is not
+   * caution for its own sake: an investor's own announcement is a source
+   * that KNOWS which company it funded, so accepting a guess alongside it
+   * trades that certainty for a coin flip. A live dry run proposed
+   * bespoke.health for Bespoke Labs (real site: bespokelabs.ai) and
+   * lantern.ai for Lantern — both pages name a real company, neither
+   * names THIS one. Recording a wrong website is worse than recording
+   * none, because every later check then verifies the wrong business.
+   */
+  allowDerivedDomain?: boolean;
+}
+
+export async function resolveCompanyWebsite(
+  event: FundingEvent,
+  articleLinks: string[],
+  opts: ResolveWebsiteOptions = {},
+): Promise<WebsiteResolution> {
   const tried: string[] = [];
   const stem = domainStemFromName(event.companyName);
 
@@ -95,7 +117,9 @@ export async function resolveCompanyWebsite(event: FundingEvent, articleLinks: s
     const res = await politeFetch(url, { headers: { 'User-Agent': UA } });
     if (!res.ok) continue;
     const body = res.body.slice(0, 60_000);
-    if (body.replace(/<[^>]*>/g, '').trim().length < 200) continue;
+    // Even a link the publisher chose can have lapsed into parking by the
+    // time we follow it. Same test as derived-domain discovery uses.
+    if (pageDisqualifiedAsOfficialSite(body)) continue;
     if (!pageNamesCompany(body, event.companyName)) continue;
     return {
       url, method: 'article-link', tried, code: null,
@@ -107,6 +131,15 @@ export async function resolveCompanyWebsite(event: FundingEvent, articleLinks: s
     return {
       url: null, method: null, tried, code: 'website-unresolved',
       detail: `"${event.companyName}" is a single common word. The article linked no company site, and a guessed domain would not be evidence of identity — left for human lookup.`,
+    };
+  }
+
+  if (opts.allowDerivedDomain === false) {
+    return {
+      url: null, method: null, tried, code: 'website-unresolved',
+      detail: `The announcement linked no site for ${event.companyName}. Domain guessing is not used for investor-primary `
+        + 'evidence: the announcing firm knows which company it funded, and a domain derived from the name does not. '
+        + 'Left for human lookup.',
     };
   }
 
