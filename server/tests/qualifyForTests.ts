@@ -33,13 +33,14 @@ export function markQualifiedForTests(
       company_id, result, operating_confidence, website_verified, website_url,
       is_publicly_traded, ticker, is_fund_or_spv, parent_entity,
       corroborating_sources, reason_codes, fields_requiring_human_review,
-      qualified_at, version
-    ) VALUES (?, ?, ?, ?, ?, 0, NULL, 0, NULL, ?, '[]', '[]', ?, ?)
+      qualified_at, version, operating_evidence
+    ) VALUES (?, ?, ?, ?, ?, 0, NULL, 0, NULL, ?, '[]', '[]', ?, ?, ?)
     ON CONFLICT (company_id) DO UPDATE SET
       result = excluded.result,
       corroborating_sources = excluded.corroborating_sources,
       website_verified = excluded.website_verified,
-      website_url = excluded.website_url
+      website_url = excluded.website_url,
+      operating_evidence = excluded.operating_evidence
   `).run(
     companyId,
     result,
@@ -49,5 +50,20 @@ export function markQualifiedForTests(
     JSON.stringify(sources),
     new Date().toISOString(),
     QUALIFICATION_VERSION,
+    // A record marked qualified has to behave like one everywhere, and
+    // since q2.0 that takes operating evidence as well as sources — the
+    // shortlist checks the same bar qualification does. A fixture that
+    // said "qualified" while carrying no operating evidence would be
+    // asserting a state production cannot produce.
+    JSON.stringify(
+      result === 'qualified-operating-company'
+        ? {
+            level: 'substantive',
+            url: opts.websiteUrl ?? `https://example.test/${companyId}`,
+            signals: ['offering (product, platform)', 'describes what the company does'],
+            detail: 'Test fixture: the issuer\'s own site describes an operating business.',
+          }
+        : { level: 'not-checked', url: opts.websiteUrl ?? null, signals: [], detail: 'Test fixture: not checked.' },
+    ),
   );
 }

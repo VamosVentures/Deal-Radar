@@ -3,7 +3,7 @@ import {
   classifyOpportunity, isLiveDeal, tierOf, ACCELERATOR_SIGNAL_LABELS,
   type DealEvidence, type Opportunity, type OpportunityClass, type SourceTier,
 } from '../../../shared/opportunity';
-import { DISQUALIFYING_RESULTS } from '../../../shared/qualification';
+import { DISQUALIFYING_RESULTS, type WebsiteEvidenceLevel } from '../../../shared/qualification';
 
 /**
  * Persistence for deal evidence and the opportunity classification
@@ -140,7 +140,23 @@ export function getOpportunity(companyId: string): Opportunity | null {
  */
 export function reclassifyCompany(companyId: string, opts: { today?: string } = {}): Opportunity {
   const evidence = listDealEvidence(companyId);
-  let result = classifyOpportunity({ evidence, today: opts.today });
+
+  // Read the qualification row once. Two different decisions need it: the
+  // accelerator branch inside the classifier needs to know whether the
+  // company describes a real business, and the gate below needs the verdict.
+  const qual = getDb()
+    .prepare('SELECT result, operating_evidence FROM issuer_qualification WHERE company_id = ?')
+    .get(companyId) as { result: string; operating_evidence: string | null } | undefined;
+  const operatingEvidence = ((): WebsiteEvidenceLevel => {
+    if (!qual?.operating_evidence) return 'not-checked';
+    try {
+      return (JSON.parse(qual.operating_evidence) as { level: WebsiteEvidenceLevel }).level;
+    } catch {
+      return 'not-checked';
+    }
+  })();
+
+  let result = classifyOpportunity({ evidence, today: opts.today, operatingEvidence });
 
   // QUALIFICATION GATE. Evidence-based classification decides what the
   // evidence SAYS; qualification decides whether the entity is the kind
@@ -150,12 +166,9 @@ export function reclassifyCompany(companyId: string, opts: { today?: string } = 
   // is — so a strong classification is demoted here rather than being
   // allowed to reach the shortlist.
   //
-  // Read directly from the table to avoid a circular import with
-  // server/services/issuerQualification.ts, which imports this module.
-  const qual = getDb()
-    .prepare('SELECT result FROM issuer_qualification WHERE company_id = ?')
-    .get(companyId) as { result: string } | undefined;
-
+  // The verdict is read directly from the table (above) to avoid a
+  // circular import with server/services/issuerQualification.ts, which
+  // imports this module.
   if (isLiveDeal(result.classification)) {
     if (!qual) {
       // NO VERDICT IS NOT A PASS. The qualification table's contract is
@@ -182,19 +195,25 @@ export function reclassifyCompany(companyId: string, opts: { today?: string } = 
       result = {
         ...result,
         classification: 'company-lead',
-        reason: 'Insufficient evidence that this is an operating company (no verified website, no product description, no independent corroboration). Never promoted to a live opportunity.',
+        reason: 'Insufficient evidence that this is an operating company (no confirmed website, no product description, no independent financing source). Never promoted to a live opportunity.',
       };
     } else if (qual.result === 'company-lead-requires-corroboration') {
+      // Two different shortfalls end up here, and saying "no independent
+      // source" for both was wrong: a company can have a perfectly good
+      // Form D and still fail because its website proves only that it owns
+      // a domain. Naming the actual gap is what makes the row actionable.
       result = {
         ...result,
         classification: 'company-lead',
-        reason: `Evidence would support "${result.classification}", but no independent source corroborates it. A single filing is not a deal.`,
+        reason: operatingEvidence === 'identity-only' || operatingEvidence === 'parked' || operatingEvidence === 'unrelated'
+          ? `Evidence would support "${result.classification}", but nothing shows this issuer describing a product, service, or operating business — the website establishes identity only. Held as a lead.`
+          : `Evidence would support "${result.classification}", but no independent source corroborates it. A single filing is not a deal.`,
       };
     } else if (qual.result === 'human-review-required') {
       result = {
         ...result,
         classification: 'unverified-opportunity',
-        reason: 'Corroborated but the company website could not be verified — surfaced for human review rather than counted as a live deal.',
+        reason: 'Financing evidence is on record but operating evidence could not be confirmed — surfaced for human review rather than counted as a live deal.',
       };
     }
   }

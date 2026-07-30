@@ -54,7 +54,12 @@ function candidate(
     name,
     opportunity: opportunity({ companyId: name, ...over }),
     fitScore: 5,
-    independentSources: 2,
+    // A candidate that clears the corroboration bar by default, so each
+    // test states the ONE thing it is about. Clearing the bar now takes
+    // two facts rather than a source count: an independent financing
+    // source, and the issuer describing a real business.
+    independentSources: 1,
+    operatingEvidence: 'substantive',
     quarantined: false,
     ...extra,
   };
@@ -130,16 +135,45 @@ describe('shortlist hold-back accounting', () => {
 
   it('holds back an uncorroborated live deal rather than showing it', () => {
     const pool = [
-      candidate('Well Sourced', {}, { independentSources: 2 }),
-      candidate('Single Source', {}, { independentSources: 1 }),
+      candidate('Well Sourced', {}, { independentSources: 2, operatingEvidence: 'substantive' }),
+      candidate('No Financing Source', {}, { independentSources: 0, operatingEvidence: 'substantive' }),
     ];
 
     const result = selectSectorShortlist('ai', pool);
 
     expect(result.selected.map((s) => s.name)).toEqual(['Well Sourced']);
-    const held = result.heldBack.find((h) => h.name === 'Single Source');
+    const held = result.heldBack.find((h) => h.name === 'No Financing Source');
     expect(held!.reasonCode).toBe('insufficient-corroboration');
-    expect(held!.reason).toMatch(/1 independent source/i);
+    expect(held!.reason).toMatch(/0 independent financing source/i);
+    expectFullyAccounted(pool, result);
+  });
+
+  /**
+   * The other half of the same bar, and the reason this file changed.
+   *
+   * A live deal whose website proves only that it owns a domain is held
+   * back for a DIFFERENT reason than one with no independent source, and
+   * the held-back entry has to say which — otherwise a reviewer goes
+   * looking for a second news article when what is actually missing is
+   * somebody confirming there is a business.
+   */
+  it('holds back a live deal whose website is identity evidence only, and says so', () => {
+    const pool = [
+      candidate('Real Product Site', {}, { independentSources: 1, operatingEvidence: 'substantive' }),
+      candidate('Bare Domain', {}, { independentSources: 1, operatingEvidence: 'identity-only' }),
+      candidate('Parked Domain', {}, { independentSources: 1, operatingEvidence: 'parked' }),
+    ];
+
+    const result = selectSectorShortlist('ai', pool);
+
+    expect(result.selected.map((s) => s.name)).toEqual(['Real Product Site']);
+    for (const name of ['Bare Domain', 'Parked Domain']) {
+      const held = result.heldBack.find((h) => h.name === name);
+      expect(held!.reasonCode).toBe('insufficient-corroboration');
+      // Names the operating gap, and does NOT ask for a second source.
+      expect(held!.reason).toMatch(/operating evidence is not/i);
+      expect(held!.reason).not.toMatch(/needs 2 from different source families/i);
+    }
     expectFullyAccounted(pool, result);
   });
 

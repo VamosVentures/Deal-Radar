@@ -1,7 +1,7 @@
 import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { checkEntityType } from '../sourcing/classify';
-import { pageDisqualifiedAsOfficialSite } from '../sourcing/pageSignals';
+import { domainStemFromName, pageDisqualifiedAsOfficialSite } from '../sourcing/pageSignals';
 import { matchCompany } from '../sourcing/identity';
 import { normalizeDomain } from '../../shared/integrations';
 import {
@@ -9,7 +9,7 @@ import {
   type RssRunReport,
 } from '../sourcing/adapters/rss';
 import { eventIdentity, independentPublishers, type FundingEvent, type RssReasonCode } from '../sourcing/fundingEvent';
-import { discoverOfficialWebsite, domainStemFromName } from './corroborate';
+import { discoverOfficialWebsite } from './corroborate';
 import { addDealEvidence, reclassifyCompany } from '../db/repos/opportunities';
 import { saveCompany, matchRecords, listCompanies } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';

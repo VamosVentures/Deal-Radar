@@ -130,9 +130,40 @@ describe('row content', () => {
   });
 
   it('labels a recorded verdict with its human-readable name', () => {
-    const r = row({ qualification: { result: 'qualified-operating-company', corroboratingSources: [1, 2] } });
+    const r = row({
+      qualification: {
+        result: 'qualified-operating-company',
+        corroboratingSources: [1, 2],
+        operatingEvidence: { level: 'substantive' },
+      },
+    });
     expect(cell(r, 'Qualification verdict')).toBe('Qualified operating company');
-    expect(cell(r, 'Independent sources')).toBe('2');
+    expect(cell(r, 'Independent financing sources')).toBe('2');
+    expect(cell(r, 'Operating-company evidence')).toBe('Substantive operating evidence');
+  });
+
+  /**
+   * A reader of the file has to be able to tell "qualified on a real
+   * product site" from "qualified on a domain that resolves". Before these
+   * were separate columns the export said "2 independent sources" for a
+   * record whose second source was its own website, and nothing in the file
+   * disclosed that.
+   */
+  it('separates independent financing sources from operating evidence', () => {
+    const bare = row({
+      qualification: {
+        result: 'company-lead-requires-corroboration',
+        corroboratingSources: [1],
+        operatingEvidence: { level: 'identity-only' },
+      },
+    });
+    expect(cell(bare, 'Independent financing sources')).toBe('1');
+    expect(cell(bare, 'Operating-company evidence')).toBe('Identity only');
+
+    // An older verdict, written before the question was asked, says so
+    // rather than reporting an absence of evidence.
+    const legacy = row({ qualification: { result: 'qualified-operating-company', corroboratingSources: [1] } });
+    expect(cell(legacy, 'Operating-company evidence')).toBe('Not checked');
   });
 });
 

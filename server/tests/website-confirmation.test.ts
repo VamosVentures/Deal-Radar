@@ -68,7 +68,7 @@ describe('manual website confirmation', () => {
     await qualifyIssuer('c1', {
       today: TODAY,
       publicCheck: { isPubliclyTraded: false, ticker: null, exchanges: [], periodicForms: [], detail: 'private' },
-      websiteCheck: { verified: false, url: null, parked: false, detail: 'No website on record.' },
+      websiteCheck: { verified: false, url: null, level: 'absent', signals: [], parked: false, detail: 'No website on record.' },
     });
     reclassifyCompany('c1', { today: TODAY });
 
@@ -176,7 +176,7 @@ describe('manual website confirmation', () => {
     await qualifyIssuer('c1', {
       today: TODAY,
       publicCheck: { isPubliclyTraded: false, ticker: null, exchanges: [], periodicForms: [], detail: 'private' },
-      websiteCheck: { verified: false, url: null, parked: false, detail: 'No website on record.' },
+      websiteCheck: { verified: false, url: null, level: 'absent', signals: [], parked: false, detail: 'No website on record.' },
     });
     expect(reclassifyCompany('c1', { today: TODAY }).classification).toBe('company-lead');
 
@@ -189,7 +189,7 @@ describe('manual website confirmation', () => {
     await qualifyIssuer('c1', {
       today: TODAY,
       publicCheck: { isPubliclyTraded: false, ticker: null, exchanges: [], periodicForms: [], detail: 'private' },
-      websiteCheck: { verified: true, url: 'https://www.natural.com', parked: false, detail: 'Real content.' },
+      websiteCheck: { verified: true, url: 'https://www.natural.com', level: 'substantive', signals: ['offering (platform, pricing)'], parked: false, detail: 'Real content describing the product.' },
     });
     expect(reclassifyCompany('c1', { today: TODAY }).classification).toBe('recent-financing-signal');
   });
@@ -233,7 +233,7 @@ describe('a website that cannot be verified', () => {
       publicCheck: { isPubliclyTraded: false, ticker: null, exchanges: [], periodicForms: [], detail: 'private' },
       // What politeFetch reports for infinity.inc: HTTP 200, eight
       // characters of text, because the page renders in the browser.
-      websiteCheck: { verified: false, url: 'https://infinity.inc', parked: false, thin: true, detail: 'Almost no readable text.' },
+      websiteCheck: { verified: false, url: 'https://infinity.inc', level: 'thin', signals: [], parked: false, thin: true, detail: 'Almost no readable text.' },
     });
 
     expect(q.reasonCodes).toContain('website-thin-or-client-rendered');

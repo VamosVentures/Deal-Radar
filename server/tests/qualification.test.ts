@@ -81,17 +81,28 @@ describe('issuer qualification', () => {
     expect(o.classification).toBe('company-lead');
   });
 
-  it('a Form D PLUS a confirmed website qualifies — two independent families', async () => {
+  it('a Form D PLUS a SUBSTANTIVE website qualifies — and the website is not one of the sources', async () => {
     company('c2', { website: 'https://acmerobotics.com' });
     addDealEvidence('c2', secEvidence());
     addDealEvidence('c2', websiteEvidence());
 
     const q = await qualifyIssuer('c2', {
       offline: true, today: TODAY,
-      websiteCheck: { verified: true, url: 'https://acmerobotics.com', parked: false, detail: 'ok' },
+      websiteCheck: { verified: true, url: 'https://acmerobotics.com', level: 'substantive', signals: ['offering (platform, product)'], parked: false, detail: 'ok' },
     });
     expect(q.result).toBe('qualified-operating-company');
-    expect(q.corroboratingSources.length).toBeGreaterThanOrEqual(MIN_INDEPENDENT_SOURCES);
+
+    // The point of the change. This used to assert two independent
+    // families, one of which was the company's own website — the issuer
+    // counted as a source for its own filing. Financing corroboration is
+    // now ONE source (the filing), the website is operating evidence, and
+    // the two are reported separately.
+    expect(q.corroboratingSources).toHaveLength(1);
+    expect(q.corroboratingSources.map((s) => s.family)).toEqual(['regulatory']);
+    expect(q.operatingEvidence.level).toBe('substantive');
+    expect(q.reasonCodes).toContain('self-published-evidence-excluded');
+    // And it qualifies anyway: a second media article is NOT demanded.
+    expect(q.corroboratingSources.length).toBeLessThan(MIN_INDEPENDENT_SOURCES);
 
     const o = reclassifyCompany('c2', { today: TODAY });
     expect(o.classification).toBe('recent-financing-signal');
@@ -135,7 +146,7 @@ describe('issuer qualification', () => {
     const q = await qualifyIssuer('c5', {
       offline: true, today: TODAY,
       publicCheck: { isPubliclyTraded: false, ticker: null, exchanges: [], periodicForms: [], detail: 'S-1 only' },
-      websiteCheck: { verified: true, url: 'https://acmerobotics.com', parked: false, detail: 'ok' },
+      websiteCheck: { verified: true, url: 'https://acmerobotics.com', level: 'substantive', signals: ['offering (platform, product)'], parked: false, detail: 'ok' },
     });
     expect(q.isPubliclyTraded).toBe(false);
     expect(q.result).toBe('qualified-operating-company');

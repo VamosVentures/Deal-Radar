@@ -4,7 +4,7 @@ import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { normalizeCompanyKey, isHighConfidenceFuzzy } from '../sourcing/identity';
 import { isAmbiguousCompanyName } from '../sourcing/classify';
-import { pageDisqualifiedAsOfficialSite } from '../sourcing/pageSignals';
+import { domainStemFromName, pageDisqualifiedAsOfficialSite, pageMentionsCompany } from '../sourcing/pageSignals';
 import { batchToApproxDate } from '../sourcing/adapters/ycombinator';
 import { tierOf, familyOf } from '../../shared/opportunity';
 import type { DealEvidence } from '../../shared/opportunity';
@@ -204,40 +204,11 @@ export async function corroborateCompany(companyId: string): Promise<Corroborati
  * No credential and no search engine involved; this is only DNS and HTTP.
  */
 
-/** Strip legal suffixes and punctuation: "Rythm Health, Inc." → "rythmhealth". */
-export function domainStemFromName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[,.]/g, ' ')
-    .replace(/\b(inc|incorporated|corp|corporation|llc|l\.?l\.?c|ltd|limited|co|company|holdings?|group|technologies|technology|labs?|plc|gmbh)\b/g, ' ')
-    .replace(/[^a-z0-9]+/g, '')
-    .trim();
-}
-
 export interface WebsiteDiscovery {
   url: string | null;
   confirmedBy: 'name-on-page' | null;
   tried: string[];
   detail: string;
-}
-
-/**
- * Does this page look like it belongs to this company? Requires the
- * company's distinctive name tokens to appear in the page text.
- */
-function pageMentionsCompany(html: string, name: string): boolean {
-  const text = html.replace(/<[^>]*>/g, ' ').toLowerCase();
-  const stem = domainStemFromName(name);
-  if (stem.length >= 6 && text.replace(/[^a-z0-9]+/g, '').includes(stem)) return true;
-
-  // Fall back to requiring every distinctive word (>3 chars, not a legal
-  // suffix) to be present — "Pine Park Health" must find pine, park, health.
-  const words = name.toLowerCase()
-    .replace(/\b(inc|corp|llc|ltd|co|company|holdings?|group|the|and)\b/g, ' ')
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length > 3);
-  if (words.length === 0) return false;
-  return words.every((w) => text.includes(w));
 }
 
 export async function discoverOfficialWebsite(companyName: string): Promise<WebsiteDiscovery> {

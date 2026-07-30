@@ -138,8 +138,9 @@ server/.data/backups/
 | `npm run db:restore` | Restores from a backup (prompts for which) |
 
 Take a backup **before** any live-data change. The most recent verified backup
-for this release is `deal-radar-2026-07-30T03-21-03-962Z.db` (209 companies,
-schema v8).
+for this release is `deal-radar-2026-07-30T12-32-03-641Z.db` (209 companies,
+schema v8) — taken immediately before the operating-evidence requalification.
+The live database is now schema v9.
 
 Backups are also creatable from the UI: Settings → *Database backups*.
 
@@ -154,8 +155,9 @@ Backups are also creatable from the UI: Settings → *Database backups*.
 | **209 companies** | Real records, in SQLite, all persisted |
 | **Three source families** | Regulatory (SEC EDGAR Form D), funding press (RSS), investor-primary (investor announcements) |
 | **All 209 qualification verdicts** | Every company has a stored, non-null verdict. No record is missing one. |
-| **42 live deals** | Classified from dated evidence and gated on qualification |
-| **27 shortlisted / 15 held back** | Every held-back company shows a specific reason |
+| **33 live deals** | Classified from dated evidence and gated on qualification |
+| **23 shortlisted / 10 held back** | Every held-back company shows a specific reason |
+| **Financing vs. operating evidence** | Separated. A company's own website corroborates that a business *operates*; it is never counted as an independent source for the company's own *financing*. Qualification needs both. |
 | **Evidence links** | Real external URLs — SEC filings, press articles, investor posts |
 | **GitHub API** | Works unauthenticated (60 req/hr) |
 | **SBIR / grants** | Key-free public API. Was rate-limited during earlier runs; not a credential problem. |
@@ -181,6 +183,25 @@ real health check succeeding first.
 - **Space Tech is 2/5.** Two live deals. (It read 3/5 before qualification;
   Star Catcher rests on a single investor announcement and is now correctly a
   company lead.)
+- **Robotics is 3/5 and General AI is 4/5**, down from 5/5 each. Nine records
+  lost `qualified-operating-company` when a website stopped counting as
+  corroboration for the filing it was supposed to corroborate. Four of them
+  point at domains that are literally for sale — `andromedarobotics.com`,
+  `evolvedrobotics.com`, `greyparrot.com`, `bluecoreenergy.io`. Say this out
+  loud: the pipeline was calling a parked domain evidence of a business.
+- **Sustainability is 4/5**, down from 5/5, for the same reason.
+- **`AEGIS FINTECH LTD.` is still qualified, and a human should look at it.**
+  It is the record that motivated this change, and the reason it qualified is
+  fixed — its domain is now actually assessed rather than merely pinged. But
+  `aegisfintech.com` serves a real, if generic, fintech-and-AI services
+  brochure: named service lines, several thousand characters of prose. That
+  clears the operating gate on its merits. What is still thin is the other
+  side: a $100M offering whose only third-party evidence is its own Form D,
+  with no press, no investor announcement, and an email address for a contact
+  page. The detail view now says exactly that under *What remains
+  unverified*. No deterministic page rule separates this from a legitimate
+  small consultancy's site, and inventing one would misclassify real
+  companies — so it is surfaced for judgement rather than decided.
 - **92 of 174 fit scores are provisional.** The score is normalized over the
   parts of the model that could actually be judged, and for these records
   *nothing company-descriptive* could be — no stage, location, or
@@ -188,7 +209,10 @@ real health check succeeding first.
   them, so it is labelled `PROVISIONAL`, ranked below every assessed
   company, and excluded from the high-fit count. Recording a stage, a
   location, or a classification turns one into a real fit score. The
-  remaining **82 are genuinely scored**, spanning 2.5–7.7.
+  remaining **80 are genuinely scored**, spanning 2.5–7.7. (The provisional
+  count is unchanged by the operating-evidence change; the assessed count fell
+  from 82 because two newly quarantined records — both parked domains — were
+  assessed rather than provisional.)
 - **Nothing scores 8.0+.** Even assessed records top out at 7.7, because
   mission alignment needs verified founder self-ID and traction needs an
   analyst rating — neither of which a Form D or a funding article carries.
@@ -204,26 +228,29 @@ real health check succeeding first.
 in. Point out that every API route requires the session, not just the screen.
 
 **0:45 — Dashboard.** *Overview*. Four metrics computed from persisted records:
-209 discovered, 0 scored 8.0+, 174 awaiting review with **35 disqualified
+209 discovered, 0 scored 8.0+, 172 awaiting review with **37 disqualified
 records excluded**, 0 stale. Say why nothing scores 8.0+ — most records have no
 founder identity or traction on file, and the score refuses to infer them.
 
 **1:15 — Sector shortlists.** Scroll to *Sector shortlists* on the same page.
-27 selected across 7 sectors, 15 held back. Expand **General AI**: five
-selected with source, tier, round, amount, date, and a live evidence link —
-then **General Intuition**, held back, reading *"Ranked #6 of 6 live deals in
-this sector and only 5 slots exist."* This is the point to make: nothing
-qualifying ever disappears silently. Expand **Health & Wellness** to show
-twelve companies held back by the two-per-sector SEC cap, so one source cannot
-fill a sector. Expand **Future of Work** to show an honest 0/5.
+23 selected across 7 sectors, 10 held back. Expand **Health & Wellness**:
+five selected with source, tier, round, amount, date, and a live evidence link,
+then nine companies held back by the two-per-sector SEC cap — so one source
+cannot fill a sector — and **Nourish**, held back as *"Ranked #6 of 6 live
+deals in this sector and only 5 slots exist."* This is the point to make:
+nothing qualifying ever disappears silently. Expand **Future of Work** to show
+an honest 0/5, and **Robotics** to show 3/5 — four of its former live deals
+turned out to point at domains that are for sale.
 
-**2:15 — Company search and filters.** *Companies*. 174 records. Filter by
+**2:15 — Company search and filters.** *Companies*. 172 records. Filter by
 classification, primary source, tier, or *Live opportunities only*. Note **Show
-disqualified (35)** — publicly traded companies, funds, and SPVs are excluded
-by default and their evidence is retained, not deleted.
+disqualified (37)** — publicly traded companies, funds, and SPVs are excluded
+by default and their evidence is retained, not deleted. **Missing
+corroboration** now means what it says: no independent financing source, or no
+substantive evidence that the issuer describes an operating business.
 
 **2:40 — Scores that can rank.** Tick **Scorable only (hide provisional)** —
-174 drops to 82. Explain the split: the score is computed over the parts of
+172 drops to 80. Explain the split: the score is computed over the parts of
 the model that could actually be judged, and for 92 records nothing
 company-descriptive was on file, so their number only reflects our own
 sourcing. Those are marked `prov.`, always rank below assessed companies, and
@@ -232,9 +259,14 @@ completeness and provisional flag, so the caveat survives the spreadsheet.
 
 **3:00 — Opportunity detail and evidence.** Expand **Fish Audio**. Walk down:
 primary evidence with publisher and date, a clickable TechCrunch link, *why
-this is a current signal*, **qualification reasons** in plain language, the two
-independent sources and their families, and the caveat that undated supporting
-records cannot establish currency. Then the 01–08 score breakdown, where every
+this is a current signal*, **qualification reasons** in plain language, and then
+the three evidence sections that carry the whole argument: **financing
+evidence** (one independent source — TechCrunch — with the note that the
+company's own website is never counted here), **operating-company evidence**
+(what fishaudio.com actually says about its product), and **what remains
+unverified**. Then open **Theker** for the contrast: strong financing evidence,
+but a 407-character stealth teaser, so its website appears under
+*identity-only website evidence* and it is a lead rather than a deal. Then the 01–08 score breakdown, where every
 point is attributed — including the zeros and why they are zero.
 
 **4:00 — Why something failed.** Tick *Show disqualified*, open **Adagio

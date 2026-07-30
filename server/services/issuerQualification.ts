@@ -5,12 +5,16 @@ import { politeFetch } from '../sourcing/politeness';
 import { isSafeExternalUrlResolved } from '../lib/http';
 import { isOperatingIssuer } from '../sourcing/formd';
 import { checkEntityType } from '../sourcing/classify';
-import { isThinPage, looksParkedOrPlaceholder, titleIsBareDomain } from '../sourcing/pageSignals';
-import { familyOf } from '../../shared/opportunity';
+import { assessOperatingEvidence } from '../sourcing/pageSignals';
+import { normalizeDomainKey } from '../sourcing/identity';
+import { familyOf, FINANCING_EVENT_TYPES } from '../../shared/opportunity';
 import {
   explainQualification, isDisqualified, isQualifiedForOpportunity,
-  MIN_INDEPENDENT_SOURCES, QUALIFICATION_LABELS, QUALIFICATION_VERSION,
+  isSubstantiveOperatingEvidence, meetsOperatingCompanyStandard,
+  operatingEvidenceIsInconclusive, MIN_INDEPENDENT_SOURCES,
+  QUALIFICATION_LABELS, QUALIFICATION_VERSION, WEBSITE_EVIDENCE_LABELS,
   type IssuerQualification, type QualificationResult, type ReasonCode,
+  type WebsiteEvidenceLevel,
 } from '../../shared/qualification';
 
 /**
@@ -102,8 +106,21 @@ export async function checkPublicCompany(cik: string): Promise<PublicCompanyChec
 // ── Website verification ──────────────────────────────────────────
 
 export interface WebsiteCheck {
+  /**
+   * IDENTITY confirmed: the page was reached and belongs to this issuer.
+   *
+   * Deliberately no longer the qualification signal. It used to be, and a
+   * reachable domain that named the company was enough to make a Form D
+   * into a qualified operating company. What it means now is narrower and
+   * accurate: we know whose site this is. Whether a business operates
+   * behind it is `level`.
+   */
   verified: boolean;
   url: string | null;
+  /** What the page established, on the shared scale. */
+  level: WebsiteEvidenceLevel;
+  /** Which content groups were found, for the audit trail. */
+  signals: string[];
   /** True when the page loaded but looks like a parked domain. */
   parked: boolean;
   /**
@@ -119,40 +136,45 @@ export interface WebsiteCheck {
 }
 
 /**
- * Confirm a company website actually resolves and looks like a real site.
+ * Fetch a company website and say what it establishes.
  *
  * Runs through the DNS-aware SSRF guard first — the URL comes from an
  * external filing and must not be allowed to point at internal
  * infrastructure.
+ *
+ * The judgement itself is `assessOperatingEvidence` in
+ * server/sourcing/pageSignals.ts, which is also what website DISCOVERY
+ * uses, so a domain cannot be recorded by one path and rejected by the
+ * other. That module is the only place website rules live.
  */
-export async function verifyWebsite(rawUrl: string | null | undefined): Promise<WebsiteCheck> {
-  if (!rawUrl) return { verified: false, url: null, parked: false, detail: 'No website on record.' };
+export async function verifyWebsite(
+  rawUrl: string | null | undefined,
+  companyName: string,
+): Promise<WebsiteCheck> {
+  const miss = (level: WebsiteEvidenceLevel, url: string | null, detail: string): WebsiteCheck =>
+    ({ verified: false, url, level, signals: [], parked: false, thin: false, detail });
+
+  if (!rawUrl) return miss('absent', null, 'No website on record.');
   const url = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
 
   if (!(await isSafeExternalUrlResolved(url))) {
-    return { verified: false, url, parked: false, detail: 'Website failed the SSRF safety check and was not fetched.' };
+    return miss('unreachable', url, 'Website failed the SSRF safety check and was not fetched.');
   }
   const res = await politeFetch(url, { headers: { 'User-Agent': SEC_UA } });
   if (!res.ok) {
-    return { verified: false, url, parked: false, detail: `Website did not respond (${res.failure ?? res.status}).` };
+    return miss('unreachable', url, `Website did not respond (${res.failure ?? res.status}).`);
   }
-  // The same detectors website DISCOVERY uses, so a domain cannot be
-  // recorded by one path and rejected by the other.
-  const parked = looksParkedOrPlaceholder(res.body) || titleIsBareDomain(res.body);
-  // A real product site has some substance. A 200 that returns almost
-  // nothing is not evidence of an operating business.
-  const thin = isThinPage(res.body);
 
-  if (parked) {
-    return { verified: false, url, parked: true, thin: false, detail: 'Website appears to be a parked or placeholder domain.' };
-  }
-  if (thin) {
-    return {
-      verified: false, url, parked: false, thin: true,
-      detail: 'Website responded but served almost no readable text — typically a client-rendered page. Not verified either way; needs a human.',
-    };
-  }
-  return { verified: true, url, parked: false, thin: false, detail: 'Website responded with real content.' };
+  const a = assessOperatingEvidence(res.body, companyName, url);
+  return {
+    verified: a.identityConfirmed,
+    url,
+    level: a.level,
+    signals: a.signals,
+    parked: a.level === 'parked',
+    thin: a.level === 'thin',
+    detail: a.detail,
+  };
 }
 
 // ── Corroboration ─────────────────────────────────────────────────
@@ -166,6 +188,12 @@ export interface CorroborationResult {
    */
   independentFamilies: string[];
   onlyEvidenceIsFormD: boolean;
+  /**
+   * Evidence rows that were NOT counted because the issuer published
+   * them. Kept rather than dropped so the UI can show what was set aside
+   * and why, instead of silently reporting a smaller number.
+   */
+  selfPublished: { sourceId: string; url: string; reason: string }[];
 }
 
 /**
@@ -198,13 +226,47 @@ function corroborationKey(sourceId: string, sourceName: string): string {
 }
 
 /**
- * Count independent corroboration for a company from its stored deal
- * evidence.
+ * Count independent FINANCING corroboration for a company from its stored
+ * deal evidence.
+ *
+ * Two exclusions, both of which say the same thing in different ways: an
+ * entity is not a source for its own financing.
+ *
+ *   - The `web` family. A company's website is evidence about the
+ *     company's OPERATIONS, and a good kind — but it is the issuer
+ *     talking, so it cannot corroborate the issuer's own filing. Counting
+ *     it is what let a Form D plus a bare domain reach two "independent"
+ *     sources, half of them the subject itself.
+ *
+ *   - Anything served from the company's own domain, whatever family the
+ *     adapter filed it under. A funding post on the company's own blog is
+ *     a self-announcement; the adapter that fetched it does not change
+ *     who wrote it.
+ *
+ * Excluded rows are returned rather than dropped, so a reader sees that we
+ * looked at them and why they do not count.
  */
 export function assessCorroboration(companyId: string): CorroborationResult {
   const evidence = listDealEvidence(companyId);
+  const ownDomain = normalizeDomainKey(getCompany(companyId)?.website ?? null);
+
   const byKey = new Map<string, typeof evidence[number]>();
+  const selfPublished: CorroborationResult['selfPublished'] = [];
   for (const e of evidence) {
+    if (familyOf(e.sourceId) === 'web') {
+      selfPublished.push({
+        sourceId: e.sourceId, url: e.url,
+        reason: 'The company\'s own website. Operating evidence, not an independent financing source.',
+      });
+      continue;
+    }
+    if (ownDomain && normalizeDomainKey(e.url) === ownDomain) {
+      selfPublished.push({
+        sourceId: e.sourceId, url: e.url,
+        reason: `Published on the company's own domain (${ownDomain}) — a self-announcement, not an independent account.`,
+      });
+      continue;
+    }
     const key = corroborationKey(e.sourceId, e.sourceName);
     // Keep the strongest (lowest tier) example per source.
     const existing = byKey.get(key);
@@ -220,7 +282,26 @@ export function assessCorroboration(companyId: string): CorroborationResult {
     independentFamilies: keys,
     // "Only a Form D" means: regulatory is the ONLY family present.
     onlyEvidenceIsFormD: keys.length > 0 && nonRegulatory.length === 0,
+    selfPublished,
   };
+}
+
+/**
+ * Is a financing event on record from a source that is not the issuer?
+ *
+ * Tier 1–2 only, financing event types only. An SBIR award is real money
+ * but non-dilutive, a product launch is not a round, and a tier-3 mention
+ * cannot establish a financing claim — those distinctions already exist in
+ * shared/opportunity.ts and are reused rather than restated.
+ */
+export function hasStrongFinancingEvidence(companyId: string): boolean {
+  const ownDomain = normalizeDomainKey(getCompany(companyId)?.website ?? null);
+  return listDealEvidence(companyId).some((e) => (
+    FINANCING_EVENT_TYPES.includes(e.opportunityType)
+    && e.tier <= 2
+    && familyOf(e.sourceId) !== 'web'
+    && !(ownDomain && normalizeDomainKey(e.url) === ownDomain)
+  ));
 }
 
 // ── The verdict ───────────────────────────────────────────────────
@@ -234,6 +315,12 @@ export interface QualifyOptions {
   publicCheck?: PublicCompanyCheck;
   /** Pre-fetched website answer. */
   websiteCheck?: WebsiteCheck;
+  /**
+   * Compute the verdict without storing it. Used by the dry-run reporter,
+   * so what a reviewer is shown before a change is produced by the same
+   * code that will make it rather than by a second implementation.
+   */
+  dryRun?: boolean;
 }
 
 const DAY = 86_400_000;
@@ -250,11 +337,14 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   const reasons: ReasonCode[] = [];
   const humanReview: string[] = [];
 
+  const save = (q: IssuerQualification) => (opts.dryRun ? q : persist(q));
+
   if (!company) {
-    return persist({
+    return save({
       companyId, result: 'insufficient-evidence', operatingConfidence: 0,
       websiteVerified: false, websiteUrl: null, isPubliclyTraded: false, ticker: null,
       isFundOrSpv: false, parentEntity: null, corroboratingSources: [],
+      operatingEvidence: { level: 'absent', url: null, signals: [], detail: 'Company record not found.' },
       reasonCodes: [], fieldsRequiringHumanReview: ['Company record not found.'],
       qualifiedAt: new Date().toISOString(), version: QUALIFICATION_VERSION,
     });
@@ -304,11 +394,16 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
     if (publicCheck.periodicForms.length > 0) reasons.push('files-periodic-reports');
   }
 
-  // 4. Corroboration.
+  // 4. Financing corroboration — who OTHER THAN the issuer says money
+  //    moved. The company's own website is not one of them.
   const corr = assessCorroboration(companyId);
   if (corr.onlyEvidenceIsFormD) reasons.push('only-evidence-is-form-d');
+  if (corr.selfPublished.length > 0) reasons.push('self-published-evidence-excluded');
   const independentCount = corr.independentFamilies.length;
   reasons.push(independentCount >= MIN_INDEPENDENT_SOURCES ? 'has-independent-corroboration' : 'no-independent-corroboration');
+
+  const strongFinancing = hasStrongFinancingEvidence(companyId);
+  reasons.push(strongFinancing ? 'strong-financing-evidence' : 'no-strong-financing-evidence');
 
   // 5. Website — the expensive check, so it runs last.
   //
@@ -327,20 +422,54 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   //    could change that answer — and that case is recorded honestly as
   //    "not checked" rather than as a failure.
   const alreadyDisqualified = publicCheck.isPubliclyTraded || nameFundOrSpv || nameIsNotACompany;
-  let websiteCheck: WebsiteCheck = opts.websiteCheck
-    ?? { verified: false, url: company.website ?? null, parked: false, detail: 'Not checked.' };
-  let websiteChecked = !!opts.websiteCheck;
+  let websiteCheck: WebsiteCheck = opts.websiteCheck ?? {
+    verified: false, url: company.website ?? null,
+    level: company.website ? 'not-checked' : 'absent',
+    signals: [], parked: false, detail: 'Not checked.',
+  };
   if (!opts.websiteCheck && !opts.offline && !alreadyDisqualified && company.website) {
-    websiteCheck = await verifyWebsite(company.website);
-    websiteChecked = true;
+    websiteCheck = await verifyWebsite(company.website, company.name);
   }
-  if (websiteCheck.verified) reasons.push('website-verified');
-  else if (!company.website) reasons.push('website-absent');
-  else if (!websiteChecked) reasons.push('website-not-checked');
-  else if (websiteCheck.parked) reasons.push('website-parked-or-placeholder');
-  else if (websiteCheck.thin) reasons.push('website-thin-or-client-rendered');
-  else reasons.push('website-unreachable');
+  const operatingLevel: WebsiteEvidenceLevel = websiteCheck.level;
 
+  // Identity and operations are reported separately, because they are
+  // separate findings and reporting one as the other is the whole bug.
+  if (websiteCheck.verified) reasons.push('website-verified');
+  const LEVEL_REASONS: Partial<Record<WebsiteEvidenceLevel, ReasonCode>> = {
+    absent: 'website-absent',
+    'not-checked': 'website-not-checked',
+    unreachable: 'website-unreachable',
+    parked: 'website-parked-or-placeholder',
+    thin: 'website-thin-or-client-rendered',
+    unrelated: 'website-unrelated-to-issuer',
+    undetermined: 'website-not-interpretable',
+    'identity-only': 'website-identity-only',
+    substantive: 'website-substantive-operating-evidence',
+  };
+  const levelReason = LEVEL_REASONS[operatingLevel];
+  if (levelReason) reasons.push(levelReason);
+
+  /**
+   * Does the issuer describe an operating business?
+   *
+   * This used to be `company.oneLiner`, which sounds reasonable until you
+   * see where oneLiner comes from for a press-sourced record: it is the
+   * ARTICLE HEADLINE (server/services/fundingNews.ts, investorNews.ts).
+   * "Ramp raises $750M at $44B valuation" is a fact about a financing
+   * round; treating it as proof that the issuer describes a product meant
+   * a headline was standing in for a product description. For an
+   * SEC-sourced record oneLiner is literally "Unknown — not stated by the
+   * source", so the field was doing no work there at all.
+   *
+   * Operating evidence now comes from where an operating description
+   * actually lives: the issuer's own site, judged by the shared detector.
+   */
+  const operatingConfirmed = isSubstantiveOperatingEvidence(operatingLevel);
+  reasons.push(operatingConfirmed ? 'operating-evidence-confirmed' : 'operating-evidence-unconfirmed');
+
+  // Kept as a distinct, weaker signal: a human-written description on the
+  // record. Not sufficient for the gate, still useful for deciding whether
+  // a record deserves a human's attention rather than silent dismissal.
   const hasProductDescription = !!company.oneLiner
     && !/^unknown/i.test(company.oneLiner)
     && company.oneLiner.trim().length > 12;
@@ -387,19 +516,40 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   } else if (!websiteCheck.verified && !hasProductDescription && independentCount < MIN_INDEPENDENT_SOURCES) {
     // Nothing about this entity is confirmable.
     result = 'insufficient-evidence';
-  } else if (websiteCheck.verified && independentCount >= MIN_INDEPENDENT_SOURCES) {
+  } else if (meetsOperatingCompanyStandard({
+    independentFinancingSources: independentCount,
+    operatingEvidence: operatingLevel,
+  })) {
+    // An independent financing source AND the issuer describing a real
+    // business. Note what is NOT demanded: a second news article. See
+    // meetsOperatingCompanyStandard in shared/qualification.ts.
     result = 'qualified-operating-company';
-  } else if (independentCount >= MIN_INDEPENDENT_SOURCES && hasProductDescription) {
-    // Corroborated and describes a product, but we could not confirm the
-    // site. A human can settle it quickly.
+  } else if (operatingEvidenceIsInconclusive(operatingLevel) && (strongFinancing || independentCount >= MIN_INDEPENDENT_SOURCES)) {
+    // The financing side holds up and the operating question is genuinely
+    // open — the page would not render for us, or would not load. That is
+    // a limit of this checker, not a finding about the company, so it goes
+    // to a person rather than being recorded as an absence.
     result = 'human-review-required';
-    humanReview.push('Independent corroboration exists but the website could not be verified — confirm the company is operating.');
+    humanReview.push(
+      `Financing evidence is on record, but operating evidence is unconfirmed: `
+      + `${WEBSITE_EVIDENCE_LABELS[operatingLevel].toLowerCase()}. ${websiteCheck.detail} `
+      + 'Open the site and confirm the company describes a product, service, or technology.',
+    );
   } else {
+    // Includes the case this change exists for: strong financing evidence
+    // plus a website that only proves who owns a domain.
     result = 'company-lead-requires-corroboration';
+    if (strongFinancing && !operatingConfirmed) {
+      humanReview.push(
+        `Financing evidence is on record, but ${company.name} does not describe an operating business `
+        + `where one would be described: ${websiteCheck.detail}`,
+      );
+    }
   }
 
   const operatingConfidence = scoreOperating({
-    websiteVerified: websiteCheck.verified,
+    operatingLevel,
+    identityConfirmed: websiteCheck.verified,
     independentCount,
     hasProductDescription,
     isPublic: publicCheck.isPubliclyTraded,
@@ -410,7 +560,7 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
 
   if (!websiteCheck.verified && company.website) humanReview.push(`Website ${company.website} did not verify: ${websiteCheck.detail}`);
 
-  return persist({
+  return save({
     companyId,
     result,
     operatingConfidence,
@@ -421,6 +571,12 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
     isFundOrSpv: nameFundOrSpv,
     parentEntity: null,
     corroboratingSources: corr.sources,
+    operatingEvidence: {
+      level: operatingLevel,
+      url: websiteCheck.url,
+      signals: websiteCheck.signals,
+      detail: websiteCheck.detail,
+    },
     reasonCodes: [...new Set(reasons)],
     fieldsRequiringHumanReview: humanReview,
     qualifiedAt: new Date().toISOString(),
@@ -428,15 +584,26 @@ export async function qualifyIssuer(companyId: string, opts: QualifyOptions = {}
   });
 }
 
+/**
+ * How confident we are that this is a real operating company.
+ *
+ * The weights follow the same correction as the verdict. Reaching a
+ * domain used to be worth 0.45 — the single largest term — which put a
+ * shell with a landing page within reach of a high score. Identity is now
+ * worth a little and OPERATING substance is worth a lot, because that is
+ * the ordering of what the two facts actually tell you.
+ */
 function scoreOperating(f: {
-  websiteVerified: boolean; independentCount: number; hasProductDescription: boolean;
+  operatingLevel: WebsiteEvidenceLevel; identityConfirmed: boolean;
+  independentCount: number; hasProductDescription: boolean;
   isPublic: boolean; isFundOrSpv: boolean; isNotACompany?: boolean; withinYear: boolean;
 }): number {
   // No confidence is expressible about an entity that was never named.
   if (f.isPublic || f.isFundOrSpv || f.isNotACompany) return 0;
   let s = 0;
-  if (f.websiteVerified) s += 0.45;
-  if (f.hasProductDescription) s += 0.2;
+  if (isSubstantiveOperatingEvidence(f.operatingLevel)) s += 0.4;
+  else if (f.identityConfirmed) s += 0.1;
+  if (f.hasProductDescription) s += 0.15;
   s += Math.min(0.3, f.independentCount * 0.15);
   if (f.withinYear) s += 0.05;
   return Math.round(Math.min(1, s) * 100) / 100;
@@ -460,8 +627,8 @@ function persist(q: IssuerQualification): IssuerQualification {
       company_id, result, operating_confidence, website_verified, website_url,
       is_publicly_traded, ticker, is_fund_or_spv, parent_entity,
       corroborating_sources, reason_codes, fields_requiring_human_review,
-      qualified_at, version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      qualified_at, version, operating_evidence
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (company_id) DO UPDATE SET
       result = excluded.result,
       operating_confidence = excluded.operating_confidence,
@@ -475,15 +642,28 @@ function persist(q: IssuerQualification): IssuerQualification {
       reason_codes = excluded.reason_codes,
       fields_requiring_human_review = excluded.fields_requiring_human_review,
       qualified_at = excluded.qualified_at,
-      version = excluded.version
+      version = excluded.version,
+      operating_evidence = excluded.operating_evidence
   `).run(
     q.companyId, q.result, q.operatingConfidence, q.websiteVerified ? 1 : 0, q.websiteUrl,
     q.isPubliclyTraded ? 1 : 0, q.ticker, q.isFundOrSpv ? 1 : 0, q.parentEntity,
     JSON.stringify(q.corroboratingSources), JSON.stringify(q.reasonCodes),
     JSON.stringify(q.fieldsRequiringHumanReview), q.qualifiedAt, q.version,
+    JSON.stringify(q.operatingEvidence),
   );
   return q;
 }
+
+/**
+ * The stored operating-evidence verdict, tolerant of rows written before
+ * the column existed. An absent value is reported as "not checked" rather
+ * than as an absence of evidence — the two are different claims, and the
+ * honest one is that this row predates the question.
+ */
+const NOT_CHECKED: IssuerQualification['operatingEvidence'] = {
+  level: 'not-checked', url: null, signals: [],
+  detail: 'Recorded before operating evidence was assessed separately from identity.',
+};
 
 export function getQualification(companyId: string): IssuerQualification | null {
   const r = getDb().prepare('SELECT * FROM issuer_qualification WHERE company_id = ?')
@@ -500,6 +680,9 @@ export function getQualification(companyId: string): IssuerQualification | null 
     isFundOrSpv: Number(r.is_fund_or_spv) === 1,
     parentEntity: (r.parent_entity as string | null) ?? null,
     corroboratingSources: JSON.parse(String(r.corroborating_sources ?? '[]')),
+    operatingEvidence: r.operating_evidence
+      ? JSON.parse(String(r.operating_evidence))
+      : NOT_CHECKED,
     reasonCodes: JSON.parse(String(r.reason_codes ?? '[]')),
     fieldsRequiringHumanReview: JSON.parse(String(r.fields_requiring_human_review ?? '[]')),
     qualifiedAt: String(r.qualified_at),

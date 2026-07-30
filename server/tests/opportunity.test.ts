@@ -87,6 +87,10 @@ describe('opportunity classification', () => {
         }),
       ],
       today: TODAY,
+      // The website evidence ROW is not the fact that matters — a row
+      // exists as soon as a domain responds. What matters is what the site
+      // established, which the qualification verdict carries.
+      operatingEvidence: 'substantive',
     });
     expect(r.classification).toBe('verified-current-opportunity');
   });
@@ -107,6 +111,7 @@ describe('opportunity classification', () => {
         }),
       ],
       today: TODAY,
+      operatingEvidence: 'substantive',
     });
     expect(r.classification).toBe('credible-fundraising-signal');
   });

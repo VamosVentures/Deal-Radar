@@ -407,6 +407,28 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_classification_history_company ON classification_history (company_id);
     `,
   },
+  {
+    version: 9,
+    name: 'operating-evidence-separate-from-identity',
+    sql: `
+      -- A company's own website was counted as independent corroboration,
+      -- which let a Form D plus a domain that merely LOADS reach
+      -- 'qualified-operating-company' — AEGIS FINTECH LTD., a $100M
+      -- offering with no discoverable product, among them.
+      --
+      -- Three questions were being answered by one fact: did a financing
+      -- event occur, does this website belong to this issuer, and does the
+      -- issuer describe an actual business. The third was never asked.
+      --
+      -- corroborating_sources now holds independent FINANCING sources only
+      -- (never the issuer itself); this column holds what the issuer's own
+      -- site established, on its own scale. Existing rows get no value and
+      -- are read back as 'not-checked' — honest, because at the time they
+      -- were written the question was not being asked. Re-running
+      -- qualification fills them in.
+      ALTER TABLE issuer_qualification ADD COLUMN operating_evidence TEXT;
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

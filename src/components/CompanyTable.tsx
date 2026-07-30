@@ -15,6 +15,7 @@ import { useCompanies } from '../store/companies';
 import { btnGhost, btnPrimary } from './Modal';
 import { api, ApiError, type PossibleDuplicateEntry, type RefreshResearchResult } from '../lib/api';
 import type { CompanyStatus } from '../../shared/integrations';
+import { meetsOperatingCompanyStandard } from '../../shared/qualification';
 
 const BULK_ACTIONS: CompanyStatus[] = ['Awaiting Review', 'Research Needed', 'Monitor', 'Passed'];
 type SortMode = 'fit' | 'evidence-recency' | 'discovery-date';
@@ -160,7 +161,14 @@ export function CompanyTable({
         if (tierFilter !== 'all' && String(opp?.primaryTier ?? '') !== tierFilter) return false;
         if (verifiedAmountOnly && opp?.amountUsd == null) return false;
         if (verifiedRoundOnly && !opp?.roundType) return false;
-        if (missingCorroboration && (qual?.corroboratingSources.length ?? 0) >= 2) return false;
+        // "Corroborated" means the same thing here as it does in
+        // qualification and on the shortlist — an independent financing
+        // source AND the issuer describing a real business. It used to be a
+        // bare count of >= 2 sources that included the company's own site.
+        if (missingCorroboration && meetsOperatingCompanyStandard({
+          independentFinancingSources: qual?.corroboratingSources.length ?? 0,
+          operatingEvidence: qual?.operatingEvidence?.level ?? 'not-checked',
+        })) return false;
         if (humanReviewOnly && qual?.result !== 'human-review-required') return false;
         if (publicWarnOnly && !qual?.isPubliclyTraded) return false;
         if (fundWarnOnly && !qual?.isFundOrSpv) return false;
@@ -352,7 +360,10 @@ export function CompanyTable({
               <input type="checkbox" checked={verifiedRoundOnly} onChange={(e) => setVerifiedRoundOnly(e.target.checked)} />
               Verified round
             </label>
-            <label className="flex items-center gap-1.5" title="Fewer than two independent source families.">
+            <label
+              className="flex items-center gap-1.5"
+              title="No independent financing source, or no substantive evidence that the issuer describes an operating business."
+            >
               <input type="checkbox" checked={missingCorroboration} onChange={(e) => setMissingCorroboration(e.target.checked)} />
               Missing corroboration
             </label>

@@ -1,7 +1,10 @@
 import type { DealEvidence, Opportunity, OpportunityClass, SourceTier } from '../../shared/opportunity';
-import type { IssuerQualification, QualificationResult } from '../../shared/qualification';
+import type { IssuerQualification, QualificationResult, WebsiteEvidenceLevel } from '../../shared/qualification';
 import { OPPORTUNITY_CLASS_MEANINGS, isLiveDeal } from '../../shared/opportunity';
-import { QUALIFICATION_LABELS, REASON_TEXT } from '../../shared/qualification';
+import {
+  isSubstantiveOperatingEvidence, operatingEvidenceIsInconclusive,
+  QUALIFICATION_LABELS, REASON_TEXT, WEBSITE_EVIDENCE_LABELS, WEBSITE_EVIDENCE_MEANINGS,
+} from '../../shared/qualification';
 
 /**
  * Making the deal/lead distinction visible.
@@ -47,17 +50,54 @@ export function TierBadge({ tier }: { tier: SourceTier }) {
   return <span className={`${chip} ${cls}`} title={title}>T{tier}</span>;
 }
 
-/** A count of INDEPENDENT sources, which is the number that decides qualification. */
+/**
+ * A count of independent FINANCING sources.
+ *
+ * The label used to read "src" and the count used to include the company's
+ * own website, so a Form D plus a domain displayed as "2 src" — the issuer
+ * corroborating itself, shown to a reviewer as independent agreement. The
+ * website has its own badge now, next to this one, because they answer
+ * different questions.
+ */
 export function CorroborationBadge({ count }: { count: number }) {
-  const ok = count >= 2;
+  const ok = count >= 1;
   return (
     <span
       className={`${chip} ${ok ? 'bg-verde-soft text-verde border-verde/30' : 'bg-alerta-soft text-alerta border-alerta/40'}`}
       title={ok
-        ? `${count} independent source families corroborate this record.`
-        : `Only ${count} source family. A live opportunity needs at least 2 independent sources — a single filing is not a deal.`}
+        ? `${count} independent financing source${count === 1 ? '' : 's'} on record — someone other than the company says money moved. `
+          + 'The company\'s own website is never counted here.'
+        : 'No independent financing source. Nothing other than the company itself indicates a financing event.'}
     >
-      {count} src
+      {count} fin
+    </span>
+  );
+}
+
+/**
+ * What the company's own website established — the question a filing
+ * cannot answer and a DNS record cannot answer.
+ */
+export function OperatingEvidenceBadge({ level }: { level: WebsiteEvidenceLevel }) {
+  const tone = level === 'substantive'
+    ? 'bg-verde-soft text-verde border-verde/30'
+    : operatingEvidenceIsInconclusive(level)
+      ? 'bg-marigold-soft text-marigold border-marigold/40'
+      : 'bg-alerta-soft text-alerta border-alerta/40';
+  const short: Record<WebsiteEvidenceLevel, string> = {
+    absent: 'No site',
+    'not-checked': 'Site unchecked',
+    unreachable: 'Site down',
+    parked: 'Parked',
+    thin: 'Site unreadable',
+    unrelated: 'Wrong site',
+    undetermined: 'Site unread',
+    'identity-only': 'Identity only',
+    substantive: 'Operating',
+  };
+  return (
+    <span className={`${chip} ${tone}`} title={`Operating evidence — ${WEBSITE_EVIDENCE_LABELS[level]}. ${WEBSITE_EVIDENCE_MEANINGS[level]}`}>
+      {short[level]}
     </span>
   );
 }
@@ -119,6 +159,7 @@ export function OpportunityBadges({
         : <OpportunityClassBadge classification="company-lead" title="Not yet classified. Treated as a lead — never as a deal by omission." />}
       {opportunity && <TierBadge tier={opportunity.primaryTier} />}
       {qualification && <CorroborationBadge count={corr} />}
+      {qualification && <OperatingEvidenceBadge level={qualification.operatingEvidence?.level ?? 'not-checked'} />}
       {qualification && qualification.result !== 'qualified-operating-company'
         && qualification.result !== 'company-lead-requires-corroboration'
         && <QualificationBadge result={qualification.result} />}
@@ -135,6 +176,109 @@ export function OpportunityBadges({
       )}
       {quarantined && <DisqualifiedBadge reason={quarantined.reason} />}
     </span>
+  );
+}
+
+/**
+ * The three kinds of evidence, kept visibly apart.
+ *
+ * This section replaces a single list headed "Independent sources", which
+ * counted the company's own website among them. A reviewer reading that
+ * list saw "2 independent sources" for a record whose second source was
+ * the subject of the first — and there was no way to tell from the screen,
+ * because the display collapsed three different questions into one number.
+ *
+ * So each question gets its own answer, and the last one names what is
+ * still open rather than leaving a reader to notice an absence.
+ */
+function EvidenceBreakdown({ qualification }: { qualification: IssuerQualification }) {
+  const financing = qualification.corroboratingSources;
+  const operating = qualification.operatingEvidence ?? {
+    level: 'not-checked' as WebsiteEvidenceLevel, url: null, signals: [], detail: 'Not checked.',
+  };
+  const substantive = isSubstantiveOperatingEvidence(operating.level);
+  const identityOnly = !substantive && operating.url !== null
+    && (operating.level === 'identity-only' || operating.level === 'undetermined');
+
+  const heading = 'font-mono text-[10px] uppercase tracking-widest text-slate-mid';
+  const unverified: string[] = [];
+  if (financing.length === 0) unverified.push('No independent source states that a financing event occurred.');
+  if (!substantive) {
+    unverified.push(
+      `Operating evidence — whether this issuer actually describes a product, service, technology, or `
+      + `operating business — is not established: ${WEBSITE_EVIDENCE_LABELS[operating.level].toLowerCase()}. `
+      + WEBSITE_EVIDENCE_MEANINGS[operating.level],
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div>
+        <div className={heading}>Financing evidence ({financing.length} independent)</div>
+        {financing.length === 0
+          ? (
+            <p className="mt-0.5 text-slate-mid">
+              None. Nothing other than the company itself indicates a financing event.
+            </p>
+          )
+          : (
+            <>
+              <ul className="mt-0.5 space-y-0.5">
+                {financing.map((s) => (
+                  <li key={s.url}>
+                    <span className="font-mono text-[10px] uppercase text-slate-mid">{s.family}</span>{' '}
+                    <a href={s.url} target="_blank" rel="noreferrer" className="text-marigold underline decoration-dotted">
+                      {s.sourceId}
+                    </a>
+                    {s.publishedAt ? <span className="text-slate-mid"> · {s.publishedAt}</span> : <span className="text-slate-mid"> · undated</span>}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-0.5 text-[10px] text-slate-mid opacity-80">
+                Proves a financing event occurred. The company&rsquo;s own website is never counted here — an
+                entity is not a source for its own round.
+              </p>
+            </>
+          )}
+      </div>
+
+      <div>
+        <div className={heading}>Operating-company evidence</div>
+        <p className="mt-0.5 text-slate-mid">
+          <span className={substantive ? 'font-semibold text-verde' : 'font-semibold'}>
+            {WEBSITE_EVIDENCE_LABELS[operating.level]}.
+          </span>{' '}
+          {operating.detail}
+        </p>
+        {operating.signals.length > 0 && (
+          <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[10px] text-slate-mid">
+            {operating.signals.map((s) => <li key={s}>{s}</li>)}
+          </ul>
+        )}
+      </div>
+
+      {identityOnly && operating.url && (
+        <div>
+          <div className={heading}>Identity-only website evidence</div>
+          <p className="mt-0.5 text-slate-mid">
+            <a href={operating.url} target="_blank" rel="noreferrer" className="text-marigold underline decoration-dotted">
+              {operating.url}
+            </a>{' '}
+            is confirmed to belong to this company. That establishes who owns a domain — not that a business
+            operates behind it, and not that a financing event happened.
+          </p>
+        </div>
+      )}
+
+      {unverified.length > 0 && (
+        <div className="rounded-[2px] border border-marigold/40 bg-marigold-soft px-2 py-1.5 text-marigold">
+          <div className="font-mono text-[10px] uppercase tracking-widest">What remains unverified</div>
+          <ul className="mt-0.5 list-disc space-y-0.5 pl-4">
+            {unverified.map((u) => <li key={u}>{u}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -186,24 +330,7 @@ export function QualificationExplainer({
         </div>
       )}
 
-      {qualification && qualification.corroboratingSources.length > 0 && (
-        <div>
-          <div className="font-mono text-[10px] uppercase tracking-widest text-slate-mid">
-            Independent sources ({qualification.corroboratingSources.length})
-          </div>
-          <ul className="mt-0.5 space-y-0.5">
-            {qualification.corroboratingSources.map((s) => (
-              <li key={s.url}>
-                <span className="font-mono text-[10px] uppercase text-slate-mid">{s.family}</span>{' '}
-                <a href={s.url} target="_blank" rel="noreferrer" className="text-marigold underline decoration-dotted">
-                  {s.sourceId}
-                </a>
-                {s.publishedAt ? <span className="text-slate-mid"> · {s.publishedAt}</span> : <span className="text-slate-mid"> · undated</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {qualification && <EvidenceBreakdown qualification={qualification} />}
 
       {opportunity && opportunity.conflicts.length > 0 && (
         <div className="rounded-[2px] border border-marigold/40 bg-marigold-soft px-2 py-1.5 text-marigold">
@@ -377,8 +504,9 @@ export function ReportingSources({ evidence }: { evidence: DealEvidence[] }) {
       {supporting.length > 0 && (
         <div className="border border-line border-l-[3px] border-l-line bg-panel px-2 py-1.5">
           <div className="font-mono text-[10px] text-slate-mid">
-            Supporting records — corroborate that the company exists and operates. Undated, so they cannot
-            establish currency, and they cannot verify a financing amount.
+            Supporting records — where the company describes itself. Undated, so they cannot establish
+            currency; self-published, so they are never counted as independent financing sources. What they
+            establish about the business is judged above, under operating-company evidence.
           </div>
           <ul className="mt-0.5 space-y-0.5">
             {supporting.map((r) => (

@@ -8,7 +8,12 @@ import {
   MAX_YC_PRIMARY_PER_SECTOR, TARGET_SOURCE_FAMILIES_PER_SECTOR,
   type DealEvidence, type DiversityReport, type Opportunity, type OpportunityType,
 } from '../../shared/opportunity';
-import { MAX_SEC_PRIMARY_PER_SECTOR, MIN_INDEPENDENT_SOURCES } from '../../shared/qualification';
+import {
+  isSubstantiveOperatingEvidence, meetsOperatingCompanyStandard,
+  MAX_SEC_PRIMARY_PER_SECTOR, MIN_INDEPENDENT_SOURCES,
+  WEBSITE_EVIDENCE_LABELS, WEBSITE_EVIDENCE_MEANINGS,
+  type WebsiteEvidenceLevel,
+} from '../../shared/qualification';
 import type { VerticalId } from '../../src/types';
 
 /**
@@ -147,8 +152,33 @@ export interface ShortlistCandidate {
   fitScore: number;
   /** Taken out of the live shortlist without destroying its evidence. */
   quarantined?: boolean;
-  /** Independent corroborating sources on the qualification verdict. */
+  /** Independent FINANCING sources on the qualification verdict — never the company itself. */
   independentSources?: number;
+  /** What the issuer's own site established, from the qualification verdict. */
+  operatingEvidence?: WebsiteEvidenceLevel;
+}
+
+/**
+ * Which half of the bar this candidate missed.
+ *
+ * "Insufficient corroboration" covers two quite different situations and
+ * saying the same thing about both would send a reviewer looking for the
+ * wrong missing piece: a company with no independent account of its
+ * financing needs a second source, and a company whose site proves only
+ * that it owns a domain needs somebody to look at the business.
+ */
+function insufficientCorroborationReason(c: ShortlistCandidate): string {
+  const n = c.independentSources ?? 0;
+  const level = c.operatingEvidence ?? 'not-checked';
+  if (n >= 1 && !isSubstantiveOperatingEvidence(level)) {
+    return `Financing evidence is on record, but operating evidence is not: ${WEBSITE_EVIDENCE_LABELS[level].toLowerCase()}. `
+      + `${WEBSITE_EVIDENCE_MEANINGS[level]} A live opportunity needs the issuer to describe an actual product, `
+      + 'service, technology, or operating business — a domain that resolves is not that.';
+  }
+  return `Insufficient corroboration: ${n} independent financing source${n === 1 ? '' : 's'} on record `
+    + `and no substantive operating evidence. A live opportunity needs an independent account of the financing `
+    + `plus the issuer describing a real business, or ${MIN_INDEPENDENT_SOURCES} independent financing sources `
+    + 'and a human confirmation. One account of an event is not corroboration of it.';
 }
 
 /**
@@ -273,8 +303,17 @@ export function selectSectorShortlist(
       hold(c, 'quarantined', 'Quarantined: taken out of the live shortlist pending review. Its evidence is retained — see the company record for the specific quarantine reason.', 0);
       continue;
     }
-    if (c.independentSources !== undefined && c.independentSources < MIN_INDEPENDENT_SOURCES) {
-      hold(c, 'insufficient-corroboration', `Insufficient corroboration: ${c.independentSources} independent source${c.independentSources === 1 ? '' : 's'} on record, and a live opportunity needs ${MIN_INDEPENDENT_SOURCES} from different source families. One account of an event is not corroboration of it.`, 0);
+    // The same bar qualification applies, read from the same function, so
+    // the two locks cannot drift apart. It used to be a bare count of
+    // sources, and once the company's own website stopped counting as one
+    // of them a bare count would have held back every legitimate record
+    // that had a filing and a real product site — the opposite error to
+    // the one being fixed.
+    if (c.independentSources !== undefined && !meetsOperatingCompanyStandard({
+      independentFinancingSources: c.independentSources,
+      operatingEvidence: c.operatingEvidence ?? 'not-checked',
+    })) {
+      hold(c, 'insufficient-corroboration', insufficientCorroborationReason(c), 0);
       continue;
     }
     contenders.push(c);
@@ -388,13 +427,17 @@ export function buildShortlists(verticals: VerticalId[], opts: SelectOptions = {
     (db.prepare('SELECT id FROM companies WHERE quarantined = 1').all() as { id: string }[])
       .map((r) => r.id),
   );
-  const sourceCount = new Map(
-    (db.prepare('SELECT company_id, corroborating_sources FROM issuer_qualification').all() as
-      { company_id: string; corroborating_sources: string }[])
+  const standing = new Map(
+    (db.prepare('SELECT company_id, corroborating_sources, operating_evidence FROM issuer_qualification').all() as
+      { company_id: string; corroborating_sources: string; operating_evidence: string | null }[])
       .map((q) => {
         let n = 0;
         try { n = (JSON.parse(q.corroborating_sources) as unknown[]).length; } catch { n = 0; }
-        return [q.company_id, n] as const;
+        let level: WebsiteEvidenceLevel = 'not-checked';
+        try {
+          if (q.operating_evidence) level = (JSON.parse(q.operating_evidence) as { level: WebsiteEvidenceLevel }).level;
+        } catch { level = 'not-checked'; }
+        return [q.company_id, { n, level }] as const;
       }),
   );
 
@@ -411,10 +454,12 @@ export function buildShortlists(verticals: VerticalId[], opts: SelectOptions = {
           opportunity,
           fitScore: latestScore(c.id)?.score ?? 0,
           quarantined: quarantinedIds.has(c.id),
-          // Absent verdict → 0, which the guard reads as uncorroborated.
-          // The reclassify gate already demotes such a record off the live
-          // list; this is the second lock on the same door.
-          independentSources: sourceCount.get(c.id) ?? 0,
+          // Absent verdict → 0 sources and unchecked operating evidence,
+          // which the guard reads as uncorroborated. The reclassify gate
+          // already demotes such a record off the live list; this is the
+          // second lock on the same door.
+          independentSources: standing.get(c.id)?.n ?? 0,
+          operatingEvidence: standing.get(c.id)?.level ?? 'not-checked',
         };
       });
     return selectSectorShortlist(v, pool, opts);

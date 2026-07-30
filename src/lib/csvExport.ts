@@ -1,5 +1,8 @@
 import type { Company, FitScore } from '../types';
-import { QUALIFICATION_LABELS, type QualificationResult } from '../../shared/qualification';
+import {
+  QUALIFICATION_LABELS, WEBSITE_EVIDENCE_LABELS,
+  type QualificationResult, type WebsiteEvidenceLevel,
+} from '../../shared/qualification';
 
 /**
  * CSV export of the company review queue.
@@ -19,7 +22,13 @@ export interface ExportRow {
   company: Company;
   fit: FitScore;
   opportunity?: { classification: string; primarySourceId: string; primaryTier: number; evidenceUrl: string; evidencePublishedAt: string | null; amountText: string | null; roundType: string | null } | undefined;
-  qualification?: { result: string; corroboratingSources: unknown[] } | undefined;
+  qualification?: {
+    result: string;
+    /** Independent FINANCING sources — never the company's own website. */
+    corroboratingSources: unknown[];
+    /** What the issuer's own site established. Separate question, separate column. */
+    operatingEvidence?: { level: WebsiteEvidenceLevel } | undefined;
+  } | undefined;
   quarantine?: { reason: string } | undefined;
   reviewStatus?: string | undefined;
 }
@@ -51,7 +60,8 @@ export const EXPORT_COLUMNS = [
   'Evidence confidence (%)',
   'Opportunity classification',
   'Qualification verdict',
-  'Independent sources',
+  'Independent financing sources',
+  'Operating-company evidence',
   'Disqualified',
   'Disqualification reason',
   'Review status',
@@ -108,6 +118,7 @@ export function toCsvRow(row: ExportRow): string {
     classificationLabel(opp?.classification),
     qualificationLabel(qual?.result),
     qual ? (qual.corroboratingSources?.length ?? 0) : 0,
+    qual ? WEBSITE_EVIDENCE_LABELS[qual.operatingEvidence?.level ?? 'not-checked'] : 'Not checked',
     quar ? 'yes' : 'no',
     quar?.reason ?? '',
     row.reviewStatus ?? 'New',

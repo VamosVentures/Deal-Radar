@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { WebsiteEvidenceLevel } from './qualification';
 
 /**
  * Telling a COMPANY LEAD apart from a LIVE DEAL.
@@ -197,6 +198,12 @@ export interface ClassifyInput {
   evidence: DealEvidence[];
   /** Today, as YYYY-MM-DD. Injected so tests are deterministic. */
   today?: string;
+  /**
+   * What the issuer's own website established, from the qualification
+   * verdict. Absent means nobody has looked yet, which is treated as not
+   * established — never as established.
+   */
+  operatingEvidence?: WebsiteEvidenceLevel;
 }
 
 export interface ClassificationResult {
@@ -248,15 +255,22 @@ export function classifyOpportunity(input: ClassifyInput): ClassificationResult 
   );
   /**
    * A recent accelerator batch only counts as a fundraising signal when we
-   * have ALSO confirmed the company is an operating business with a live
-   * site. A directory row on its own proves participation in a cohort, and
-   * a cohort is not a raise — that conflation is what put 35 YC listings
-   * on the dashboard as though they were deals.
+   * have ALSO confirmed the company is an operating business. A directory
+   * row on its own proves participation in a cohort, and a cohort is not a
+   * raise — that conflation is what put 35 YC listings on the dashboard as
+   * though they were deals.
+   *
+   * "Confirmed as operating" used to mean the mere PRESENCE of a website
+   * evidence row, which is the same mistake qualification was making: a
+   * row exists as soon as a domain responds, so a parked page satisfied
+   * it. It now means what it says, on the shared scale — and the fact is
+   * taken from the qualification verdict rather than re-derived here, so
+   * there is one answer to the question in the codebase.
    */
-  const hasVerifiedWebsite = input.evidence.some((e) => e.sourceId === 'websites');
+  const hasSubstantiveOperatingEvidence = input.operatingEvidence === 'substantive';
   const raising = current.filter((e) => e.tier <= 2 && (
     e.opportunityType === 'explicit-raising-statement'
-    || (e.opportunityType === 'accelerator-batch' && hasVerifiedWebsite)
+    || (e.opportunityType === 'accelerator-batch' && hasSubstantiveOperatingEvidence)
   ));
   const commercialization = current.filter(
     (e) => COMMERCIALIZATION_EVENT_TYPES.includes(e.opportunityType) && e.tier <= 2,
