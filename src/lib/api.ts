@@ -306,6 +306,7 @@ export const api = {
   admin: {
     status: () => call<AdminStatus>('/api/admin/status'),
     diversityAnalytics: () => call<DiversityAnalytics>('/api/admin/diversity-analytics'),
+    shortlists: () => call<ShortlistsResponse>('/api/admin/shortlists'),
     sourceAnalytics: () => call<{ sources: SourceAnalytics[] }>('/api/admin/source-analytics'),
     backups: {
       list: () => call<{ backups: BackupMetadata[]; settings: { maxBackups: number; maxBackupAgeDays: number } }>('/api/admin/backups'),
@@ -453,6 +454,56 @@ export interface SourceAnalytics {
 }
 
 /** Source-diversity analytics, computed server-side from persisted evidence only. */
+/** Why a live deal is not on its sector's shortlist. */
+export type HoldBackReason =
+  | 'ranked-below-cutoff'
+  | 'source-family-cap'
+  | 'sector-limit'
+  | 'insufficient-corroboration'
+  | 'quarantined';
+
+export interface ShortlistSelected {
+  companyId: string;
+  name: string;
+  classification: string;
+  primarySourceId: string;
+  primaryTier: number;
+  evidenceUrl: string;
+  evidencePublishedAt: string | null;
+  amountText: string | null;
+  roundType: string | null;
+  fitScore: number;
+}
+
+export interface ShortlistHeldBack {
+  companyId: string;
+  name: string;
+  reasonCode: HoldBackReason;
+  reason: string;
+  rank: number;
+  primarySourceId: string;
+  classification: string;
+  evidenceUrl: string;
+  evidencePublishedAt: string | null;
+}
+
+export interface SectorShortlistView {
+  vertical: string;
+  eligible: number;
+  leads: number;
+  shortfall: number;
+  shortageExplanation: string | null;
+  selected: ShortlistSelected[];
+  heldBack: ShortlistHeldBack[];
+}
+
+export interface ShortlistsResponse {
+  shortlists: SectorShortlistView[];
+  perSector: number;
+  totalSelected: number;
+  totalHeldBack: number;
+}
+
 export interface DiversityAnalytics {
   totalCompanies: number;
   totalOpportunities: number;

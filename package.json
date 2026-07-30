@@ -17,6 +17,7 @@
     "db:list-backups": "tsx --env-file-if-exists=.env scripts/db-list-backups.ts",
     "db:restore": "tsx --env-file-if-exists=.env scripts/db-restore.ts",
     "db:integrity": "tsx --env-file-if-exists=.env scripts/db-integrity.ts",
+    "db:qualify-pending": "tsx --env-file-if-exists=.env scripts/qualify-pending.ts",
     "db:backfill-dates": "tsx --env-file-if-exists=.env scripts/backfill-evidence-dates.ts",
     "smoke-test": "tsx --env-file-if-exists=.env scripts/smoke-test.ts",
     "test:e2e": "playwright test",

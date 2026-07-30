@@ -8,7 +8,7 @@ import { hubspotServiceIfAvailable } from '../services/hubspot';
 import { outlookService } from '../services/outlook';
 import { verifyAiConnection } from '../services/analysis';
 import { computeSourceAnalytics } from '../services/sourceAnalytics';
-import { diversityAnalytics } from '../services/shortlist';
+import { buildShortlists, DEFAULT_PER_SECTOR, diversityAnalytics } from '../services/shortlist';
 import { CORE_VERTICAL_IDS } from '../../src/data/taxonomy';
 import { backupSettingsSchema, createBackup, getBackupMetadata, getBackupPath, getBackupSettings, listBackups, setBackupSettings } from '../services/backup';
 import { fetchWithTimeout } from '../lib/http';
@@ -263,4 +263,44 @@ adminRouter.get('/ai/usage', wrap(async (req, res) => {
 /** Source-diversity analytics — derived only from persisted evidence and verdicts. */
 adminRouter.get('/diversity-analytics', wrap(async (_req, res) => {
   res.json(diversityAnalytics(CORE_VERTICAL_IDS));
+}));
+
+/**
+ * The per-sector shortlists themselves — the selected opportunities AND
+ * every live deal that was held back, each with its specific reason.
+ *
+ * This endpoint exists because the selection was previously invisible.
+ * `buildShortlists` was only ever called inside `diversityAnalytics`,
+ * which returns counts, so a reader could see that a sector held 5 of 5
+ * slots but never which companies filled them, and a company that lost a
+ * slot left no trace anywhere in the UI. Counts without names are not
+ * reviewable.
+ */
+adminRouter.get('/shortlists', wrap(async (_req, res) => {
+  const shortlists = buildShortlists(CORE_VERTICAL_IDS).map((s) => ({
+    vertical: s.vertical,
+    eligible: s.eligible,
+    leads: s.leads,
+    shortfall: s.shortfall,
+    shortageExplanation: s.shortageExplanation,
+    selected: s.selected.map((c) => ({
+      companyId: c.companyId,
+      name: c.name,
+      classification: c.opportunity.classification,
+      primarySourceId: c.opportunity.primarySourceId,
+      primaryTier: c.opportunity.primaryTier,
+      evidenceUrl: c.opportunity.evidenceUrl,
+      evidencePublishedAt: c.opportunity.evidencePublishedAt,
+      amountText: c.opportunity.amountText,
+      roundType: c.opportunity.roundType,
+      fitScore: c.fitScore,
+    })),
+    heldBack: s.heldBack,
+  }));
+  res.json({
+    shortlists,
+    perSector: DEFAULT_PER_SECTOR,
+    totalSelected: shortlists.reduce((n, s) => n + s.selected.length, 0),
+    totalHeldBack: shortlists.reduce((n, s) => n + s.heldBack.length, 0),
+  });
 }));

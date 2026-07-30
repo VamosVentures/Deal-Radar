@@ -9,6 +9,7 @@ import {
   type DealEvidence,
 } from '../../shared/opportunity';
 import { isOperatingIssuer, parseFormD } from '../sourcing/formd';
+import { markQualifiedForTests } from './qualifyForTests';
 
 /**
  * The distinction this file protects: a company existing is not the same
@@ -392,6 +393,10 @@ describe('opportunity persistence', () => {
 
   it('stores deal evidence and derives a classification from it', () => {
     addDealEvidence('co-1', evidence());
+    // The issuer has to have passed qualification before its evidence may
+    // produce a live-deal classification. Without a verdict on file the
+    // record is surfaced for review instead — see the test below.
+    markQualifiedForTests('co-1');
     const o = reclassifyCompany('co-1', { today: TODAY });
     expect(o.classification).toBe('recent-financing-signal');
     expect(o.primarySourceId).toBe('sec');
@@ -399,6 +404,25 @@ describe('opportunity persistence', () => {
     expect(o.amountUsd).toBe(5_000_000);
     expect(o.evidenceUrl).toContain('sec.gov');
     expect(getOpportunity('co-1')!.classification).toBe('recent-financing-signal');
+  });
+
+  it('never presents a company with NO qualification verdict as a live deal', () => {
+    // Regression guard. The qualification gate used to be written
+    // `if (qual && isLiveDeal(...))`, so a company with no verdict row
+    // skipped the gate completely and kept whatever its evidence implied.
+    // That is how 18 freshly imported records sat in the shortlist as live
+    // deals while nothing had checked whether they were operating
+    // companies at all. An absent verdict is not a pass.
+    addDealEvidence('co-1', evidence());
+    const o = reclassifyCompany('co-1', { today: TODAY });
+
+    expect(o.classification).toBe('unverified-opportunity');
+    expect(isLiveDeal(o.classification)).toBe(false);
+    expect(o.whyCurrent).toMatch(/no issuer qualification verdict/i);
+    // The evidence itself is still reported honestly — it is the verdict
+    // that is missing, not the filing.
+    expect(o.primarySourceId).toBe('sec');
+    expect(o.evidenceUrl).toContain('sec.gov');
   });
 
   it('deduplicates identical evidence rather than double-counting it', () => {

@@ -6,6 +6,7 @@ import { scoreCompany } from '../lib/scoring';
 import { VERTICALS } from '../data/taxonomy';
 import { PageHeader, PriorityStat, PriorityStrip } from '../components/ui';
 import { Ranking } from '../components/Ranking';
+import { SectorShortlists } from '../components/SectorShortlists';
 import { api } from '../lib/api';
 import { DEFAULT_STALE_SETTINGS, type StaleSettings } from '../../shared/integrations';
 
@@ -140,6 +141,8 @@ export function Overview() {
           </div>
         </section>
       </div>
+
+      <SectorShortlists />
     </div>
   );
 }

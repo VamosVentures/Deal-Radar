@@ -8,7 +8,7 @@ import {
   MAX_YC_PRIMARY_PER_SECTOR, TARGET_SOURCE_FAMILIES_PER_SECTOR,
   type DealEvidence, type DiversityReport, type Opportunity, type OpportunityType,
 } from '../../shared/opportunity';
-import { MAX_SEC_PRIMARY_PER_SECTOR } from '../../shared/qualification';
+import { MAX_SEC_PRIMARY_PER_SECTOR, MIN_INDEPENDENT_SOURCES } from '../../shared/qualification';
 import type { VerticalId } from '../../src/types';
 
 /**
@@ -145,13 +145,70 @@ export interface ShortlistCandidate {
   name: string;
   opportunity: Opportunity;
   fitScore: number;
+  /** Taken out of the live shortlist without destroying its evidence. */
+  quarantined?: boolean;
+  /** Independent corroborating sources on the qualification verdict. */
+  independentSources?: number;
+}
+
+/**
+ * Why an eligible candidate is not on the shortlist.
+ *
+ * Every one of these is a display decision about a company that IS a live
+ * deal. None of them is a judgement that the company is not real — that
+ * judgement belongs to qualification, and a candidate carrying one of
+ * these codes has already passed it.
+ */
+export const HOLD_BACK_REASONS = [
+  'ranked-below-cutoff',
+  'source-family-cap',
+  'sector-limit',
+  'insufficient-corroboration',
+  'quarantined',
+] as const;
+export type HoldBackReason = (typeof HOLD_BACK_REASONS)[number];
+
+export const HOLD_BACK_LABELS: Record<HoldBackReason, string> = {
+  'ranked-below-cutoff': 'Ranked below the cutoff',
+  'source-family-cap': 'Source-family cap',
+  'sector-limit': 'Sector limit',
+  'insufficient-corroboration': 'Insufficient corroboration',
+  quarantined: 'Quarantined',
+};
+
+export interface HeldBackCandidate {
+  companyId: string;
+  name: string;
+  reasonCode: HoldBackReason;
+  /** The specific, per-candidate sentence. Never a generic category. */
+  reason: string;
+  /** 1-based position among the sector's contenders. 0 when it never ranked. */
+  rank: number;
+  primarySourceId: string;
+  classification: Opportunity['classification'];
+  evidenceUrl: string;
+  evidencePublishedAt: string | null;
 }
 
 export interface SectorShortlist {
   vertical: VerticalId;
   selected: ShortlistCandidate[];
-  /** Qualified but not selected because a cap or the size limit bound first. */
-  heldBack: { name: string; reason: string }[];
+  /**
+   * Every live deal in this sector that is NOT selected, each with the
+   * specific reason it lost its slot.
+   *
+   * The invariant this type exists to carry: `selected.length +
+   * heldBack.length` equals the number of live deals in the pool, so a
+   * qualifying company can never simply vanish between the database and
+   * the shortlist. It used to — only the two source caps ever pushed a
+   * name in here, so anything that merely ranked too low disappeared with
+   * no record that it had been considered at all.
+   */
+  heldBack: HeldBackCandidate[];
+  /** Live deals in this sector, selected + held back. */
+  eligible: number;
+  /** Pool members with no current financing evidence. Not held back — not eligible. */
+  leads: number;
   shortfall: number;
   diversity: DiversityReport;
   /** Plain-language explanation of any shortage, for display. */
@@ -163,6 +220,9 @@ export interface SelectOptions {
   /** Injected for deterministic tests. */
   today?: string;
 }
+
+/** Slots per sector. A target, never a quota — sectors are shown short. */
+export const DEFAULT_PER_SECTOR = 5;
 
 /**
  * Choose up to `perSector` opportunities for one sector, enforcing:
@@ -178,10 +238,10 @@ export function selectSectorShortlist(
   pool: ShortlistCandidate[],
   opts: SelectOptions = {},
 ): SectorShortlist {
-  const perSector = opts.perSector ?? 5;
+  const perSector = opts.perSector ?? DEFAULT_PER_SECTOR;
 
   const qualified = pool.filter((c) => isLiveDeal(c.opportunity.classification));
-  const heldBack: { name: string; reason: string }[] = [];
+  const heldBack: HeldBackCandidate[] = [];
 
   // Rank: stronger evidence tier first, then fresher evidence, then fit.
   const ranked = [...qualified].sort((a, b) =>
@@ -189,16 +249,50 @@ export function selectSectorShortlist(
     || (b.opportunity.evidencePublishedAt ?? '').localeCompare(a.opportunity.evidencePublishedAt ?? '')
     || b.fitScore - a.fitScore);
 
+  const hold = (c: ShortlistCandidate, reasonCode: HoldBackReason, reason: string, rank: number) => {
+    heldBack.push({
+      companyId: c.companyId,
+      name: c.name,
+      reasonCode,
+      reason,
+      rank,
+      primarySourceId: c.opportunity.primarySourceId,
+      classification: c.opportunity.classification,
+      evidenceUrl: c.opportunity.evidenceUrl,
+      evidencePublishedAt: c.opportunity.evidencePublishedAt,
+    });
+  };
+
+  // ── Display guards ────────────────────────────────────────────────
+  // Checked before any slot is handed out, because these are reasons a
+  // live deal should not be SHOWN as one at all — not reasons it lost a
+  // contest. Recorded per candidate so the record still exists.
+  const contenders: ShortlistCandidate[] = [];
+  for (const c of ranked) {
+    if (c.quarantined) {
+      hold(c, 'quarantined', 'Quarantined: taken out of the live shortlist pending review. Its evidence is retained — see the company record for the specific quarantine reason.', 0);
+      continue;
+    }
+    if (c.independentSources !== undefined && c.independentSources < MIN_INDEPENDENT_SOURCES) {
+      hold(c, 'insufficient-corroboration', `Insufficient corroboration: ${c.independentSources} independent source${c.independentSources === 1 ? '' : 's'} on record, and a live opportunity needs ${MIN_INDEPENDENT_SOURCES} from different source families. One account of an event is not corroboration of it.`, 0);
+      continue;
+    }
+    contenders.push(c);
+  }
+  const rankOf = new Map(contenders.map((c, i) => [c.companyId, i + 1]));
+
   const selected: ShortlistCandidate[] = [];
   let ycUsed = 0;
   let secUsed = 0;
   const familiesUsed = new Set<string>();
+  /** companyId → the cap sentence, for candidates a per-source cap blocked. */
+  const cappedBy = new Map<string, string>();
 
   // Pass 1: prefer a NEW source family for each slot, so the shortlist
   // spreads across families instead of filling up from whichever source
   // happened to return the most rows.
   for (const pass of [1, 2] as const) {
-    for (const c of ranked) {
+    for (const c of contenders) {
       if (selected.length >= perSector) break;
       if (selected.some((s) => s.companyId === c.companyId)) continue;
 
@@ -208,24 +302,14 @@ export function selectSectorShortlist(
       if (pass === 1 && familiesUsed.has(family)) continue;
 
       if (src === 'yc' && ycUsed >= MAX_YC_PRIMARY_PER_SECTOR) {
-        if (pass === 2 && !heldBack.some((h) => h.name === c.name)) {
-          heldBack.push({
-            name: c.name,
-            reason: `Held back: already ${MAX_YC_PRIMARY_PER_SECTOR} Y Combinator-primary opportunities in this sector. Not padding the sector with a third.`,
-          });
-        }
+        cappedBy.set(c.companyId, `Source-family cap: this sector already has ${MAX_YC_PRIMARY_PER_SECTOR} Y Combinator-primary opportunities, the maximum. Not padding the sector with a third from the same directory.`);
         continue;
       }
       // The same cap applies to SEC. Without it a sector fills up with
       // Form D filers purely because EDGAR returns the most rows, which is
       // how "diversified" quietly became "82% one source".
       if (src === 'sec' && secUsed >= MAX_SEC_PRIMARY_PER_SECTOR) {
-        if (pass === 2 && !heldBack.some((h) => h.name === c.name)) {
-          heldBack.push({
-            name: c.name,
-            reason: `Held back: already ${MAX_SEC_PRIMARY_PER_SECTOR} SEC-primary opportunities in this sector. A shortlist of Form D filers is one source wearing a hat.`,
-          });
-        }
+        cappedBy.set(c.companyId, `Source-family cap: this sector already has ${MAX_SEC_PRIMARY_PER_SECTOR} SEC-primary opportunities, the maximum. A shortlist of Form D filers is one source wearing a hat.`);
         continue;
       }
 
@@ -236,26 +320,57 @@ export function selectSectorShortlist(
     }
   }
 
+  // ── Account for every contender that did not get a slot ───────────
+  // This loop is the fix. Previously only the two cap branches recorded
+  // anything, so a live deal that merely ranked below the cutoff — Sila
+  // and General Intuition among them — was dropped silently and a reader
+  // could not tell it had ever been a candidate.
+  const selectedIds = new Set(selected.map((s) => s.companyId));
+  for (const c of contenders) {
+    if (selectedIds.has(c.companyId)) continue;
+    const rank = rankOf.get(c.companyId) ?? 0;
+    const cap = cappedBy.get(c.companyId);
+    if (cap) {
+      hold(c, 'source-family-cap', cap, rank);
+    } else if (rank > perSector) {
+      hold(c, 'ranked-below-cutoff', `Ranked #${rank} of ${contenders.length} live deals in this sector and only ${perSector} slots exist. Order is decided by evidence tier first, then how recent the evidence is, then Vamos fit score.`, rank);
+    } else {
+      // Inside the top `perSector` by rank, yet not selected: pass 1 gave
+      // the slot to a lower-ranked candidate from a source family this
+      // sector did not yet represent.
+      hold(c, 'sector-limit', `Sector limit of ${perSector} reached. This candidate ranked #${rank}, inside the cutoff, but a lower-ranked candidate from a source family not yet represented in this sector took the slot so the shortlist would not rest on a single family.`, rank);
+    }
+  }
+
   const diversity = assessDiversity(
     selected.map((s) => ({ primarySourceId: s.opportunity.primarySourceId, primaryTier: s.opportunity.primaryTier })),
     vertical,
   );
 
+  const leads = pool.length - qualified.length;
   const shortfall = Math.max(0, perSector - selected.length);
   let shortageExplanation: string | null = null;
   if (shortfall > 0) {
-    const leads = pool.length - qualified.length;
+    const byReason = new Map<HoldBackReason, number>();
+    for (const h of heldBack) byReason.set(h.reasonCode, (byReason.get(h.reasonCode) ?? 0) + 1);
+    const heldParts = [...byReason.entries()]
+      .map(([code, n]) => `${n} ${HOLD_BACK_LABELS[code].toLowerCase()}`)
+      .join(', ');
     const parts = [
       `${selected.length} of ${perSector} slots filled.`,
       `${pool.length} candidate(s) considered; ${qualified.length} met the current-opportunity bar.`,
       leads > 0 ? `${leads} had no recent financing or fundraising evidence and remain company leads.` : '',
-      heldBack.length > 0 ? `${heldBack.length} qualified but were held back by the ${MAX_YC_PRIMARY_PER_SECTOR}-per-sector Y Combinator cap.` : '',
+      heldBack.length > 0 ? `${heldBack.length} held back (${heldParts}) — each is listed with its specific reason.` : '',
       'Slots were left empty rather than filled with companies lacking current deal evidence.',
     ];
     shortageExplanation = parts.filter(Boolean).join(' ');
   }
 
-  return { vertical, selected, heldBack, shortfall, diversity, shortageExplanation };
+  return {
+    vertical, selected, heldBack,
+    eligible: qualified.length, leads,
+    shortfall, diversity, shortageExplanation,
+  };
 }
 
 /**
@@ -264,6 +379,25 @@ export function selectSectorShortlist(
  */
 export function buildShortlists(verticals: VerticalId[], opts: SelectOptions = {}): SectorShortlist[] {
   const companies = listCompanies();
+
+  // Quarantine and corroboration live outside the Opportunity record, and
+  // the selector cannot reach them without a circular import. Read them
+  // once here rather than per candidate.
+  const db = getDb();
+  const quarantinedIds = new Set(
+    (db.prepare('SELECT id FROM companies WHERE quarantined = 1').all() as { id: string }[])
+      .map((r) => r.id),
+  );
+  const sourceCount = new Map(
+    (db.prepare('SELECT company_id, corroborating_sources FROM issuer_qualification').all() as
+      { company_id: string; corroborating_sources: string }[])
+      .map((q) => {
+        let n = 0;
+        try { n = (JSON.parse(q.corroborating_sources) as unknown[]).length; } catch { n = 0; }
+        return [q.company_id, n] as const;
+      }),
+  );
+
   return verticals.map((v) => {
     const pool: ShortlistCandidate[] = companies
       .filter((c) => c.vertical === v)
@@ -276,6 +410,11 @@ export function buildShortlists(verticals: VerticalId[], opts: SelectOptions = {
           name: c.name,
           opportunity,
           fitScore: latestScore(c.id)?.score ?? 0,
+          quarantined: quarantinedIds.has(c.id),
+          // Absent verdict → 0, which the guard reads as uncorroborated.
+          // The reclassify gate already demotes such a record off the live
+          // list; this is the second lock on the same door.
+          independentSources: sourceCount.get(c.id) ?? 0,
         };
       });
     return selectSectorShortlist(v, pool, opts);

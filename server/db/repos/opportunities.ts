@@ -156,8 +156,23 @@ export function reclassifyCompany(companyId: string, opts: { today?: string } = 
     .prepare('SELECT result FROM issuer_qualification WHERE company_id = ?')
     .get(companyId) as { result: string } | undefined;
 
-  if (qual && isLiveDeal(result.classification)) {
-    if (DISQUALIFYING_RESULTS.includes(qual.result as never)) {
+  if (isLiveDeal(result.classification)) {
+    if (!qual) {
+      // NO VERDICT IS NOT A PASS. The qualification table's contract is
+      // that an absent row means "not yet qualified", and the cautious
+      // reading of that is the only safe one — but this branch did not
+      // exist, so `qual &&` skipped the whole gate and a company with no
+      // verdict kept whatever its evidence implied. That is exactly how
+      // 18 freshly imported records sat in the shortlist as live deals
+      // while nothing had ever checked whether they were operating
+      // companies. An unchecked record is surfaced for review, never
+      // counted as a deal.
+      result = {
+        ...result,
+        classification: 'unverified-opportunity',
+        reason: `Evidence would support "${result.classification}", but no issuer qualification verdict has been recorded for this company yet. Shown for review rather than counted as a live deal. Run \`npm run db:qualify-pending\` to qualify it.`,
+      };
+    } else if (DISQUALIFYING_RESULTS.includes(qual.result as never)) {
       result = {
         ...result,
         classification: 'company-lead',

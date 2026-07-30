@@ -14,6 +14,7 @@ import {
 import { pageDisqualifiedAsOfficialSite, titleIsBareDomain } from '../sourcing/pageSignals';
 import { runInvestorNews } from '../services/investorNews';
 import { assessCorroboration } from '../services/issuerQualification';
+import { markQualifiedForTests } from './qualifyForTests';
 import { diversityAnalytics, opportunityTypeForSource } from '../services/shortlist';
 import { listDealEvidence } from '../db/repos/opportunities';
 import { listCompanies } from '../db/repos/companies';
@@ -601,9 +602,26 @@ describe('an investor announcement becomes a second source family on an existing
     expect(assessCorroboration(company.id).independentFamilies).toEqual(['investor-primary']);
   });
 
-  it('counts an investor-primary opportunity in the family analytics', async () => {
+  it('does not count an uncorroborated investor announcement as an opportunity', async () => {
+    // A single investor announcement is one account of one event from one
+    // side of the table. On its own it makes a company lead, not a deal —
+    // and until qualification has run at all, nothing may count it.
     const { __importInvestorEventForTests } = await import('../services/investorNews');
     __importInvestorEventForTests(event(F.SPACE_INVESTMENT), TODAY);
+
+    const analytics = diversityAnalytics(['spacetech'], { today: TODAY });
+    expect(analytics.totalOpportunities).toBe(0);
+  });
+
+  it('counts an investor-primary opportunity in the family analytics', async () => {
+    const { __importInvestorEventForTests } = await import('../services/investorNews');
+    const out = __importInvestorEventForTests(event(F.SPACE_INVESTMENT), TODAY);
+
+    // Attribute the opportunity to the investor-primary family only once
+    // the issuer has actually passed qualification. Before this fixture
+    // existed the assertion passed because a missing verdict silently
+    // skipped the gate.
+    markQualifiedForTests(out!.companyId);
 
     const analytics = diversityAnalytics(['spacetech'], { today: TODAY });
     expect(analytics.totalOpportunities).toBe(1);
