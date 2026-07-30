@@ -30,6 +30,26 @@ export type UiStatus =
   | 'Not enabled for this local pilot'
   | 'Implemented — credentials required';
 export type StatusMap = Record<'hubspot' | 'outlook' | 'ai' | 'refresh', { status: UiStatus; detail: string }>;
+
+/** Which identity providers may open a session — see server/env.ts AUTH_MODE. */
+export type AuthMode = 'local' | 'microsoft' | 'hybrid';
+
+export interface AuthStatus {
+  /** Some provider is configured, so signing in is possible at all. */
+  configured: boolean;
+  authenticated: boolean;
+  /** The mode actually in force (falls back to 'local' if Microsoft is incomplete). */
+  mode: AuthMode;
+  /** What AUTH_MODE asked for — differs from `mode` while Entra config is pending. */
+  requestedMode: AuthMode;
+  localLoginAvailable: boolean;
+  microsoftLoginAvailable: boolean;
+  /** Microsoft was requested but its variables are incomplete. */
+  microsoftPending: boolean;
+  microsoftPendingMessage: string | null;
+  /** Who is signed in — for attribution. Never contains a token. */
+  identity: { label: string; source: 'local-admin' | 'microsoft-sso'; email: string | null } | null;
+}
 export type FullStatus = IntegrationsStatus & { statuses: StatusMap };
 
 export interface ConnectorInfo {
@@ -108,9 +128,19 @@ export const api = {
   status: () => call<FullStatus>('/api/integrations/status'),
 
   auth: {
-    status: () => call<{ configured: boolean; authenticated: boolean }>('/api/auth/status'),
+    status: () => call<AuthStatus>('/api/auth/status'),
     login: (password: string) => call<{ ok: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ password }) }),
     logout: () => call<{ ok: boolean }>('/api/auth/logout', { method: 'POST', body: '{}' }),
+    /**
+     * Begins Microsoft sign-in. Returns the Microsoft URL to navigate
+     * to; the state, nonce, and PKCE verifier that secure the flow are
+     * held server-side and never reach this code.
+     */
+    microsoftStart: () =>
+      call<{ authUrl: string; message: string }>('/api/auth/microsoft/start', {
+        method: 'POST',
+        body: '{}',
+      }),
   },
 
   hubspot: {

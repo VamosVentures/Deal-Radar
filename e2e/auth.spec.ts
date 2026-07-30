@@ -20,6 +20,19 @@ test.describe('Authentication', () => {
     }
   });
 
+  test('no Microsoft sign-in button appears while AUTH_MODE is local', async ({ page }) => {
+    // The E2E backend runs with no MICROSOFT_* variables, which is the
+    // shipping default. A button that would dead-end at Microsoft with
+    // an unknown client id must not be rendered — not even disabled.
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: /Sign in with your Vamos Microsoft account/i }),
+    ).toHaveCount(0);
+    // And nothing claims a configuration is pending, because none was requested.
+    await expect(page.getByText('Awaiting Microsoft administrator configuration')).toHaveCount(0);
+  });
+
   test('an incorrect password is rejected', async ({ page }) => {
     await page.goto('/sources');
     await page.getByLabel('Password').fill('definitely-wrong-password');

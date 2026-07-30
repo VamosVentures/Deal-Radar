@@ -12,17 +12,17 @@ import { SourceAnalyticsPanel } from '../components/SourceAnalytics';
 import { DiversityAnalyticsPanel } from '../components/DiversityAnalytics';
 import { BackupPanel } from '../components/BackupPanel';
 import { useIntegrations } from '../store/integrations';
-import { api } from '../lib/api';
+import { api, type AuthStatus } from '../lib/api';
 
 
 export function DataSources() {
   const [params, setParams] = useSearchParams();
   const { refresh } = useIntegrations();
   const [connectedBanner, setConnectedBanner] = useState<string | null>(null);
-  const [auth, setAuth] = useState<{ configured: boolean; authenticated: boolean } | null>(null);
+  const [auth, setAuth] = useState<AuthStatus | null>(null);
 
   const loadAuth = useCallback(() => {
-    api.auth.status().then(setAuth).catch(() => setAuth({ configured: false, authenticated: false }));
+    api.auth.status().then(setAuth).catch(() => setAuth(null));
   }, []);
   useEffect(loadAuth, [loadAuth]);
 
@@ -68,9 +68,31 @@ export function DataSources() {
           Do not modify without administrator approval. Enforced by a real sign-in below, not just this label.
         </div>
         {auth?.authenticated && (
-          <button onClick={logout} className="shrink-0 rounded-[2px] border border-line bg-panel px-2 py-1 text-xs font-semibold transition-colors hover:border-marigold hover:text-marigold">
-            Sign out
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {/*
+              Who is actually signed in. Worth showing because the two
+              providers mean different things for accountability: notes
+              written under the shared password are attributed to
+              'Local administrator', while a Microsoft session
+              attributes them to a named employee. Someone about to
+              write a note should be able to see which one they are.
+            */}
+            {auth.identity && (
+              <span
+                className="font-mono text-[10px] uppercase tracking-wide text-slate-mid"
+                title={
+                  auth.identity.source === 'microsoft-sso'
+                    ? 'Signed in with Microsoft Entra — notes are attributed to this account.'
+                    : 'Shared administrator password — notes are attributed to “Local administrator”, not to a person.'
+                }
+              >
+                {auth.identity.email ?? auth.identity.label}
+              </span>
+            )}
+            <button onClick={logout} className="shrink-0 rounded-[2px] border border-line bg-panel px-2 py-1 text-xs font-semibold transition-colors hover:border-marigold hover:text-marigold">
+              Sign out
+            </button>
+          </div>
         )}
       </div>
 
@@ -79,7 +101,7 @@ export function DataSources() {
       )}
 
       {auth === null ? null : !auth.authenticated ? (
-        <AdminLogin configured={auth.configured} onAuthenticated={loadAuth} />
+        <AdminLogin auth={auth} onAuthenticated={loadAuth} />
       ) : (
         <>
           <SystemStatus />

@@ -50,12 +50,32 @@ export interface RefreshLogEntry {
   }[];
 }
 
+/**
+ * A pending OAuth/OIDC redirect we issued and will accept back once.
+ *
+ * `purpose` keeps the two Microsoft flows from consuming each other's
+ * state: signing in and granting mailbox access request different
+ * scopes and land on different callbacks, so a state minted for one
+ * must not validate on the other. Records written before this field
+ * existed have it undefined and are treated as 'outlook', which is the
+ * only flow that existed then.
+ */
+export interface OAuthStateRecord {
+  state: string;
+  expiresAt: string;
+  purpose?: 'outlook' | 'sso';
+  /** OIDC nonce — binds an id_token to this specific sign-in request. */
+  nonce?: string;
+  /** PKCE code verifier (S256). Never leaves the server. */
+  codeVerifier?: string;
+}
+
 interface StoreShape {
   mockHubSpot: MockHubSpotObject[];
   drafts: OutreachDraft[];
   tokens: TokenRecord[];
   audit: IntegrationAuditLog[];
-  oauthStates: { state: string; expiresAt: string }[];
+  oauthStates: OAuthStateRecord[];
   counters: Record<string, number>;
   /** Cached AI outputs keyed by request hash. */
   aiCache: Record<string, { at: string; value: unknown }>;

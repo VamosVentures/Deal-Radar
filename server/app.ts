@@ -104,11 +104,26 @@ export function createApp() {
     '/auth/status',  // the UI must know whether to show the login form
     '/auth/login',   // the login itself (separately rate-limited, 10/15min)
     '/auth/logout',  // clearing a cookie needs no session
+    // Starting Microsoft sign-in cannot require a session — not being
+    // signed in is the entire reason for the call. It is a POST behind
+    // the same 10/15min limiter as /auth/login, and all it returns is a
+    // Microsoft URL; the security of the flow rests on the state,
+    // nonce, and PKCE bound to it server-side.
+    '/auth/microsoft/start',
   ]);
-  // OAuth providers redirect the BROWSER back to these with no cookie
+  // Identity providers redirect the BROWSER back to these with no cookie
   // guarantee; each validates its own single-use, expiring state token
-  // server-side instead (see services/hubspot.ts + services/outlook.ts).
-  const PUBLIC_API_PREFIXES = ['/hubspot/callback', '/outlook/callback'];
+  // server-side instead (see lib/oauthState.ts, services/hubspot.ts,
+  // services/outlook.ts, and routes/auth.ts).
+  //
+  // Sign-in and mailbox consent have SEPARATE callbacks on purpose: they
+  // request different scopes and mean different things, so a mailbox
+  // consent response must not be redeemable by the sign-in handler.
+  const PUBLIC_API_PREFIXES = [
+    '/hubspot/callback',
+    '/outlook/callback',
+    '/auth/microsoft/callback',
+  ];
 
   app.use('/api', (req, res, next) => {
     if (PUBLIC_API_PATHS.has(req.path)) return next();

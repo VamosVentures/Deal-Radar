@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, type AuthStatus } from '../lib/api';
 
 const input = 'rounded-[2px] border border-line bg-panel px-2 py-1';
 
@@ -9,13 +9,19 @@ const input = 'rounded-[2px] border border-line bg-panel px-2 py-1';
  * load the URL; now the admin panels (system status, connectors,
  * scheduled sourcing, HubSpot/Outlook connect) require a real session
  * the backend verifies on every request (see server/lib/auth.ts).
+ *
+ * Reached in practice only after "Sign out" re-locks this page in
+ * place — AppGate keeps unauthenticated visitors out of the app
+ * entirely — so it mirrors whichever providers AppGate offers rather
+ * than assuming a password is the way back in.
  */
-export function AdminLogin({ configured, onAuthenticated }: { configured: boolean; onAuthenticated: () => void }) {
+export function AdminLogin({ auth, onAuthenticated }: { auth: AuthStatus; onAuthenticated: () => void }) {
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [msBusy, setMsBusy] = useState(false);
 
-  if (!configured) {
+  if (!auth.configured) {
     return (
       <div className="border border-alerta/40 bg-alerta-soft px-4 py-3 text-sm">
         <span className="font-semibold text-alerta">Administrator sign-in is not enabled.</span>{' '}
@@ -42,33 +48,74 @@ export function AdminLogin({ configured, onAuthenticated }: { configured: boolea
     }
   };
 
+  const signInWithMicrosoft = async () => {
+    setMsBusy(true);
+    setErr(null);
+    try {
+      const { authUrl } = await api.auth.microsoftStart();
+      window.location.assign(authUrl);
+    } catch (e2) {
+      setErr(e2 instanceof ApiError ? e2.message : 'Microsoft sign-in could not be started.');
+      setMsBusy(false);
+    }
+  };
+
   return (
-    <form onSubmit={submit} className="border border-line bg-panel p-4 shadow-sm">
+    <div className="border border-line bg-panel p-4 shadow-sm">
       <h2 className="font-display text-base font-semibold text-ink">Administrator sign-in required</h2>
       <p className="mt-1 text-xs leading-relaxed text-slate-mid">
         Scheduled sourcing, connector management, and integration connect/disconnect are gated behind a
         real server-side session — not just this page's label. Sign in to continue.
       </p>
-      <div className="mt-3 flex items-end gap-2">
-        <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-slate-mid">
-          Password
-          <input
-            type="password"
-            autoFocus
-            className={input}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
+
+      {auth.microsoftLoginAvailable && (
         <button
-          type="submit"
-          disabled={busy || password.length === 0}
-          className="rounded-[2px] border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
+          type="button"
+          onClick={signInWithMicrosoft}
+          disabled={msBusy}
+          className="mt-3 rounded-[2px] border border-line bg-panel px-3 py-1.5 text-xs font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
         >
-          {busy ? 'Signing in…' : 'Sign in'}
+          {msBusy ? 'Redirecting to Microsoft…' : 'Sign in with your Vamos Microsoft account'}
         </button>
-      </div>
+      )}
+
+      {/* An explanation rather than a disabled button — what is missing is an administrator action outside this app. */}
+      {auth.microsoftPending && (
+        <p className="mt-3 border border-line bg-paper px-3 py-2 text-xs leading-relaxed text-slate-mid">
+          <span className="font-semibold text-ink">
+            {auth.microsoftPendingMessage ?? 'Awaiting Microsoft administrator configuration'}
+          </span>{' '}
+          — use the administrator password until Microsoft sign-in is switched on.
+        </p>
+      )}
+
+      {auth.localLoginAvailable ? (
+        <form onSubmit={submit} className="mt-3 flex items-end gap-2">
+          <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-slate-mid">
+            Password
+            <input
+              type="password"
+              autoFocus={!auth.microsoftLoginAvailable}
+              className={input}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={busy || password.length === 0}
+            className="rounded-[2px] border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
+          >
+            {busy ? 'Signing in…' : 'Sign in'}
+          </button>
+        </form>
+      ) : (
+        <p className="mt-3 text-xs leading-relaxed text-slate-mid">
+          Password sign-in is turned off for this deployment. Use your Vamos Microsoft account.
+        </p>
+      )}
+
       {err && <p className="mt-2 text-xs text-alerta">{err}</p>}
-    </form>
+    </div>
   );
 }

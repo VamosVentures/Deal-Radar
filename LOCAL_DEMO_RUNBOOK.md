@@ -37,8 +37,12 @@ npm install
 
 ## 2. Sign in
 
-The whole application is behind a single shared admin password. There is no
-sign-up, and no page loads any company data until the session cookie exists.
+The whole application is behind a sign-in. There is no sign-up, and no page
+loads any company data until the session cookie exists.
+
+**For the Friday demo, sign-in is the shared administrator password.**
+Microsoft Entra SSO is built and tested but deliberately switched off, because
+no Entra credentials exist yet — see *§2b* below.
 
 **To read the password locally without printing it into this file or your
 terminal history**, open `.env` in an editor and read the `ADMIN_PASSWORD=`
@@ -54,6 +58,36 @@ after 12 hours.
 
 If `ADMIN_PASSWORD` is empty, admin actions are **unusable rather than open**
 (fails closed). Set a value, then restart the API.
+
+### 2b. Microsoft sign-in — built, off until credentials arrive
+
+`AUTH_MODE` selects which identity providers may open a session:
+
+| `AUTH_MODE` | Behavior |
+| --- | --- |
+| `local` *(default, and what Friday runs)* | Administrator password only. No Microsoft button is rendered. |
+| `hybrid` | Both. Use this for the first live SSO test — the password keeps working. |
+| `microsoft` | Microsoft only; the password is refused (with a hint saying how to re-enable it). |
+
+Two properties worth stating out loud during the demo:
+
+- **A missing credential cannot lock anyone out.** Setting `AUTH_MODE=microsoft`
+  or `hybrid` while the `MICROSOFT_*` variables are incomplete falls back to
+  `local` and shows *"Awaiting Microsoft administrator configuration"*. There is
+  no state in which the app presents a Microsoft button that cannot work.
+- **The tenant id is the restriction, not the email domain.** A correctly
+  signed Microsoft token from someone else's directory is still refused. The
+  `@vamosventures.com` check sits on top of the tenant check, not instead of it.
+
+To switch on once Pliancy delivers the values (see `EXTERNAL_ACTION_REQUIRED.md`
+§3): put them in `.env`, set `AUTH_MODE=hybrid`, restart the API, and live-test
+a real sign-in before considering `microsoft`.
+
+What the demo **cannot** show, and should be said plainly: a real Microsoft
+sign-in. There is no tenant to sign in to. The flow is covered by 46 automated
+tests using a fixture keypair — including wrong-tenant, non-Vamos-account,
+guest-account, replayed-state, and forged-signature refusals, which a live
+tenant could not easily demonstrate anyway.
 
 ---
 
@@ -168,7 +202,8 @@ Backups are also creatable from the UI: Settings → *Database backups*.
 
 | Area | What the UI says |
 | --- | --- |
-| **Microsoft / Outlook** | `Awaiting Microsoft administrator configuration` — needs `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_REDIRECT_URI` from a tenant administrator. Every Outlook action fails with an explicit 503. |
+| **Microsoft sign-in (SSO)** | Nothing is rendered at all in `AUTH_MODE=local` (the default). Under `hybrid`/`microsoft` with incomplete variables: `Awaiting Microsoft administrator configuration` — an explanation, never a disabled button. Needs `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, a single-tenant `MICROSOFT_TENANT_ID`, and `MICROSOFT_SSO_REDIRECT_URI`. |
+| **Microsoft / Outlook mailbox** | `Awaiting Microsoft administrator configuration` — needs `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, `MICROSOFT_REDIRECT_URI` from a tenant administrator. Every Outlook action fails with an explicit 503. Mailbox consent is separate from sign-in and only requested when someone clicks Connect Outlook. |
 | **AI provider** | `Not enabled for this local pilot` — no key, no paid API call. Outreach drafts and fit explanations come from a deterministic local template built only from recorded evidence, labelled *"Local template — no AI model used"* wherever it appears. |
 | **HubSpot** | `Implemented — credentials required`. Optional; its absence blocks nothing. |
 | **Product Hunt** | `Credentials required` — needs a developer token. Skipped on every run rather than failed; never blocks startup or health. |

@@ -1,7 +1,8 @@
 import { env, notConnected, outlookConfigured } from '../env';
 import { store, type TokenRecord } from '../lib/store';
 import { audit } from '../lib/guard';
-import { decrypt, encrypt, randomToken } from '../lib/crypto';
+import { decrypt, encrypt } from '../lib/crypto';
+import { consumeOAuthState, issueOAuthState } from '../lib/oauthState';
 import { fetchWithRetry } from '../lib/http';
 
 /**
@@ -15,7 +16,45 @@ import { fetchWithRetry } from '../lib/http';
  * mail action fails with an honest "not connected" error.
  */
 
-const SCOPES = ['offline_access', 'Mail.ReadWrite', 'User.Read'];
+/**
+ * Mailbox scopes — requested ONLY when a person explicitly connects
+ * Outlook, never at sign-in.
+ *
+ * This is the whole point of the split: signing in to look at company
+ * records asks for `openid profile email User.Read` and nothing more
+ * (see SIGN_IN_SCOPES in server/lib/microsoftAuth.ts), so nobody has
+ * to hand over mailbox access to read a table. Consent for the two
+ * escalates independently and lands on two different callbacks.
+ *
+ * What is deliberately absent, and must stay absent:
+ *
+ *   Mail.Send                  — there is no send path in this
+ *                                codebase. A person sends from their
+ *                                own Outlook, having read the draft.
+ *   Mail.ReadWrite.Shared      — other people's mailboxes.
+ *   Mail.* application scopes  — tenant-wide mailbox access.
+ *
+ * `User.Read` is re-listed here rather than assumed: mailbox consent
+ * must work in `local` auth mode too, where no Microsoft sign-in
+ * happened and `/me` is how the connected account is identified. When
+ * SSO did run, re-requesting an already-granted scope is a no-op, not
+ * an escalation.
+ */
+export const OUTLOOK_SCOPES = ['offline_access', 'Mail.ReadWrite', 'User.Read'] as const;
+
+/**
+ * The only mail folder this integration is permitted to read.
+ *
+ * `Mail.ReadWrite` is broader than the workflow — Microsoft offers no
+ * narrower delegated drafts-only permission — so the narrowing is
+ * enforced here instead: leads are read from a folder a person created
+ * and deliberately moved mail into, never from the inbox at large.
+ * Reading is not wired to any UI or sourcing run today; see
+ * KNOWN_LIMITATIONS.md.
+ */
+export const LEAD_FOLDER_NAME = 'Deal Radar Leads';
+
+const SCOPES = OUTLOOK_SCOPES;
 
 const OUTLOOK_NOT_CONNECTED_HINT =
   'Add MICROSOFT_CLIENT_ID/SECRET/REDIRECT_URI and SESSION_SECRET to .env, then use Connect Outlook under Data Sources & Refresh.';
@@ -134,12 +173,7 @@ class LiveOutlook implements OutlookService {
   }
 
   async beginConnect() {
-    const state = randomToken();
-    store.raw.oauthStates.push({
-      state,
-      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
-    });
-    store.save();
+    const { state } = issueOAuthState('outlook');
     const params = new URLSearchParams({
       client_id: env.MICROSOFT_CLIENT_ID!,
       response_type: 'code',
@@ -155,16 +189,9 @@ class LiveOutlook implements OutlookService {
   }
 
   async handleCallback(code: string, state: string): Promise<{ account: string }> {
-    // Validate state — reject anything we didn't issue or that expired.
-    const now = Date.now();
-    store.raw.oauthStates = store.raw.oauthStates.filter(
-      (s) => new Date(s.expiresAt).getTime() > now,
-    );
-    const idx = store.raw.oauthStates.findIndex((s) => s.state === state);
-    if (idx === -1) {
-      throw Object.assign(new Error('OAuth state is invalid or expired. Start the connection again.'), { status: 400 });
-    }
-    store.raw.oauthStates.splice(idx, 1);
+    // Single-use state, scoped to the mailbox flow so a sign-in state
+    // can never be redeemed here (see server/lib/oauthState.ts).
+    consumeOAuthState(state, 'outlook');
 
     const tokens = await this.exchange({
       grant_type: 'authorization_code',
@@ -179,7 +206,7 @@ class LiveOutlook implements OutlookService {
     store.raw.tokens.push({
       provider: 'outlook',
       account,
-      scopes: SCOPES,
+      scopes: [...SCOPES],
       cipher: encrypt(tokens.access_token),
       refreshCipher: tokens.refresh_token ? encrypt(tokens.refresh_token) : null,
       expiresAt: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),

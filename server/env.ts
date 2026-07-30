@@ -20,7 +20,35 @@ const envSchema = z.object({
   MICROSOFT_CLIENT_ID: z.string().optional(),
   MICROSOFT_CLIENT_SECRET: z.string().optional(),
   MICROSOFT_TENANT_ID: z.string().default('common'),
+  /** Outlook mailbox consent callback — unchanged, kept separate from sign-in. */
   MICROSOFT_REDIRECT_URI: z.string().optional(),
+  /**
+   * Sign-in (OpenID Connect) callback. Deliberately a DIFFERENT URI from
+   * MICROSOFT_REDIRECT_URI: the two flows request different scopes and
+   * mean different things, and a shared callback would let a mailbox
+   * consent response be replayed into the sign-in handler.
+   */
+  MICROSOFT_SSO_REDIRECT_URI: z.string().optional(),
+  /**
+   * Which account domain may sign in. A SECONDARY check only — the
+   * tenant id above is the real restriction (see verifyIdToken in
+   * server/lib/microsoftAuth.ts). Domain text in a token is an
+   * attribute of an account, not proof of one.
+   */
+  MICROSOFT_ALLOWED_EMAIL_DOMAIN: z.string().default('vamosventures.com'),
+
+  /**
+   * Which identity providers may establish a session.
+   *
+   *   local     — the shared administrator password only (today's behavior)
+   *   microsoft — Microsoft Entra SSO only
+   *   hybrid    — both, for migration/live-testing before cutting over
+   *
+   * Defaults to `local`, and falls back to `local` whenever Microsoft is
+   * requested but not fully configured, so a missing credential can
+   * never lock the team out. See effectiveAuthMode() below.
+   */
+  AUTH_MODE: z.enum(['local', 'microsoft', 'hybrid']).default('local'),
 
   AI_PROVIDER: z.enum(['anthropic', 'openai']).optional(),
   AI_API_KEY: z.string().optional(),
@@ -103,6 +131,70 @@ export function outlookConfigured(): boolean {
     env.MICROSOFT_REDIRECT_URI &&
     env.SESSION_SECRET
   );
+}
+
+// ── Microsoft Entra sign-in (separate from Outlook mailbox access) ──
+
+/**
+ * A real, single-tenant directory id — never one of Microsoft's
+ * multi-tenant aliases.
+ *
+ * `common`, `organizations`, and `consumers` all mean "any directory,
+ * and let the token tell you which one." For an internal tool whose
+ * entire authorization model is "employees of one company," accepting
+ * those would mean any Microsoft account anywhere could complete the
+ * flow and we would be relying on a domain string in the resulting
+ * token to keep strangers out. So SSO refuses to consider itself
+ * configured until a concrete tenant GUID is present, and that GUID is
+ * then checked against the `tid` claim on every sign-in.
+ */
+const TENANT_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function microsoftTenantIsSingleTenant(): boolean {
+  return TENANT_GUID.test(env.MICROSOFT_TENANT_ID);
+}
+
+/**
+ * Microsoft SSO is configured when an Entra app, a single-tenant
+ * directory id, a sign-in callback, and a durable SESSION_SECRET all
+ * exist. Anything short of that and sign-in stays local — reported to
+ * the UI as "Awaiting Microsoft administrator configuration" rather
+ * than rendered as a button that cannot work.
+ */
+export function microsoftSsoConfigured(): boolean {
+  return !!(
+    env.MICROSOFT_CLIENT_ID &&
+    env.MICROSOFT_CLIENT_SECRET &&
+    env.MICROSOFT_SSO_REDIRECT_URI &&
+    env.SESSION_SECRET &&
+    microsoftTenantIsSingleTenant()
+  );
+}
+
+/**
+ * The mode actually in force. Requesting `microsoft` or `hybrid`
+ * without complete Entra configuration degrades to `local` instead of
+ * failing shut: a half-finished credential handover must never be able
+ * to lock the team out of its own tool.
+ */
+export function effectiveAuthMode(): 'local' | 'microsoft' | 'hybrid' {
+  if (env.AUTH_MODE === 'local') return 'local';
+  return microsoftSsoConfigured() ? env.AUTH_MODE : 'local';
+}
+
+/** True when Microsoft was asked for but cannot run yet — drives the awaiting-configuration notice. */
+export function microsoftSsoPending(): boolean {
+  return env.AUTH_MODE !== 'local' && !microsoftSsoConfigured();
+}
+
+/** The password form is offered in every mode except Microsoft-only. */
+export function localLoginAvailable(): boolean {
+  return effectiveAuthMode() !== 'microsoft' && adminAuthConfigured();
+}
+
+/** The Microsoft button is offered only when the flow can actually complete. */
+export function microsoftLoginAvailable(): boolean {
+  return effectiveAuthMode() !== 'local' && microsoftSsoConfigured();
 }
 
 /** AI is live when a provider and key are configured; otherwise the local template answers. */

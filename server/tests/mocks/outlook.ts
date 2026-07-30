@@ -3,12 +3,14 @@ import { audit } from '../../lib/guard';
 import { encrypt } from '../../lib/crypto';
 import {
   buildDraftPayload,
+  OUTLOOK_SCOPES,
   type DraftResult,
   type OutlookService,
   type OutlookStatus,
 } from '../../services/outlook';
 
-const SCOPES = ['offline_access', 'Mail.ReadWrite', 'User.Read'];
+/** The real scope list, not a copy — a fixture that drifted would hide a scope change. */
+const SCOPES = [...OUTLOOK_SCOPES];
 
 /**
  * TEST FIXTURE ONLY. An in-memory Outlook used by the automated tests

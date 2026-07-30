@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import type { Reviewer } from '../../shared/notes';
-import { readCookie, SESSION_COOKIE, verifySessionToken } from './auth';
+import { readCookie, readSession, SESSION_COOKIE } from './auth';
 
 /**
  * Who wrote a note.
@@ -15,22 +15,19 @@ import { readCookie, SESSION_COOKIE, verifySessionToken } from './auth';
  * decoration rather than a fact, and anyone who could reach the API
  * could write a note signed as somebody else.
  *
- * Today this is a single shared administrator password (see
- * server/lib/auth.ts), so there is exactly one identity to resolve and
- * it is honest about being shared: 'Local administrator', not a
- * fabricated person. The three-part shape is what makes the eventual
- * move to Microsoft SSO additive rather than a migration —
+ * Two kinds of identity can answer, and `reviewer_source` keeps them
+ * distinguishable in stored rows —
  *
- *   local admin today   { id: 'local-admin', label: 'Local administrator',
- *                         source: 'local-admin' }
- *   Entra user later    { id: <oid claim>,   label: <name or UPN>,
- *                         source: 'microsoft-sso' }
+ *   shared password   { id: 'local-admin', label: 'Local administrator',
+ *                       source: 'local-admin' }
+ *   Entra user        { id: <oid claim>,   label: <name> <email>,
+ *                       source: 'microsoft-sso' }
  *
- * — because `reviewer_source` keeps the two kinds of identity
- * distinguishable in stored rows. Notes written while this was a shared
- * password must not later be mistaken for the work of a named
- * individual, which is exactly what would happen if authorship were a
- * single free-text column.
+ * — because a note written while sign-in was one shared password must
+ * never later be mistaken for the work of a named individual. That is
+ * exactly what would happen if authorship were a single free-text
+ * column, and it is why the local identity is labeled honestly as
+ * shared instead of borrowing a person's name.
  */
 
 export const LOCAL_ADMIN_REVIEWER: Reviewer = {
@@ -45,11 +42,24 @@ export const LOCAL_ADMIN_REVIEWER: Reviewer = {
  * the null case is a fail-closed guard, not an expected path — a note
  * is never attributed to an anonymous author.
  *
- * When Microsoft SSO lands, this is the ONE place that changes: read
- * the verified claims off the session and return them in this shape.
- * No caller, table, or test needs to know which provider answered.
+ * Under Microsoft SSO the label carries BOTH the display name and the
+ * verified address. Display names are not unique in a directory and
+ * they change (marriage, preferred name, a second "J. Rivera"); the
+ * address is what makes an attribution six months from now
+ * unambiguous. The Entra object id is the stable key, but nobody reads
+ * a GUID off a note.
  */
 export function resolveReviewer(req: Request): Reviewer | null {
-  if (!verifySessionToken(readCookie(req, SESSION_COOKIE))) return null;
+  const session = readSession(readCookie(req, SESSION_COOKIE));
+  if (!session) return null;
+  if (session.source === 'microsoft-sso') {
+    return {
+      id: session.sub,
+      label: session.email && session.label !== session.email
+        ? `${session.label} <${session.email}>`
+        : (session.email ?? session.label),
+      source: 'microsoft-sso',
+    };
+  }
   return LOCAL_ADMIN_REVIEWER;
 }

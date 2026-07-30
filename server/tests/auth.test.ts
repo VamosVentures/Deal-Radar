@@ -51,7 +51,17 @@ describe('auth routes (ADMIN_PASSWORD configured — see vitest.config.ts)', () 
   it('GET /auth/status reports configured, not yet authenticated', async () => {
     const { createApp } = await import('../app');
     const res = await request(createApp()).get('/api/auth/status');
-    expect(res.body).toEqual({ configured: true, authenticated: false });
+    expect(res.body).toMatchObject({
+      configured: true,
+      authenticated: false,
+      // Password-only is the default; Microsoft is neither offered nor
+      // reported as pending until an administrator asks for it.
+      mode: 'local',
+      localLoginAvailable: true,
+      microsoftLoginAvailable: false,
+      microsoftPending: false,
+      identity: null,
+    });
   });
 
   it('rejects an incorrect password', async () => {
@@ -71,7 +81,13 @@ describe('auth routes (ADMIN_PASSWORD configured — see vitest.config.ts)', () 
     expect(login.headers['set-cookie']?.[0]).toMatch(/HttpOnly/i);
 
     const status = await agent.get('/api/auth/status');
-    expect(status.body).toEqual({ configured: true, authenticated: true });
+    expect(status.body).toMatchObject({ configured: true, authenticated: true });
+    // The shared password is labeled as shared, never as a person.
+    expect(status.body.identity).toEqual({
+      label: 'Local administrator',
+      source: 'local-admin',
+      email: null,
+    });
   });
 
   it('logout clears the session', async () => {
@@ -143,7 +159,14 @@ describe('auth routes (ADMIN_PASSWORD not configured)', () => {
     const app = createApp();
 
     const status = await request(app).get('/api/auth/status');
-    expect(status.body).toEqual({ configured: false, authenticated: false });
+    expect(status.body).toMatchObject({
+      configured: false,
+      authenticated: false,
+      // No password AND no Microsoft config: nothing to offer, and the
+      // UI must not render a form that cannot succeed.
+      localLoginAvailable: false,
+      microsoftLoginAvailable: false,
+    });
 
     const login = await request(app).post('/api/auth/login').send({ password: 'anything' });
     expect(login.status).toBe(401);

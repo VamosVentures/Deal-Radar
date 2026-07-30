@@ -120,6 +120,25 @@ exercised against a live external account from this development environment
 - **Outlook**: a real Entra app registration, tenant admin consent for
   delegated `Mail.ReadWrite`/`User.Read`/`offline_access`, and
   `SESSION_SECRET` for token-at-rest encryption.
+- **Microsoft sign-in (SSO)**: the same app registration plus a
+  single-tenant `MICROSOFT_TENANT_ID` (a real GUID — `common` is refused)
+  and `MICROSOFT_SSO_REDIRECT_URI`. Verified end to end against a fixture
+  keypair in `server/tests/microsoft-sso.test.ts`, never against a live
+  tenant. Default `AUTH_MODE=local` means it is inert until switched on.
+
+### Outlook lead-folder reading is NOT implemented
+
+The intended workflow reads leads a person deliberately moves into a
+`Deal Radar Leads` folder in their own mailbox. **That reading path does not
+exist in this codebase.** The only mail operation implemented anywhere is
+creating a draft.
+
+`LEAD_FOLDER_NAME` in `server/services/outlook.ts` records the boundary the
+integration is designed to stay inside, and `Mail.ReadWrite` is requested
+because the eventual read needs it — but nothing calls a folder-listing or
+message-reading Graph endpoint today, and no UI offers it. Do not describe
+Deal Radar as ingesting email; it does not. Building it is a scoped piece of
+work that needs a live mailbox to develop against.
 - **AI**: `AI_PROVIDER` + a real API key. Without one, the app uses a
   labeled deterministic local template — this is intentional, not a bug.
 
