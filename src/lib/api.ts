@@ -20,6 +20,7 @@ import type {
 } from '../../shared/discovery';
 import type { OpportunityClass } from '../../shared/opportunity';
 import type { QualificationResult } from '../../shared/qualification';
+import type { CompanyNote } from '../../shared/notes';
 
 export type UiStatus =
   | 'Connected' | 'Not connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error'
@@ -324,6 +325,42 @@ export const api = {
     get: () => call<StaleSettings>('/api/stale-settings'),
     update: (patch: Partial<StaleSettings>) =>
       call<StaleSettings>('/api/admin/stale-settings', { method: 'PUT', body: JSON.stringify(patch) }),
+  },
+
+  /**
+   * Internal company review notes.
+   *
+   * Fetched per company, on demand, when a detail panel opens — never
+   * bundled into /api/companies/imported. That endpoint feeds the
+   * company table AND the CSV export, and a note carries candid
+   * investment-team opinion that must not travel in a payload assembled
+   * for facts. There is no delete: archive and restore are the only
+   * lifecycle calls, so review history stays auditable.
+   */
+  notes: {
+    list: (companyId: string, includeArchived = false) =>
+      call<{ notes: CompanyNote[] }>(`/api/companies/${encodeURIComponent(companyId)}/notes?includeArchived=${includeArchived}`),
+    create: (companyId: string, body: string) =>
+      call<{ note: CompanyNote }>(`/api/companies/${encodeURIComponent(companyId)}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ body }),
+        idempotent: true,
+      }),
+    edit: (companyId: string, noteId: string, body: string) =>
+      call<{ note: CompanyNote }>(`/api/companies/${encodeURIComponent(companyId)}/notes/${encodeURIComponent(noteId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ body }),
+      }),
+    archive: (companyId: string, noteId: string) =>
+      call<{ note: CompanyNote }>(`/api/companies/${encodeURIComponent(companyId)}/notes/${encodeURIComponent(noteId)}/archive`, {
+        method: 'POST',
+        body: '{}',
+      }),
+    restore: (companyId: string, noteId: string) =>
+      call<{ note: CompanyNote }>(`/api/companies/${encodeURIComponent(companyId)}/notes/${encodeURIComponent(noteId)}/restore`, {
+        method: 'POST',
+        body: '{}',
+      }),
   },
 
   duplicates: {

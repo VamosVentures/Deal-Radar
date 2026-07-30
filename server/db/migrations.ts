@@ -429,6 +429,53 @@ const MIGRATIONS: Migration[] = [
       ALTER TABLE issuer_qualification ADD COLUMN operating_evidence TEXT;
     `,
   },
+  {
+    version: 10,
+    name: 'internal-company-review-notes',
+    sql: `
+      -- Free-text internal notes a reviewer writes about a company:
+      -- investment-team opinion, not sourced evidence. Kept in its own
+      -- table rather than a column on companies for three reasons —
+      -- there are many notes per company, each carries its own
+      -- authorship and lifecycle, and a note must never be able to
+      -- ride along with the company row into a payload (or a CSV
+      -- export) that was only meant to carry facts.
+      --
+      -- Notes are NEVER deleted. Archiving is a reversible state
+      -- change, so a note that shaped a decision months ago can still
+      -- be read back — a hard delete would silently rewrite the review
+      -- history that justifies a pass or an investment.
+      --
+      -- body is PLAIN TEXT, stored exactly as normalized on the way in
+      -- (see shared/notes.ts). It is never HTML and never Markdown:
+      -- every reader treats it as untrusted text.
+      CREATE TABLE company_notes (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
+        archived_at TEXT,
+        -- Reviewer identity, resolved from the authenticated session and
+        -- never from the request body. Three columns because the single
+        -- shared local administrator and a future Microsoft SSO user are
+        -- not the same kind of identity, and a note written under one
+        -- must stay distinguishable from a note written under the other:
+        --   reviewer_id     stable subject — 'local-admin' today, an
+        --                   Entra object id (oid) under SSO
+        --   reviewer_label  what to show a human
+        --   reviewer_source which provider established the identity
+        -- See server/lib/reviewer.ts.
+        reviewer_id TEXT NOT NULL,
+        reviewer_label TEXT NOT NULL,
+        reviewer_source TEXT NOT NULL
+      );
+      -- The read path is always "this company's notes, newest first",
+      -- filtered by archived state.
+      CREATE INDEX idx_company_notes_company ON company_notes (company_id, archived, created_at);
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

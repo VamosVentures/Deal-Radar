@@ -11,6 +11,8 @@ import { HubSpotModal } from './HubSpotModal';
 import { OutreachPanel } from './OutreachPanel';
 import { AiAnalysis } from './AiAnalysis';
 import { WebsiteConfirmationPanel } from './WebsiteConfirmation';
+import { CompanyNotes } from './CompanyNotes';
+import { confirmLeaveUnsavedNotes } from '../lib/unsavedNotes';
 import { useCompanies } from '../store/companies';
 import { btnGhost, btnPrimary } from './Modal';
 import { api, ApiError, type PossibleDuplicateEntry, type RefreshResearchResult } from '../lib/api';
@@ -213,6 +215,21 @@ export function CompanyTable({
       quarantine: quarantine[c.id],
       reviewStatus: meta[c.id]?.reviewStatus,
     })));
+  };
+
+  /**
+   * Expand or collapse a company's detail panel.
+   *
+   * Every path that changes which panel is open goes through here, so
+   * the unsaved-note check cannot be bypassed by whichever row cell or
+   * keyboard shortcut a reviewer happens to use. Collapsing counts too:
+   * the draft lives in the panel, so closing it loses the work just as
+   * surely as switching companies does.
+   */
+  const requestOpen = (next: string | null) => {
+    if (next === openId) return;
+    if (!confirmLeaveUnsavedNotes()) return;
+    setOpenId(next);
   };
 
   const toggleSelectAll = () => {
@@ -430,7 +447,7 @@ export function CompanyTable({
           e.preventDefault();
           const idx = rows.findIndex(({ c }) => c.id === openId);
           const nextIdx = e.key === 'ArrowDown' ? Math.min(rows.length - 1, idx + 1) : Math.max(0, idx - 1);
-          setOpenId(rows[idx === -1 ? 0 : nextIdx].c.id);
+          requestOpen(rows[idx === -1 ? 0 : nextIdx].c.id);
         }}
         aria-label="Company review queue — arrow keys move between an expanded company and its neighbor"
       >
@@ -469,7 +486,7 @@ export function CompanyTable({
                     <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelectOne(c.id)} aria-label={`Select ${c.name}`} />
                     </td>
-                    <td className="cursor-pointer px-3 py-2.5" onClick={() => setOpenId(open ? null : c.id)}>
+                    <td className="cursor-pointer px-3 py-2.5" onClick={() => requestOpen(open ? null : c.id)}>
                       <ScoreGauge score={fit.score} size={38} />
                       <div className="mt-1 font-mono text-[9px] tabular-nums text-slate-mid" title="Evidence confidence — how well-sourced this record is">
                         {Math.round(fit.evidenceConfidence * 100)}% ev.
@@ -490,7 +507,7 @@ export function CompanyTable({
                         </div>
                       )}
                     </td>
-                    <td className="cursor-pointer px-3 py-2.5" onClick={() => setOpenId(open ? null : c.id)}>
+                    <td className="cursor-pointer px-3 py-2.5" onClick={() => requestOpen(open ? null : c.id)}>
                       <div className="font-semibold text-ink">{c.name}</div>
                       <div className="max-w-xs text-xs text-slate-mid">{c.oneLiner}</div>
                       <div className="mt-1.5 flex flex-wrap gap-1">
@@ -508,11 +525,11 @@ export function CompanyTable({
                         )}
                       </div>
                     </td>
-                    {showVertical && <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => setOpenId(open ? null : c.id)}>{verticalById(c.vertical).name}</td>}
-                    <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => setOpenId(open ? null : c.id)}>{c.subcategory}</td>
-                    <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs font-medium" onClick={() => setOpenId(open ? null : c.id)}>{c.stage}</td>
-                    <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs" onClick={() => setOpenId(open ? null : c.id)}>{c.city}, {c.state}</td>
-                    <td className="cursor-pointer px-3 py-2.5" onClick={() => setOpenId(open ? null : c.id)}><IdentityChips founders={c.founders} /></td>
+                    {showVertical && <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}>{verticalById(c.vertical).name}</td>}
+                    <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}>{c.subcategory}</td>
+                    <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs font-medium" onClick={() => requestOpen(open ? null : c.id)}>{c.stage}</td>
+                    <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs" onClick={() => requestOpen(open ? null : c.id)}>{c.city}, {c.state}</td>
+                    <td className="cursor-pointer px-3 py-2.5" onClick={() => requestOpen(open ? null : c.id)}><IdentityChips founders={c.founders} /></td>
                   </tr>
                   {open && (
                     <tr className="border-b border-line bg-paper">
@@ -591,6 +608,7 @@ const TOC: { id: string; label: string }[] = [
   { id: 'evidence', label: 'Evidence' },
   { id: 'risks', label: 'Risks & open questions' },
   { id: 'recommendation', label: 'Recommendation' },
+  { id: 'notes', label: 'Internal notes' },
   { id: 'ai-analysis', label: 'AI analysis' },
   { id: 'provenance', label: 'Review history' },
 ];
@@ -1071,11 +1089,21 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             <p className="border-l-2 border-marigold pl-4 font-display text-xl italic leading-snug text-ink">{nextStep}</p>
           </MemoSection>
 
+          {/*
+            Placed directly after the recommendation, because that is the
+            moment a reviewer has an opinion worth writing down — and
+            deliberately AFTER the evidence section, so a note is written
+            against the record rather than instead of it.
+          */}
+          <MemoSection n="08" id={`${c.id}-notes`} title="Internal notes">
+            <CompanyNotes companyId={c.id} />
+          </MemoSection>
+
           <div id={`${c.id}-ai-analysis`} className="scroll-mt-16">
             <AiAnalysis c={c} />
           </div>
 
-          <MemoSection n="08" id={`${c.id}-provenance`} title="Review history & sync">
+          <MemoSection n="09" id={`${c.id}-provenance`} title="Review history & sync">
             <div className="grid gap-x-6 sm:grid-cols-2">
               <FactRow label="Discovered" value={m?.discoveredAt ? `${m.discoveredAt}${m.discoverySource ? ` via ${m.discoverySource}` : ''}` : null} />
               <FactRow label="Last refreshed" value={c.lastRefreshed ?? m?.lastRefreshed ?? null} />

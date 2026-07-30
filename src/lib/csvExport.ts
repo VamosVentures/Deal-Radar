@@ -16,6 +16,23 @@ import {
  * carries the qualification verdict that gated it, and a quarantined
  * record carries its reason. A spreadsheet outlives the screen it came
  * from, so a number that needed context on screen needs it more here.
+ *
+ * INTERNAL NOTES ARE DELIBERATELY ABSENT.
+ *
+ * Note bodies carry candid investment-team opinion — a read on a founder,
+ * a reason for passing — written on the understanding that they stay
+ * inside the tool. This file is the export path, and a CSV is the single
+ * easiest artifact to forward by accident. The omission is structural
+ * rather than a filter applied here: ExportRow has no note field, and
+ * /api/companies/imported (the only bulk payload the UI holds) never
+ * returns note bodies at all, so there is nothing on this side of the
+ * boundary to leak. Notes come from /api/companies/:id/notes alone.
+ *
+ * A per-company note COUNT was considered and left out. It would need
+ * note data plumbed into the bulk company payload — reintroducing
+ * exactly the coupling this separation exists to prevent — to tell a
+ * reader something they learn by opening the company. See
+ * server/tests/notes.test.ts for the test that holds this line.
  */
 
 export interface ExportRow {

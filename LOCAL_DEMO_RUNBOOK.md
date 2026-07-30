@@ -276,20 +276,67 @@ such as **Star Catcher**: real, but resting on one investor announcement, so
 not a deal.
 
 **4:30 — Workflow and honesty.** Set a company to **Monitor**, reload the page,
-show it persisted. Then *Settings*: sourcing run history, **Run refresh (all
-enabled)**, and the connector cards reading *Awaiting Microsoft administrator
-configuration* and *Not enabled for this local pilot*. Close on that — the
-product states what it cannot do.
+show it persisted. Add an internal note under **08 Internal notes** and reload
+to show that too (see §9 for the fuller version). Then *Settings*: sourcing run
+history, **Run refresh (all enabled)**, and the connector cards reading
+*Awaiting Microsoft administrator configuration* and *Not enabled for this local
+pilot*. Close on that — the product states what it cannot do.
 
 ---
 
-## 9. Useful commands
+## 9. Internal note review walkthrough
+
+Where the team records what it *thinks*, as opposed to what a source *said*.
+Notes live in section **08 Internal notes** of any expanded company, below the
+recommendation. They work on every record — qualified deals, held-back deals,
+leads, human-review, and disqualified/quarantined companies alike — because a
+quarantined record is often exactly where an explanation is most useful.
+
+1. **Open a company.** *Companies* → click any row → scroll to **08 Internal
+   notes** (or use *Internal notes* in the "On this record" rail). A company
+   with none says so plainly rather than showing a blank panel.
+2. **Write one.** Type into *Add a note*. The counter tracks the length against
+   the 4,000-character limit and counts exactly what the server will store, so
+   it cannot disagree with the limit it is counting toward. **Save note** is an
+   explicit press — there is no autosave, because a half-written opinion should
+   not be stored as though it were finished. Whitespace-only text is refused.
+3. **Note what it records.** Each saved note shows its author and time —
+   *Local administrator* today, because the sign-in is a single shared password
+   and the note says so instead of inventing a name. Under Microsoft SSO the
+   same field will carry the real user, and stored notes stay distinguishable
+   between the two.
+4. **Edit it.** **Edit** loads the body back into the box; saving marks the note
+   *edited* and keeps its original author and creation time.
+5. **Archive and restore.** **Archive** takes a note out of the working set and
+   reveals the archived list so it never just disappears. Nothing is deleted —
+   there is no delete button and no delete route. **Restore** brings it back.
+   Archiving is not an edit, so an archived note is not labelled as revised.
+6. **Prove it persisted.** Reload the browser: the note is still there. Sign out
+   and back in: still there. Restart with `npm run dev`: still there. It is a
+   row in the `company_notes` table (schema v10), so it is included in
+   `npm run db:backup` and comes back with a restore.
+
+**Two things to say out loud.**
+
+- **Notes are confidential and stay in the tool.** They are absent from
+  **Export CSV** by design, and absent from the bulk company payload the export
+  is built from — so there is nothing on that side of the boundary to leak. The
+  audit log records *that* a note was added, edited, archived, or restored, and
+  never what it said.
+- **Notes are plain text, always.** A body is rendered as text and never as
+  HTML or Markdown. Paste `<b>bold</b>` into a note and it displays those
+  characters literally. Notes are treated as untrusted input even though a
+  colleague wrote them.
+
+---
+
+## 10. Useful commands
 
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start web + API (the demo command) |
-| `npm test` | Unit suite (540 tests) |
-| `npm run test:e2e` | Playwright suite (40 tests, isolated DB and ports) |
+| `npm test` | Unit suite (637 tests) |
+| `npm run test:e2e` | Playwright suite (59 tests, isolated DB and ports) |
 | `npm run typecheck` | TypeScript across app, server, and scripts |
 | `npm run lint` | oxlint |
 | `npm run build` | Production build |
