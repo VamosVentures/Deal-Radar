@@ -158,7 +158,24 @@ function ConnectorCard({ c, running, onRun, onChanged }: {
         <div className="mt-1.5 rounded-[2px] border border-alerta/40 bg-alerta-soft px-2 py-1.5 text-[11px] text-alerta">{c.state.lastError}</div>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button className={btnGhost} disabled={running || !c.state.enabled} onClick={onRun}>Run sync</button>
+        {/*
+          A disabled control has to say why it is disabled. The
+          "disabled" chip above and the adjacent Enable button imply the
+          reason, but implying is not explaining — someone who clicks a
+          greyed-out button and gets nothing has been told nothing.
+        */}
+        <button
+          className={btnGhost}
+          disabled={running || !c.state.enabled}
+          title={
+            running ? 'A refresh run is already in progress — wait for it to finish.'
+            : !c.state.enabled ? `${c.meta.name} is disabled. Use Enable first, then run a sync.`
+            : `Run ${c.meta.name} now and import whatever it returns.`
+          }
+          onClick={onRun}
+        >
+          Run sync
+        </button>
         <button
           className={btnGhost}
           onClick={async () => { await api.refresh.setEnabled(c.meta.id, !c.state.enabled); await onChanged(); }}

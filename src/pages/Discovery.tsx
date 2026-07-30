@@ -349,6 +349,13 @@ export function Discovery() {
             <button
               onClick={doImport}
               disabled={selected.size === 0}
+              // Says why it is unavailable rather than leaving a greyed-out
+              // control to be guessed at.
+              title={
+                selected.size === 0
+                  ? 'Select at least one candidate above to import.'
+                  : `Import ${selected.size} selected candidate(s) into Awaiting Review for a human to screen.`
+              }
               className="rounded-[2px] bg-ink px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-125 disabled:opacity-40 disabled:hover:brightness-100"
             >
               Import {selected.size > 0 ? `${selected.size} ` : ''}selected → Awaiting Review

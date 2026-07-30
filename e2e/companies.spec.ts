@@ -36,6 +36,43 @@ test.describe('Companies and review queue', () => {
     await expect(page.getByText('E2E FinTech Fixture Co')).not.toBeVisible();
   });
 
+  test('the Claude prompt action copies evidence without notes or contact details', async ({ page, context }) => {
+    // Repaired in the Friday audit: the in-app AI actions answer from a
+    // local template, so there was no way to get real analysis without
+    // credentials. This copies a structured prompt for a person to run
+    // themselves — and must not claim a model ran here.
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await page.goto('/companies');
+    await page.getByText('E2E Health Fixture Co').first().click();
+
+    const copyButton = page.getByRole('button', { name: 'Copy Claude prompt' });
+    await expect(copyButton).toBeVisible();
+    await copyButton.click();
+
+    await expect(page.getByText('Copied — no AI ran here.')).toBeVisible();
+
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboard).toContain('E2E Health Fixture Co');
+    expect(clipboard).toContain('E2E fixture evidence claim');
+    // The instruction that stops a model inventing a missing field.
+    expect(clipboard).toContain('Do not fill it in, infer it, or assume a value.');
+    // Nothing confidential rides along.
+    expect(clipboard.toLowerCase()).not.toContain('internal note');
+    expect(clipboard).not.toMatch(/@vamosventures\.com/);
+  });
+
+  test('a disabled connector explains why its Run sync is unavailable', async ({ page }) => {
+    // Repaired in the Friday audit: these four buttons were disabled with
+    // no explanation at all — a greyed-out control that told the reader
+    // nothing.
+    await page.goto('/sources');
+    await expect(page.getByText('System status')).toBeVisible();
+
+    const disabledRunSync = page.getByRole('button', { name: 'Run sync', disabled: true }).first();
+    await expect(disabledRunSync).toBeVisible();
+    await expect(disabledRunSync).toHaveAttribute('title', /is disabled\. Use Enable first/);
+  });
+
   test('the company detail view opens and review-status actions work', async ({ page }) => {
     await page.goto('/companies');
     await page.getByText('E2E Health Fixture Co').click();

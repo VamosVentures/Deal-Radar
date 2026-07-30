@@ -3,6 +3,7 @@ import type { Company } from '../types';
 import { scoreCompany } from '../lib/scoring';
 import { verticalById } from '../data/taxonomy';
 import { api, ApiError } from '../lib/api';
+import { buildClaudePrompt } from '../lib/claudePrompt';
 import type { FitExplainContext, FitExplanation, PortfolioComparison } from '../../shared/integrations';
 import { btnGhost, ErrorNote } from './Modal';
 
@@ -13,6 +14,12 @@ import { btnGhost, ErrorNote } from './Modal';
  * and answers with a deterministic local template when no AI key is
  * configured. Output is always labeled (Local template / AI / cached)
  * and is advisory text a human reads — it approves or rejects nothing.
+ *
+ * The third action is different in kind and says so: it copies a
+ * structured prompt for the reader to run in Claude THEMSELVES. No
+ * model is called from this dashboard, and the label must never suggest
+ * otherwise — see src/lib/claudePrompt.ts for what the prompt contains
+ * and, more importantly, what it deliberately leaves out.
  */
 export function AiAnalysis({ c }: { c: Company }) {
   const fit = scoreCompany(c);
@@ -20,6 +27,25 @@ export function AiAnalysis({ c }: { c: Company }) {
   const [comparison, setComparison] = useState<PortfolioComparison | null>(null);
   const [loading, setLoading] = useState<'fit' | 'portfolio' | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [promptState, setPromptState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [promptText, setPromptText] = useState<string | null>(null);
+
+  async function copyPrompt() {
+    const text = buildClaudePrompt(c, fit);
+    try {
+      // Clipboard access needs a secure context; over plain http on a
+      // non-localhost origin it simply is not there. Falling back to
+      // showing the text means the action still works instead of
+      // failing silently.
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(text);
+      setPromptText(null);
+      setPromptState('copied');
+    } catch {
+      setPromptText(text);
+      setPromptState('failed');
+    }
+  }
 
   const context: FitExplainContext = {
     companyId: c.id,
@@ -58,8 +84,39 @@ export function AiAnalysis({ c }: { c: Company }) {
           <button className={btnGhost} onClick={() => run('portfolio')} disabled={loading !== null}>
             {loading === 'portfolio' ? 'Comparing…' : 'Compare vs portfolio'}
           </button>
+          <button
+            className={btnGhost}
+            onClick={copyPrompt}
+            title="Copies a structured prompt built from this company's recorded evidence. Nothing is sent anywhere — paste it into Claude yourself. Internal notes and founder contact details are deliberately excluded."
+          >
+            {promptState === 'copied' ? 'Prompt copied ✓' : 'Copy Claude prompt'}
+          </button>
         </span>
       </div>
+
+      {promptState === 'copied' && (
+        <p className="mt-2 border-t border-line pt-2 text-xs leading-relaxed text-slate-mid">
+          <span className="font-semibold text-ink">Copied — no AI ran here.</span> Paste it into
+          Claude (or any assistant you are permitted to use) and read the answer as one more
+          opinion, not a verdict. The prompt carries recorded evidence and the audited score only:
+          internal notes, founder emails, and identity fields are left out on purpose.
+        </p>
+      )}
+      {promptState === 'failed' && promptText && (
+        <div className="mt-2 border-t border-line pt-2">
+          <p className="text-xs leading-relaxed text-slate-mid">
+            <span className="font-semibold text-ink">Could not reach the clipboard</span> (the
+            browser blocks it outside a secure context). Select the text below and copy it
+            manually — again, nothing was sent anywhere.
+          </p>
+          <textarea
+            readOnly
+            value={promptText}
+            className="mt-1.5 h-40 w-full rounded-[2px] border border-line bg-paper px-2 py-1.5 font-mono text-[11px] text-ink"
+          />
+        </div>
+      )}
+
       {error && <div className="mt-2"><ErrorNote message={error.message} hint={error.hint} /></div>}
 
       {explanation && (

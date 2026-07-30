@@ -15,5 +15,9 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["server", "shared", "scripts", "src/data", "src/types.ts", "src/lib/scoring.ts"]
+  // src/lib/claudePrompt.ts joins scoring.ts here for the same reason:
+  // it is a pure function with a leakage rule that has to be enforced by
+  // test (no notes, no contact details), and the test suite runs under
+  // this project.
+  "include": ["server", "shared", "scripts", "src/data", "src/types.ts", "src/lib/scoring.ts", "src/lib/claudePrompt.ts"]
 }
