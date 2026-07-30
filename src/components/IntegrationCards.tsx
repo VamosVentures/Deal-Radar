@@ -3,6 +3,8 @@ import { api, ApiError, type HubSpotSearchHit } from '../lib/api';
 import { useIntegrations } from '../store/integrations';
 import { btnGhost, btnPrimary, ErrorNote } from './Modal';
 import {
+  AI_UNAVAILABLE_STATUS,
+  OUTLOOK_UNAVAILABLE_STATUS,
   RADAR_HUBSPOT_STAGES,
   type HubSpotPipelineInfo,
   type HubSpotPipelineMapping,
@@ -49,13 +51,27 @@ export function IntegrationCards() {
   );
 }
 
+/**
+ * The badge for an unconfigured connector.
+ *
+ * Outlook and AI get specific wording rather than the generic
+ * "Implemented — credentials required", which describes the state of the
+ * code and leaves a reviewer unable to tell a broken feature from a
+ * deliberately unconfigured one.
+ */
+function unavailableLabel(provider: IntegrationConnection['provider']): string {
+  if (provider === 'outlook') return OUTLOOK_UNAVAILABLE_STATUS;
+  if (provider === 'ai') return AI_UNAVAILABLE_STATUS;
+  return 'Implemented — credentials required';
+}
+
 function CardShell({ title, conn, children }: { title: string; conn: IntegrationConnection; children: React.ReactNode }) {
   return (
     <div className="flex flex-col border border-line bg-panel p-4">
-      <div className="flex items-center gap-2">
+      <div className="flex items-start gap-2">
         <h3 className="text-sm font-semibold text-ink">{title}</h3>
-        <span className={`ml-auto rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${conn.connected ? 'bg-verde-soft text-verde' : 'bg-marigold-soft text-marigold'}`}>
-          {conn.mode === 'live' ? (conn.connected ? 'Connected' : 'Configured · not connected') : 'Implemented — credentials required'}
+        <span className={`ml-auto rounded-[2px] px-1.5 py-0.5 text-right font-mono text-[10px] font-bold uppercase ${conn.connected ? 'bg-verde-soft text-verde' : 'bg-marigold-soft text-marigold'}`}>
+          {conn.mode === 'live' ? (conn.connected ? 'Connected' : 'Configured · not connected') : unavailableLabel(conn.provider)}
         </span>
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-slate-mid">{conn.detail}</p>

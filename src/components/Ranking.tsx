@@ -10,19 +10,34 @@ import { ExceptionBadge, IdentityChips, ScoreGauge } from './ui';
  * primary filters only (vertical, stage, state) and free search.
  */
 export function Ranking() {
-  const { companies, meta } = useCompanies();
+  const { companies, meta, quarantine } = useCompanies();
   const [show, setShow] = useState<'top10' | 'highFit' | 'all'>('top10');
   const [vertical, setVertical] = useState('all');
   const [stage, setStage] = useState('all');
   const [state, setState] = useState('all');
   const [q, setQ] = useState('');
+  // Disqualified records are excluded by DEFAULT and can be shown
+  // deliberately — the same rule the company queue already applies.
+  const [showDisqualified, setShowDisqualified] = useState(false);
 
   const states = useMemo(() => Array.from(new Set(companies.map((c) => c.state))).sort(), [companies]);
+
+  const quarantinedCount = useMemo(
+    () => companies.filter((c) => quarantine[c.id]).length,
+    [companies, quarantine],
+  );
 
   const filtered = useMemo(() => {
     return companies
       .map((c) => ({ c, fit: scoreCompany(c), m: meta[c.id] }))
       .filter(({ c }) => {
+        // A quarantined record is not a prospect. This ranking was showing
+        // them unmarked and sorted by fit score alongside real leads, so a
+        // publicly traded company (Adagio Medical Holdings, ticker ADGM)
+        // sat at rank 4 and a numbered solar project vehicle (Trinary
+        // Solar Group VIII LLC) at rank 7 — both already disqualified by
+        // stored verdicts, both reading as top prospects.
+        if (!showDisqualified && quarantine[c.id]) return false;
         if (vertical !== 'all' && c.vertical !== vertical) return false;
         if (stage !== 'all' && c.stage !== stage) return false;
         if (state !== 'all' && c.state !== state) return false;
@@ -33,7 +48,7 @@ export function Ranking() {
         return hay.includes(q.trim().toLowerCase());
       })
       .sort((a, b) => b.fit.score - a.fit.score); // strongest first, always
-  }, [companies, meta, vertical, stage, state, q]);
+  }, [companies, meta, vertical, stage, state, q, quarantine, showDisqualified]);
 
   const limited =
     show === 'top10' ? filtered.slice(0, 10)
@@ -73,6 +88,16 @@ export function Ranking() {
           <option value="all">All states</option>
           {states.map((s) => <option key={s}>{s}</option>)}
         </select>
+        {quarantinedCount > 0 && (
+          <label className="flex items-center gap-1.5 text-xs text-slate-mid" title="Publicly traded companies, funds, SPVs, and records nothing corroborates. Excluded from the ranking because they are not prospects; their evidence is retained.">
+            <input
+              type="checkbox"
+              checked={showDisqualified}
+              onChange={(e) => setShowDisqualified(e.target.checked)}
+            />
+            Show disqualified ({quarantinedCount})
+          </label>
+        )}
       </div>
 
       {limited.length === 0 ? (
@@ -107,6 +132,14 @@ export function Ranking() {
                   <td className="px-3 py-2.5"><IdentityChips founders={c.founders} /></td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-1">
+                      {quarantine[c.id] && (
+                        <span
+                          className="rounded-[2px] bg-alerta-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-alerta"
+                          title={quarantine[c.id].reason}
+                        >
+                          Disqualified
+                        </span>
+                      )}
                       {fit.exceptions.map((e) => <ExceptionBadge key={e.flag} flag={e.flag} compact />)}
                       {(m?.reviewStatus === 'New' || m?.reviewStatus === 'Awaiting Review') && (
                         <span className="rounded-[2px] bg-marigold-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-marigold">{m.reviewStatus}</span>

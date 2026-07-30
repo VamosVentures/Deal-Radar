@@ -397,3 +397,38 @@ export const portfolioComparisonSchema = z.object({
   evidenceNotes: z.array(z.string()).default([]),
 });
 export type PortfolioComparison = z.infer<typeof portfolioComparisonSchema>;
+
+// ── Unavailable-integration wording ───────────────────────────────
+
+/**
+ * The exact status text shown for the two integrations that cannot run in
+ * this local review build, defined once and shared by the API and the UI.
+ *
+ * These are deliberately not the generic "Implemented — credentials
+ * required" that every other connector uses. That phrasing reads as a
+ * developer's note about the code, and a reviewer seeing it on a demo
+ * cannot tell whether the feature is broken, half-built, or simply
+ * switched off. Both of these say who has to do what instead:
+ *
+ *  - Outlook is blocked on an administrator granting Microsoft Graph
+ *    credentials, which is not something this application can do.
+ *  - AI is switched off for this pilot by choice — there is no key and no
+ *    spend — and outreach falls back to a labelled local template rather
+ *    than failing.
+ *
+ * Neither string may imply a connection exists. Nothing in this build
+ * fabricates a connector response.
+ */
+export const OUTLOOK_UNAVAILABLE_STATUS = 'Awaiting Microsoft administrator configuration';
+export const AI_UNAVAILABLE_STATUS = 'Not enabled for this local pilot';
+
+export const OUTLOOK_UNAVAILABLE_DETAIL =
+  'Awaiting Microsoft administrator configuration. Drafting into a real mailbox needs Microsoft Graph credentials '
+  + '(MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_REDIRECT_URI) issued by a tenant administrator. '
+  + 'Until those exist this integration is not connected, no mailbox is reachable, and every Outlook action fails '
+  + 'with an explicit error rather than appearing to succeed.';
+
+export const AI_UNAVAILABLE_DETAIL =
+  'Not enabled for this local pilot. No AI provider or key is configured and no paid API is called. '
+  + 'Outreach drafts and fit explanations come from a deterministic local template built only from recorded '
+  + 'evidence, and are labelled as such wherever they appear.';

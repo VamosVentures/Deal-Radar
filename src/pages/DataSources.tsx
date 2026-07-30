@@ -28,6 +28,12 @@ export function DataSources() {
 
   const logout = async () => {
     await api.auth.logout().catch(() => {});
+    // Re-read auth state in place. This deliberately re-locks the Settings
+    // panel behind "Administrator sign-in required" rather than navigating
+    // away — the admin plane is what was unlocked, so the admin plane is
+    // what visibly re-locks. Every API call now 401s regardless, and any
+    // navigation re-evaluates AppGate. Covered by e2e/auth.spec.ts
+    // ("logout re-locks Settings").
     loadAuth();
   };
 

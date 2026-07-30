@@ -19,7 +19,7 @@ const HIGH_FIT_THRESHOLD = 8.0;
  * counters) — plus the fit ranking and sector coverage.
  */
 export function Overview() {
-  const { companies, meta, loaded, loadError } = useCompanies();
+  const { companies, meta, quarantine, loaded, loadError } = useCompanies();
   const [staleSettings, setStaleSettings] = useState<StaleSettings>(DEFAULT_STALE_SETTINGS);
   useEffect(() => {
     api.staleSettings.get().then(setStaleSettings).catch(() => setStaleSettings(DEFAULT_STALE_SETTINGS));
@@ -34,10 +34,15 @@ export function Overview() {
     (m) => m.discoveredAt && Date.now() - new Date(m.discoveredAt).getTime() <= 7 * DAY,
   ).length;
   const highFit = scored.filter((s) => s.fit.score >= HIGH_FIT_THRESHOLD).length;
+  // Disqualified records are not waiting on a reviewer — a publicly traded
+  // company or a project SPV has already been decided. Counting them here
+  // overstated the queue by every quarantined record.
   const awaitingReview = companies.filter((c) => {
+    if (quarantine[c.id]) return false;
     const status = meta[c.id]?.reviewStatus ?? 'New';
     return status === 'New' || status === 'Awaiting Review';
   }).length;
+  const disqualifiedCount = companies.filter((c) => quarantine[c.id]).length;
   // Staleness is computed server-side (companyMetaView) using the
   // administrator-configurable threshold and per-status inclusion
   // (Settings → Stale-record settings) — not a hardcoded 30 days.
@@ -89,7 +94,8 @@ export function Overview() {
         <PriorityStat
           label="Awaiting review"
           value={awaitingReview}
-          sub={`${awaitingReview === 1 ? '1 company needs' : `${awaitingReview} companies need`} a first review`}
+          sub={`${awaitingReview === 1 ? '1 company needs' : `${awaitingReview} companies need`} a first review`
+            + (disqualifiedCount > 0 ? ` · ${disqualifiedCount} disqualified record${disqualifiedCount === 1 ? '' : 's'} excluded` : '')}
           tone="marigold"
         />
         {staleSettings.showStaleOnOverview && (

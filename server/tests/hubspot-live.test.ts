@@ -248,7 +248,7 @@ describe('sync failure recording and retry', () => {
 // ── Admin status: credentials required, never simulated ──────────
 
 describe('admin status without credentials', () => {
-  it('shows Implemented — credentials required and presence booleans only', async () => {
+  it('reports each unconfigured connector in its own words, with presence booleans only', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL) => {
       if (String(url).includes('api.github.com/rate_limit')) {
         return jsonResponse({ resources: { core: { remaining: 55, limit: 60, reset: 1780000000 } } });
@@ -271,9 +271,15 @@ describe('admin status without credentials', () => {
     expect(res.body.connectors.github.status).toBe('Connected');
     expect(res.body.connectors.github.detail).toContain('55/60');
     // Real implementations without credentials say so — no simulated success.
+    // HubSpot stays optional and keeps the generic wording; the two that
+    // cannot run in a local review build name the actual blocker instead,
+    // so a reviewer is never left guessing whether a feature is broken.
     expect(res.body.connectors.hubspot.status).toBe('Implemented — credentials required');
-    expect(res.body.connectors.outlook.status).toBe('Implemented — credentials required');
-    expect(res.body.connectors.ai.status).toBe('Implemented — credentials required');
+    expect(res.body.connectors.outlook.status).toBe('Awaiting Microsoft administrator configuration');
+    expect(res.body.connectors.ai.status).toBe('Not enabled for this local pilot');
+    // Neither may imply a connection exists.
+    expect(res.body.connectors.outlook.detail).toMatch(/not connected/i);
+    expect(res.body.connectors.ai.detail).toMatch(/no paid API is called/i);
     // Presence booleans only — never secret values.
     expect(res.body.credentials.hubspotPrivateAppToken).toBe(false);
     expect(res.body.credentials.microsoftEntraApp).toBe(false);

@@ -21,7 +21,13 @@ import type {
 import type { OpportunityClass } from '../../shared/opportunity';
 import type { QualificationResult } from '../../shared/qualification';
 
-export type UiStatus = 'Connected' | 'Not connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error';
+export type UiStatus =
+  | 'Connected' | 'Not connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error'
+  // The two integrations this local build cannot run report themselves in
+  // their own words — see shared/integrations.ts.
+  | 'Awaiting Microsoft administrator configuration'
+  | 'Not enabled for this local pilot'
+  | 'Implemented — credentials required';
 export type StatusMap = Record<'hubspot' | 'outlook' | 'ai' | 'refresh', { status: UiStatus; detail: string }>;
 export type FullStatus = IntegrationsStatus & { statuses: StatusMap };
 

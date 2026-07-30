@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { aiConfigured, env, hubspotOAuthConfigured, outlookConfigured } from '../env';
 import { getDb } from '../db/client';
 import { failedHubspotSyncs, listRuns, setStaleSettings } from '../db/repos/operations';
-import { staleSettingsSchema } from '../../shared/integrations';
+import {
+  AI_UNAVAILABLE_DETAIL, AI_UNAVAILABLE_STATUS,
+  OUTLOOK_UNAVAILABLE_DETAIL, OUTLOOK_UNAVAILABLE_STATUS,
+  staleSettingsSchema,
+} from '../../shared/integrations';
 import { hubspotServiceIfAvailable } from '../services/hubspot';
 import { outlookService } from '../services/outlook';
 import { verifyAiConnection } from '../services/analysis';
@@ -35,7 +39,13 @@ import { wrap } from './helpers';
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
 
-type UiStatus = 'Connected' | 'Not connected' | 'Implemented — credentials required' | 'Error';
+type UiStatus =
+  | 'Connected'
+  | 'Not connected'
+  | 'Implemented — credentials required'
+  | 'Error'
+  | typeof OUTLOOK_UNAVAILABLE_STATUS
+  | typeof AI_UNAVAILABLE_STATUS;
 
 const healthCache = new Map<string, { at: number; status: UiStatus; detail: string }>();
 export function resetAdminHealthCacheForTests(): void {
@@ -92,7 +102,7 @@ adminRouter.get('/status', wrap(async (_req, res) => {
   const outlookSvc = outlookService();
   const outlookStatus = await outlookSvc.status();
   const outlook = outlookStatus.mode === 'disconnected'
-    ? { status: 'Implemented — credentials required' as UiStatus, detail: 'The full Outlook drafts client is implemented; add MICROSOFT_* credentials and SESSION_SECRET to enable it.' }
+    ? { status: OUTLOOK_UNAVAILABLE_STATUS as UiStatus, detail: OUTLOOK_UNAVAILABLE_DETAIL }
     : !outlookStatus.connected
       ? { status: 'Not connected' as UiStatus, detail: outlookStatus.detail }
       : await cachedHealth('outlook', async () => {
@@ -105,7 +115,7 @@ adminRouter.get('/status', wrap(async (_req, res) => {
         const v = await verifyAiConnection();
         return { status: v.ok ? 'Connected' as UiStatus : 'Error' as UiStatus, detail: v.detail };
       })
-    : { status: 'Implemented — credentials required' as UiStatus, detail: 'Anthropic/OpenAI clients are implemented; without a key, drafts use the labeled local template.' };
+    : { status: AI_UNAVAILABLE_STATUS as UiStatus, detail: AI_UNAVAILABLE_DETAIL };
 
   // ── Credential presence (booleans only — never values) ──────────
   const credentials = {

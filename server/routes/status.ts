@@ -7,7 +7,11 @@ import { outlookService } from '../services/outlook';
 import { verifyAiConnection } from '../services/analysis';
 import { refreshLog } from '../services/refresh';
 import { getStaleSettings, recordIntegrationHealth } from '../db/repos/operations';
-import type { IntegrationsStatus } from '../../shared/integrations';
+import {
+  AI_UNAVAILABLE_DETAIL, AI_UNAVAILABLE_STATUS,
+  OUTLOOK_UNAVAILABLE_DETAIL, OUTLOOK_UNAVAILABLE_STATUS,
+  type IntegrationsStatus,
+} from '../../shared/integrations';
 
 export type UiStatus =
   | 'Connected'
@@ -15,7 +19,9 @@ export type UiStatus =
   | 'Disconnected'
   | 'Configuration required'
   | 'Expired'
-  | 'Error';
+  | 'Error'
+  | typeof OUTLOOK_UNAVAILABLE_STATUS
+  | typeof AI_UNAVAILABLE_STATUS;
 
 // Verification results are cached briefly so the status endpoint stays
 // cheap; "Connected" is only ever shown after a real verified call.
@@ -51,7 +57,9 @@ statusRouter.get('/integrations/status', wrap(async (_req, res) => {
   let olStatus: UiStatus;
   let olDetail = outlook.detail;
   if (outlook.mode === 'disconnected') {
-    olStatus = 'Configuration required';
+    // Names who has to act, rather than reporting the code's state.
+    olStatus = OUTLOOK_UNAVAILABLE_STATUS;
+    olDetail = OUTLOOK_UNAVAILABLE_DETAIL;
   } else if (!outlook.connected) {
     olStatus = 'Disconnected';
   } else {
@@ -60,8 +68,8 @@ statusRouter.get('/integrations/status', wrap(async (_req, res) => {
     olDetail = v.detail;
   }
 
-  let aiStatus: UiStatus = 'Not connected';
-  let aiDetail = 'Implemented — credentials required. Without an AI key, outreach drafts use a deterministic local template built only from verified facts, clearly labeled.';
+  let aiStatus: UiStatus = AI_UNAVAILABLE_STATUS;
+  let aiDetail = AI_UNAVAILABLE_DETAIL;
   if (aiLive) {
     const v = await cachedVerify('ai', verifyAiConnection);
     aiStatus = v.ok ? 'Connected' : 'Error';

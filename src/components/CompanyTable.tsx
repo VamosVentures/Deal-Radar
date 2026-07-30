@@ -771,9 +771,20 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
           <div className="mt-3 border border-line bg-panel px-3.5 py-3">
             <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Review status</div>
             <div className="mt-2 flex flex-col gap-1.5">
-              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={markReviewed} title="Stamp this record reviewed as of today — no external lookup">
-                {statusBusy === 'Mark reviewed' ? 'Marking…' : 'Mark reviewed'}
+              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={markReviewed} title="Stamps today as the date this record was last looked at, which clears the Stale flag. It does not change the queue status — use Send for research, Monitor, or Pass for that.">
+                {statusBusy === 'Mark reviewed' ? 'Stamping…' : 'Stamp reviewed today'}
               </button>
+              {/*
+                Previously labelled "Mark reviewed", which read as a
+                decision. It only stamps the last-reviewed date (clearing
+                staleness) — the queue status is unchanged, so a reviewer
+                clicked it and saw the "Awaiting review" badge stay put
+                with nothing explaining why. The three buttons below are
+                the ones that actually move a company through the queue.
+              */}
+              <p className="text-[10px] leading-relaxed text-slate-mid">
+                Records the date only — clears Stale. To move this company through the queue, use one of the three below.
+              </p>
               <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={refreshLiveResearch} title="Re-query live sources for this company and report what changed">
                 {statusBusy === 'Refresh live research' ? 'Researching…' : 'Refresh live research'}
               </button>
