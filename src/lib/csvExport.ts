@@ -3,6 +3,9 @@ import {
   QUALIFICATION_LABELS, WEBSITE_EVIDENCE_LABELS,
   type QualificationResult, type WebsiteEvidenceLevel,
 } from '../../shared/qualification';
+import {
+  RESOLUTION_STATE_LABELS, type CompanyEnrichment,
+} from '../../shared/enrichment';
 
 /**
  * CSV export of the company review queue.
@@ -48,6 +51,20 @@ export interface ExportRow {
   } | undefined;
   quarantine?: { reason: string } | undefined;
   reviewStatus?: string | undefined;
+  /**
+   * Founder / sector / stage enrichment.
+   *
+   * The export carries the resolution STATE next to every enriched value
+   * for the same reason the fit score carries its completeness: a
+   * spreadsheet outlives the screen it came from. A cell reading "Seed"
+   * with no indication of whether that was stated by a source or bounded
+   * by inference is exactly the kind of confident-looking value that gets
+   * pasted into a partner memo.
+   *
+   * The canned founder placeholder is absent here by construction —
+   * there is no column that can produce it.
+   */
+  enrichment?: CompanyEnrichment | undefined;
 }
 
 /**
@@ -82,9 +99,24 @@ export const EXPORT_COLUMNS = [
   'Disqualified',
   'Disqualification reason',
   'Review status',
+  'Founder',
+  'Founder resolution',
+  'Founder research summary',
+  'Founder next action',
+  'Founder sources attempted',
+  'Founder last researched',
   'Vertical',
+  'Vertical resolution',
+  'Vertical inferred',
+  'Subvertical',
+  'Vertical reason',
+  'Counts toward sector ranking',
   'Subcategory',
   'Stage',
+  'Stage resolution',
+  'Stage inferred',
+  'Stage explanation',
+  'Stage evidence URL',
   'City',
   'State',
   'Website',
@@ -123,6 +155,55 @@ function caveats(row: ExportRow): string {
   return parts.join(' | ');
 }
 
+/**
+ * Founder and vertical cells.
+ *
+ * Every branch produces a real sentence. A company with no research on
+ * record exports "Not yet researched" rather than an empty cell, because
+ * an empty cell in a spreadsheet reads as "no founder" — the exact
+ * conflation this work exists to remove.
+ */
+function enrichmentCells(e: CompanyEnrichment | undefined): string[] {
+  if (!e) {
+    return [
+      'Not yet researched', 'not-researched',
+      'This company has not been through founder research. No source family has been attempted.',
+      'Run enrichment for this company.', '', '',
+      'Not yet classified', 'not-researched', '', '', 'No classification on record.', '',
+    ];
+  }
+  const f = e.founder;
+  const v = e.vertical;
+  return [
+    f.value ? `${f.value.name}${f.value.title ? ` (${f.value.title})` : ''}` : '',
+    RESOLUTION_STATE_LABELS[f.state],
+    f.summary,
+    f.nextAction,
+    f.sourcesAttempted.join('; '),
+    f.lastResearchedAt?.slice(0, 10) ?? '',
+    v.value?.primaryLabel ?? 'Not yet classified',
+    RESOLUTION_STATE_LABELS[v.state],
+    v.inferred ? 'yes' : 'no',
+    v.value?.subvertical ?? '',
+    v.summary,
+    v.value ? (v.value.countsTowardRanking ? 'yes' : 'no') : '',
+  ];
+}
+
+function stageCells(e: CompanyEnrichment | undefined): string[] {
+  if (!e) {
+    return ['Not yet researched', 'not-researched', '', 'This company’s stage has not been researched.', ''];
+  }
+  const s = e.stage;
+  return [
+    s.value?.label ?? 'Not yet researched',
+    RESOLUTION_STATE_LABELS[s.state],
+    s.inferred ? 'yes' : 'no',
+    s.summary,
+    s.evidence[0]?.url ?? '',
+  ];
+}
+
 export function toCsvRow(row: ExportRow): string {
   const { company: c, fit, opportunity: opp, qualification: qual, quarantine: quar } = row;
   return [
@@ -139,9 +220,9 @@ export function toCsvRow(row: ExportRow): string {
     quar ? 'yes' : 'no',
     quar?.reason ?? '',
     row.reviewStatus ?? 'New',
-    c.vertical,
+    ...enrichmentCells(row.enrichment),
     c.subcategory,
-    c.stage,
+    ...stageCells(row.enrichment),
     c.city,
     c.state,
     c.website ?? '',

@@ -476,6 +476,240 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_company_notes_company ON company_notes (company_id, archived, created_at);
     `,
   },
+  {
+    version: 11,
+    name: 'founder-stage-vertical-enrichment',
+    sql: `
+      -- ── Why these are TABLES and not columns on companies ────────
+      --
+      -- The dashboard was displaying "Unknown founder", "Unknown" stage,
+      -- and a canned "Identity not on record — requires human
+      -- verification, never inferred" for records that had never been
+      -- researched at all. Those strings are true and useless: they read
+      -- identically whether we searched nine source families and found
+      -- nothing, or never looked.
+      --
+      -- Making them useful requires storing what was searched, when,
+      -- what each source said, and how a person was tied to a company —
+      -- none of which fits in a scalar column. Packing it into JSON on
+      -- the companies row was rejected for the reason the opportunity and
+      -- qualification tables already exist: evidence that cannot be
+      -- queried cannot be audited, and a blob rewritten on every run
+      -- destroys the history that makes a verdict checkable.
+      --
+      -- Nothing here fabricates a value. Every table below can represent
+      -- "researched, genuinely not public" as a first-class row.
+
+      -- One row per (company, person, source). Append-mostly: a second
+      -- source naming the same person adds a row rather than replacing
+      -- one, because two independent statements are the corroboration
+      -- that separates a verified founder from a candidate.
+      --
+      -- A person is attached ONLY when match_signals clear the scoring
+      -- threshold in shared/enrichment.ts. A shared name scores zero, so
+      -- name agreement alone can never create a row here — attaching a
+      -- stranger to a company would name a private individual wrongly,
+      -- which is worse than an empty field, not better.
+      CREATE TABLE founder_candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        person_key TEXT NOT NULL,              -- folded name; see personKey()
+        full_name TEXT NOT NULL,
+        title TEXT,                            -- as STATED by the source; never inferred
+        source_url TEXT NOT NULL,
+        source_family TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        published_at TEXT,                     -- NULL = the source states no date
+        retrieved_at TEXT NOT NULL,
+        supporting_text TEXT NOT NULL,         -- verbatim, truncated, always untrusted plain text
+        match_signals TEXT NOT NULL DEFAULT '[]',
+        match_score REAL NOT NULL DEFAULT 0,
+        confidence REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_checked_at TEXT NOT NULL,
+        -- Reviewer decision. Deliberately columns on the SAME row rather
+        -- than an overwrite: confirming a candidate must not erase the
+        -- automated evidence that produced it, or the record of why the
+        -- machine was wrong disappears along with the mistake.
+        review_decision TEXT,                  -- confirmed | rejected | NULL
+        reviewed_by TEXT,
+        reviewed_at TEXT,
+        review_reason TEXT,
+        -- Re-running enrichment must not duplicate people. The same
+        -- person from the same URL is one row, updated in place.
+        UNIQUE (company_id, person_key, source_url)
+      );
+      CREATE INDEX idx_founder_candidates_company ON founder_candidates (company_id, status);
+      CREATE INDEX idx_founder_candidates_person ON founder_candidates (person_key);
+
+      -- Every attempt against every source family, whether or not it
+      -- found anything. This table is what makes "research exhausted" a
+      -- provable claim instead of a shrug: without it, "we looked
+      -- everywhere" is an assertion with no evidence behind it, which is
+      -- the same category of empty statement as the placeholder this
+      -- work removes.
+      --
+      -- A timeout is recorded as an unreachable ATTEMPT, never as a
+      -- finding. Dressing a network failure up as "no founder exists"
+      -- would state something about a company that we did not learn.
+      CREATE TABLE founder_research_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        run_id TEXT,
+        source_family TEXT NOT NULL,
+        url TEXT,
+        attempted_at TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        candidates_found INTEGER NOT NULL DEFAULT 0,
+        -- Idempotency: re-running updates the attempt for a family
+        -- rather than growing an unbounded log of identical rows.
+        UNIQUE (company_id, source_family)
+      );
+      CREATE INDEX idx_research_attempts_company ON founder_research_attempts (company_id);
+
+      -- The per-company verdict, rebuilt from the two tables above.
+      -- Absence of a row means "never researched", which the read path
+      -- reports as exactly that rather than as an absence of founders.
+      CREATE TABLE company_founder_resolution (
+        company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+        status TEXT NOT NULL,
+        resolved_person_key TEXT,
+        resolved_name TEXT,
+        resolved_title TEXT,
+        summary TEXT NOT NULL,
+        next_action TEXT NOT NULL,
+        sources_attempted TEXT NOT NULL DEFAULT '[]',
+        researched_at TEXT NOT NULL,
+        version TEXT NOT NULL
+      );
+      CREATE INDEX idx_founder_resolution_status ON company_founder_resolution (status);
+
+      -- Sector classification with its reasoning attached.
+      --
+      -- primary_sector holds either a Vamos sector id or the explicit
+      -- non-sector status 'not-classifiable-company-identity-unresolved'.
+      -- The literal string 'unknown' is never written here: a record we
+      -- cannot classify is excluded from sector rankings and carries the
+      -- specific evidence gap, rather than being parked in a grey bucket
+      -- that ranks alongside real classifications.
+      CREATE TABLE company_vertical_classification (
+        company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+        primary_sector TEXT NOT NULL,
+        secondary_sector TEXT,
+        subvertical TEXT,
+        reason TEXT NOT NULL,
+        source_url TEXT,
+        confidence REAL NOT NULL DEFAULT 0,
+        basis TEXT NOT NULL,                   -- explicit | inferred
+        evidence_gap TEXT,                     -- set only for the non-sector status
+        classified_at TEXT NOT NULL,
+        version TEXT NOT NULL
+      );
+      CREATE INDEX idx_vertical_classification_sector ON company_vertical_classification (primary_sector);
+
+      -- Stage, with the distinction a Form D cannot make.
+      --
+      -- A Form D proves a securities offering was reported. It does not
+      -- name a venture round, and the previous behaviour of leaving 200
+      -- of 209 companies at 'Unknown' was at least honest about that.
+      -- The answer is not to translate every filing into "Seed" — that
+      -- invents a financing event no source states — but to record
+      -- 'early-stage-round-not-disclosed' with the basis spelled out in
+      -- the explanation column, and to reserve named stages for sources that
+      -- actually name them.
+      CREATE TABLE company_stage_resolution (
+        company_id TEXT PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+        stage TEXT NOT NULL,
+        basis TEXT NOT NULL,                   -- explicit | inferred
+        confidence REAL NOT NULL DEFAULT 0,
+        evidence_url TEXT,
+        evidence_date TEXT,
+        explanation TEXT NOT NULL,
+        conflicts TEXT NOT NULL DEFAULT '[]',
+        last_checked_at TEXT NOT NULL,
+        version TEXT NOT NULL
+      );
+      CREATE INDEX idx_stage_resolution_stage ON company_stage_resolution (stage);
+
+      -- Evidence-backed edges between companies, people, domains,
+      -- filings, investors and accelerators. This is what turns Stealth
+      -- Founder Radar from a static label into a graph a reviewer can
+      -- interrogate: every edge names the source that justifies it, so
+      -- "these two records are the same company" is a claim with a URL
+      -- behind it rather than a heuristic nobody can check.
+      CREATE TABLE entity_relationships (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_type TEXT NOT NULL,               -- company | person | domain | filing | investor | accelerator
+        from_id TEXT NOT NULL,
+        to_type TEXT NOT NULL,
+        to_id TEXT NOT NULL,
+        relation TEXT NOT NULL,
+        source_family TEXT NOT NULL,
+        evidence_url TEXT NOT NULL,
+        detail TEXT NOT NULL DEFAULT '',
+        confidence REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        -- Idempotent re-runs: the same edge from the same source is one
+        -- row whose last_seen_at moves, not a new row every run.
+        UNIQUE (from_type, from_id, to_type, to_id, relation, evidence_url)
+      );
+      CREATE INDEX idx_entity_rel_from ON entity_relationships (from_type, from_id);
+      CREATE INDEX idx_entity_rel_to ON entity_relationships (to_type, to_id);
+
+      -- One row per enrichment run, dry or applied, so a summary printed
+      -- at a terminal months ago can still be checked against what was
+      -- actually written.
+      CREATE TABLE enrichment_runs (
+        id TEXT PRIMARY KEY,
+        at TEXT NOT NULL,
+        completed_at TEXT,
+        mode TEXT NOT NULL,                    -- dry-run | apply
+        scope TEXT NOT NULL,
+        companies_attempted INTEGER NOT NULL DEFAULT 0,
+        founders_verified INTEGER NOT NULL DEFAULT 0,
+        founders_candidate INTEGER NOT NULL DEFAULT 0,
+        founders_conflicting INTEGER NOT NULL DEFAULT 0,
+        founders_exhausted INTEGER NOT NULL DEFAULT 0,
+        founders_manual_review INTEGER NOT NULL DEFAULT 0,
+        verticals_classified INTEGER NOT NULL DEFAULT 0,
+        verticals_unclassifiable INTEGER NOT NULL DEFAULT 0,
+        stages_named INTEGER NOT NULL DEFAULT 0,
+        stages_bounded INTEGER NOT NULL DEFAULT 0,
+        stages_conflicting INTEGER NOT NULL DEFAULT 0,
+        source_errors TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL,
+        initiated_by TEXT NOT NULL
+      );
+
+      -- Reviewer corrections, layered ON TOP of the automated evidence
+      -- rather than replacing it. Append-only: the previous value, the
+      -- reason, the reviewer's identity and the source all stay, so a
+      -- reader can see both what the research concluded and what a human
+      -- decided, and can tell the two apart.
+      --
+      -- Reviewer identity comes from the authenticated session (see
+      -- server/lib/reviewer.ts), never from a request body, for the same
+      -- reason it does on notes: an attributed correction that the
+      -- client could sign as anyone is decoration, not a fact.
+      CREATE TABLE field_corrections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        field TEXT NOT NULL,                   -- founder | vertical | stage
+        previous_value TEXT,
+        new_value TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        source_url TEXT,
+        reviewer_id TEXT NOT NULL,
+        reviewer_label TEXT NOT NULL,
+        reviewer_source TEXT NOT NULL,
+        at TEXT NOT NULL
+      );
+      CREATE INDEX idx_field_corrections_company ON field_corrections (company_id, field, at);
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

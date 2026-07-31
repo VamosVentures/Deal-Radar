@@ -365,13 +365,129 @@ quarantined record is often exactly where an explanation is most useful.
 
 ---
 
-## 10. Useful commands
+## 10. Founder, sector, and stage enrichment
+
+The dashboard used to show four different kinds of nothing as if they were one
+kind: `Identity not on record — requires human verification, never inferred`,
+`Unknown` founder, `Unknown` vertical, and `Unknown` stage. Each was true and
+useless — they read identically whether nine source families had been searched
+and found nothing, or nobody had looked. Enrichment replaces them with a sourced
+fact, a labelled inference, a named candidate, a stated conflict, or a research
+result that says what was searched and what to do next.
+
+### What it will not do
+
+It does not invent a founder to empty a column, does not translate an SEC Form D
+into "Seed", does not attach a person to a company on a shared name, and never
+infers demographic identity from anything. Each of those turns a visibly empty
+field into an invisibly wrong one, which is strictly worse: a reviewer can see a
+gap, and cannot see a fabrication.
+
+### Running it
+
+**Dry run is the default — nothing is written without `--apply`.** A dry run
+still performs the research (a preview built from nothing would be fiction), but
+the database is untouched.
+
+```bash
+npm run db:enrich                                   # dry run, all active companies
+npm run db:enrich -- --apply                        # write
+npm run db:enrich -- --apply --company-id disc-cand-895
+npm run db:enrich -- --apply --limit 25
+npm run db:enrich -- --apply --resume               # only never-researched companies
+npm run db:enrich -- --apply --max-requests 400     # per-run network budget
+npm run db:enrich -- --apply --quiet                # summary only
+```
+
+**Back up before an `--apply` run**: `npm run db:backup`.
+
+Retry and backoff are handled inside `server/sourcing/politeness.ts` — one
+request at a time per host, a minimum gap, honoured `Retry-After`, bounded
+exponential backoff with jitter, and a hard per-run request budget. The script
+never retries around those decisions. Per-source failures are reported in the
+run summary and stored on the run record; they are never folded into a
+"not found" bucket.
+
+### The six resolution states
+
+Every enriched field carries one. They are not interchangeable, and the API
+returns the state alongside the value rather than representing all six as `null`.
+
+| State | Meaning |
+| --- | --- |
+| `confirmed` | An attributable source states the fact directly. |
+| `bounded-inference` | Not stated anywhere; the evidence constrains it to a labelled range. Always displayed as inferred. |
+| `candidate` | Something plausible was found and is **not** asserted. Shown as a candidate, never as the answer. |
+| `conflict` | Two or more sources disagree. Both sides are shown. |
+| `research-exhausted` | Every applicable source family was attempted and the fact is not public. This is a **result**, not a failure. |
+| `manual-review` | A human has to look. Always carries a next action. |
+
+`research-exhausted` is only reached when every family actually **answered**. A
+source that timed out, refused, or served a browser-rendered page it could not
+read counts as an attempt, not a finding — dressing a network failure up as "no
+founder exists" would state something about a company we never learned.
+
+### Source families, in the order they are searched
+
+Company website → SEC Form D → accelerator/incubator profile → investor
+portfolio and announcements → founder-authored announcements → funding press →
+public speaker/award profiles → public professional profiles → corporate
+registries.
+
+The first four are **authoritative**: a statement from one of them can, on its
+own, support `verified-founder`. The rest can only ever produce a candidate, no
+matter how many agree — three articles repeating one another are one source.
+
+Nothing behind a login wall is fetched, no access control is worked around, and
+no address is guessed. A family with no URL on record is recorded as
+`no-source-url-known`, which is a truthful description of our coverage.
+
+### Reviewing and correcting
+
+**In the company detail panel** (Companies → click a row → "Founders, sector &
+stage"):
+
+- **Research again** re-runs every applicable family for that company. Writes
+  are idempotent upserts, so pressing it twice refreshes rather than duplicates.
+- **Correct founder / vertical / stage** records an attributed correction. Your
+  name, the time, the previous value, your reason, and an optional source URL
+  are stored with it.
+
+**In the Stealth Founder Radar** (`/stealth`): filter by verified, probable,
+conflicting, research exhausted, or manual review; expand any row for the
+research record, the relationship graph, filing facts, and financing evidence;
+and confirm or reject a candidate with a stated reason.
+
+**A correction never overwrites the automated evidence.** It is layered on top
+at read time, so six months from now a reader can see both what the research
+concluded and what a human decided, and can tell which is which. Overwriting
+would destroy the only record of why the machine got it wrong.
+
+### Re-running is safe
+
+Every write is an upsert keyed on the natural identity of the thing being
+written — a person from a source, an attempt against a family, an edge from a
+source. Re-running does not duplicate people, evidence, attempts, edges, or
+history, and it never clears a reviewer's decision. `first_seen_at` is preserved
+while `last_checked_at` moves.
+
+### What enrichment may not change
+
+Enrichment can only ever **remove** a company from a sector ranking, never add
+one. A founder match is not financing corroboration, a company's own website is
+not independent financing evidence, and no company is promoted because a field
+became populated. The qualification rules, the operating-company standard, and
+the five-per-sector cap are untouched.
+
+---
+
+## 11. Useful commands
 
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start web + API (the demo command) |
-| `npm test` | Unit suite (637 tests) |
-| `npm run test:e2e` | Playwright suite (59 tests, isolated DB and ports) |
+| `npm test` | Unit suite (746 tests) |
+| `npm run test:e2e` | Playwright suite (isolated DB and ports) |
 | `npm run typecheck` | TypeScript across app, server, and scripts |
 | `npm run lint` | oxlint |
 | `npm run build` | Production build |
@@ -379,6 +495,7 @@ quarantined record is often exactly where an explanation is most useful.
 | `npm run db:integrity` | SQLite integrity check |
 | `npm run db:backup` | Timestamped backup |
 | `npm run db:qualify-pending` | Qualify companies that have no verdict yet |
+| `npm run db:enrich` | Founder / sector / stage research (dry run; `-- --apply` to write) |
 
 Do not expose this application through a public tunnel. It holds sourced
 company records, is gated by one shared password, and is intended to run on one

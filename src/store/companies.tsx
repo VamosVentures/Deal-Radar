@@ -4,6 +4,7 @@ import type { Company } from '../types';
 import { api, ApiError, type CompanyMeta } from '../lib/api';
 import type { DealEvidence, Opportunity } from '../../shared/opportunity';
 import type { IssuerQualification } from '../../shared/qualification';
+import type { CompanyEnrichment } from '../../shared/enrichment';
 
 /**
  * Single source of companies for the UI: rows imported through the
@@ -25,6 +26,15 @@ interface CompaniesApi {
   dealEvidence: Record<string, DealEvidence[]>;
   /** Quarantined (disqualified) companies, with the reason. */
   quarantine: Record<string, { reason: string; at: string }>;
+  /**
+   * Founder / vertical / stage enrichment per company id.
+   *
+   * A company absent from this map has not been researched yet, which
+   * the UI states plainly. It never renders as "Unknown" — the whole
+   * point of the enrichment work is that "nobody has looked" and "we
+   * looked everywhere and it is not public" stopped looking identical.
+   */
+  enrichment: Record<string, CompanyEnrichment>;
   /** null while the first load is in flight. */
   loaded: boolean;
   /** Set when the backend can't be reached — pages surface it honestly. */
@@ -41,6 +51,7 @@ export function CompaniesProvider({ children }: { children: ReactNode }) {
   const [qualifications, setQualifications] = useState<Record<string, IssuerQualification>>({});
   const [dealEvidence, setDealEvidence] = useState<Record<string, DealEvidence[]>>({});
   const [quarantine, setQuarantine] = useState<Record<string, { reason: string; at: string }>>({});
+  const [enrichment, setEnrichment] = useState<Record<string, CompanyEnrichment>>({});
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -48,20 +59,24 @@ export function CompaniesProvider({ children }: { children: ReactNode }) {
     try {
       const data = await api.imports.imported();
       // Imported rows never carry identity data — the server refuses
-      // those columns — so founders arrive without `identity` and the
-      // UI correctly shows "Identity not on record — never inferred".
+      // those columns — so founders arrive without `identity`, and the
+      // identity chips render nothing rather than a caption. Founder
+      // NAMES come from the enrichment payload below, which carries the
+      // evidence and the resolution state for each one.
       setImported(data.companies as Company[]);
       setMeta(data.companyMeta ?? {});
       setOpportunities((data.opportunities ?? {}) as Record<string, Opportunity>);
       setQualifications((data.qualifications ?? {}) as Record<string, IssuerQualification>);
       setDealEvidence((data.dealEvidence ?? {}) as Record<string, DealEvidence[]>);
       setQuarantine(data.quarantine ?? {});
+      setEnrichment(data.enrichment ?? {});
       setLoadError(null);
     } catch (e) {
       setImported([]);
       setOpportunities({});
       setQualifications({});
       setQuarantine({});
+      setEnrichment({});
       setLoadError(e instanceof ApiError ? e.message : 'The company list could not be loaded.');
     } finally {
       setLoaded(true);
@@ -78,7 +93,7 @@ export function CompaniesProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <Ctx.Provider value={{ companies, importedCount: imported.length, meta, opportunities, qualifications, dealEvidence, quarantine, loaded, loadError, refresh }}>
+    <Ctx.Provider value={{ companies, importedCount: imported.length, meta, opportunities, qualifications, dealEvidence, quarantine, enrichment, loaded, loadError, refresh }}>
       {children}
     </Ctx.Provider>
   );

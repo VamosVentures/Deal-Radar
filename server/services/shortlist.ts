@@ -15,6 +15,7 @@ import {
   type WebsiteEvidenceLevel,
 } from '../../shared/qualification';
 import type { VerticalId } from '../../src/types';
+import { NON_SECTOR_STATUS } from '../../shared/enrichment';
 
 /**
  * Turning candidates into a defensible per-sector shortlist.
@@ -156,6 +157,15 @@ export interface ShortlistCandidate {
   independentSources?: number;
   /** What the issuer's own site established, from the qualification verdict. */
   operatingEvidence?: WebsiteEvidenceLevel;
+  /**
+   * False when enrichment recorded the explicit non-sector status for
+   * this company. Undefined means enrichment has not run, which is NOT
+   * the same as unclassifiable and must not exclude anything — a record
+   * nobody has classified keeps whatever standing it already had.
+   */
+  sectorClassifiable?: boolean;
+  /** The specific evidence gap behind a false `sectorClassifiable`. */
+  sectorEvidenceGap?: string | null;
 }
 
 /**
@@ -195,6 +205,7 @@ export const HOLD_BACK_REASONS = [
   'sector-limit',
   'insufficient-corroboration',
   'quarantined',
+  'sector-unclassifiable',
 ] as const;
 export type HoldBackReason = (typeof HOLD_BACK_REASONS)[number];
 
@@ -204,6 +215,7 @@ export const HOLD_BACK_LABELS: Record<HoldBackReason, string> = {
   'sector-limit': 'Sector limit',
   'insufficient-corroboration': 'Insufficient corroboration',
   quarantined: 'Quarantined',
+  'sector-unclassifiable': 'Sector not classifiable',
 };
 
 export interface HeldBackCandidate {
@@ -314,6 +326,28 @@ export function selectSectorShortlist(
       operatingEvidence: c.operatingEvidence ?? 'not-checked',
     })) {
       hold(c, 'insufficient-corroboration', insufficientCorroborationReason(c), 0);
+      continue;
+    }
+    /**
+     * Enrichment could not place this company in a sector, because its
+     * identity as an operating company is unresolved.
+     *
+     * This can only ever REMOVE a record from a sector ranking, never add
+     * one — a company enrichment classified successfully still has to
+     * clear every gate above before it reaches this line. That direction
+     * is the point: enrichment must not be able to promote anything, and
+     * the only way to guarantee that is for its influence here to be
+     * one-way.
+     */
+    if (c.sectorClassifiable === false) {
+      hold(
+        c, 'sector-unclassifiable',
+        c.sectorEvidenceGap
+          ? `Excluded from the sector ranking: ${c.sectorEvidenceGap}`
+          : 'Excluded from the sector ranking: enrichment could not confirm this record as an operating company, '
+            + 'so it carries the explicit non-sector status rather than a sector.',
+        0,
+      );
       continue;
     }
     contenders.push(c);
@@ -441,6 +475,23 @@ export function buildShortlists(verticals: VerticalId[], opts: SelectOptions = {
       }),
   );
 
+  /**
+   * Enrichment's sector verdict, read the same way and for the same
+   * reason as the two above.
+   *
+   * Only the explicit non-sector status is recorded here. A company with
+   * NO row is left undefined, not false: "enrichment has not run" and
+   * "enrichment could not classify this" are different facts, and
+   * treating the first as the second would empty every shortlist the
+   * moment this table was added.
+   */
+  const unclassifiable = new Map(
+    (db.prepare(
+      "SELECT company_id, evidence_gap FROM company_vertical_classification WHERE primary_sector = ?",
+    ).all(NON_SECTOR_STATUS) as { company_id: string; evidence_gap: string | null }[])
+      .map((r) => [r.company_id, r.evidence_gap] as const),
+  );
+
   return verticals.map((v) => {
     const pool: ShortlistCandidate[] = companies
       .filter((c) => c.vertical === v)
@@ -460,6 +511,9 @@ export function buildShortlists(verticals: VerticalId[], opts: SelectOptions = {
           // second lock on the same door.
           independentSources: standing.get(c.id)?.n ?? 0,
           operatingEvidence: standing.get(c.id)?.level ?? 'not-checked',
+          // Undefined when enrichment has no row — see the note above.
+          sectorClassifiable: unclassifiable.has(c.id) ? false : undefined,
+          sectorEvidenceGap: unclassifiable.get(c.id) ?? null,
         };
       });
     return selectSectorShortlist(v, pool, opts);

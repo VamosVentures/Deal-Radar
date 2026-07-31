@@ -21,6 +21,9 @@ import type {
 import type { OpportunityClass } from '../../shared/opportunity';
 import type { QualificationResult } from '../../shared/qualification';
 import type { CompanyNote } from '../../shared/notes';
+import type {
+  CompanyEnrichment, FieldCorrection, RadarEntry, RadarFilter,
+} from '../../shared/enrichment';
 
 export type UiStatus =
   | 'Connected' | 'Not connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error'
@@ -252,6 +255,51 @@ export const api = {
       call<StealthSignal>(`/api/stealth/signals/${id}`, { method: 'POST', body: JSON.stringify(patch) }),
     hypothesis: (id: string) =>
       call<FounderHypothesis>(`/api/stealth/signals/${id}/hypothesis`, { method: 'POST', body: '{}' }),
+
+    /**
+     * The Stealth Founder Radar research workflow, over real company
+     * records rather than hand-entered signals. Each entry carries the
+     * evidence behind every match, the source families attempted, the
+     * last-checked date, and the next recommended action.
+     */
+    radar: (filter: RadarFilter = 'all', limit?: number) =>
+      call<{ entries: RadarEntry[]; counts: Record<RadarFilter, number> }>(
+        `/api/stealth/radar?filter=${filter}${limit ? `&limit=${limit}` : ''}`,
+      ),
+    /** Reported, never acted on — merging stays in the possible-duplicate review workflow. */
+    duplicateHints: () =>
+      call<{ hints: { aId: string; aName: string; bId: string; bName: string; basis: string }[] }>(
+        '/api/stealth/radar/duplicates',
+      ),
+    /** Confirm or reject a candidate. The automated evidence is preserved either way. */
+    reviewCandidate: (candidateId: number, decision: 'confirmed' | 'rejected', reason: string) =>
+      call<{ candidate: unknown; enrichment: CompanyEnrichment }>(
+        `/api/stealth/radar/candidates/${candidateId}/review`,
+        { method: 'POST', body: JSON.stringify({ decision, reason }) },
+      ),
+  },
+
+  /** Founder / vertical / stage enrichment for a single company. */
+  enrichment: {
+    get: (companyId: string) =>
+      call<{ enrichment: CompanyEnrichment }>(`/api/companies/${encodeURIComponent(companyId)}/enrichment`),
+    /**
+     * Correct a field. Layered over the automated verdict — the research
+     * evidence is preserved and remains visible alongside the correction.
+     */
+    correct: (companyId: string, field: 'founder' | 'vertical' | 'stage', value: string, reason: string, sourceUrl: string | null) =>
+      call<{ correctionId: number; enrichment: CompanyEnrichment }>(
+        `/api/companies/${encodeURIComponent(companyId)}/enrichment/correct`,
+        { method: 'POST', body: JSON.stringify({ field, value, reason, sourceUrl }), idempotent: true },
+      ),
+    corrections: (companyId: string) =>
+      call<{ corrections: FieldCorrection[] }>(`/api/companies/${encodeURIComponent(companyId)}/enrichment/corrections`),
+    /** "Research again" — bounded to this company and a small request budget. */
+    research: (companyId: string) =>
+      call<{ runId: string; requestsSpent: number; sourceErrors: { detail: string; count: number }[]; enrichment: CompanyEnrichment }>(
+        `/api/companies/${encodeURIComponent(companyId)}/enrichment/research`,
+        { method: 'POST', body: '{}' },
+      ),
   },
 
   schedule: {
@@ -278,6 +326,14 @@ export const api = {
       /** Every stored deal-evidence row per company, keyed by company id. */
       dealEvidence: Record<string, unknown[]>;
       quarantine: Record<string, { reason: string; at: string }>;
+      /**
+       * Founder / vertical / stage enrichment per company.
+       *
+       * Every field arrives as a resolution state plus a summary written
+       * from the research record — never a null the UI would have to
+       * render as "Unknown". See server/services/enrichmentView.ts.
+       */
+      enrichment: Record<string, CompanyEnrichment>;
     }>('/api/companies/imported'),
     clear: () => call<{ ok: boolean }>('/api/companies/imported/clear', { method: 'POST', body: '{}' }),
     setStatus: (id: string, status: CompanyStatus, actor: string) =>

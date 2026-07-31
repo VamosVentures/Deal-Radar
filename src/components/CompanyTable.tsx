@@ -7,6 +7,7 @@ import { scoreCompany } from '../lib/scoring';
 import { downloadCsv } from '../lib/csvDownload';
 import { verticalById, VERTICALS } from '../data/taxonomy';
 import { ExceptionBadge, FounderLine, IdentityChips, ProvenanceTag, ScoreGauge, type ProvenanceKind } from './ui';
+import { EnrichmentPanel, FounderCell, StageCell, VerticalCell } from './Enrichment';
 import { HubSpotModal } from './HubSpotModal';
 import { OutreachPanel } from './OutreachPanel';
 import { AiAnalysis } from './AiAnalysis';
@@ -70,7 +71,7 @@ export function CompanyTable({
   initialVertical?: string;
   initialOpenId?: string;
 }) {
-  const { meta, opportunities, qualifications, quarantine, refresh: refreshCompanies } = useCompanies();
+  const { meta, opportunities, qualifications, quarantine, enrichment, refresh: refreshCompanies } = useCompanies();
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
   const [vertical, setVertical] = useState(initialVertical ?? 'all');
   const [stage, setStage] = useState('all');
@@ -214,6 +215,10 @@ export function CompanyTable({
       qualification: qualifications[c.id],
       quarantine: quarantine[c.id],
       reviewStatus: meta[c.id]?.reviewStatus,
+      // The export carries the resolution state alongside every enriched
+      // value. A spreadsheet outlives the screen it came from, so a value
+      // that needed a qualifier on screen needs it more here.
+      enrichment: enrichment[c.id],
     })));
   };
 
@@ -461,7 +466,7 @@ export function CompanyTable({
               <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Subcategory</th>
               <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Stage</th>
               <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">HQ</th>
-              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Verified team</th>
+              <th className="px-3 py-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Founder</th>
             </tr>
           </thead>
           <tbody>
@@ -525,11 +530,18 @@ export function CompanyTable({
                         )}
                       </div>
                     </td>
-                    {showVertical && <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}>{verticalById(c.vertical).name}</td>}
+                    {/* Vertical, stage, and founder read the ENRICHMENT payload, not the
+                        raw company columns. The raw columns still hold 'Unknown' for most
+                        records; the enrichment carries a resolution state and a summary, so
+                        a cell can say what was searched instead of shrugging. */}
+                    {showVertical && <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}><VerticalCell enrichment={enrichment[c.id]} /></td>}
                     <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}>{c.subcategory}</td>
-                    <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs font-medium" onClick={() => requestOpen(open ? null : c.id)}>{c.stage}</td>
+                    <td className="cursor-pointer px-3 py-2.5 text-xs font-medium" onClick={() => requestOpen(open ? null : c.id)}><StageCell enrichment={enrichment[c.id]} /></td>
                     <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs" onClick={() => requestOpen(open ? null : c.id)}>{c.city}, {c.state}</td>
-                    <td className="cursor-pointer px-3 py-2.5" onClick={() => requestOpen(open ? null : c.id)}><IdentityChips founders={c.founders} /></td>
+                    <td className="cursor-pointer px-3 py-2.5" onClick={() => requestOpen(open ? null : c.id)}>
+                      <FounderCell enrichment={enrichment[c.id]} />
+                      <IdentityChips founders={c.founders} />
+                    </td>
                   </tr>
                   {open && (
                     <tr className="border-b border-line bg-paper">
@@ -619,7 +631,7 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
   onDuplicatesChange?: (updater: (prev: PossibleDuplicateEntry[]) => PossibleDuplicateEntry[]) => void;
 }) {
   const fit = scoreCompany(c);
-  const { meta, opportunities, qualifications, dealEvidence, quarantine, refresh } = useCompanies();
+  const { meta, opportunities, qualifications, dealEvidence, quarantine, enrichment, refresh } = useCompanies();
   const m = meta[c.id];
   const opportunity = opportunities[c.id];
   const qualification = qualifications[c.id];
@@ -718,8 +730,18 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
   if (!c.raising) missing.push('Funding amount');
   if (!c.lastFundingDate) missing.push('Last funding date');
   if (!c.accelerator) missing.push('Accelerator participation (none recorded)');
-  if (c.subcategory.toLowerCase().includes('unclassified')) missing.push('Subcategory classification');
-  if (c.founders.some((f) => f.background.toLowerCase().includes('unknown'))) missing.push('Founder backgrounds (require manual research)');
+  // These read the RESEARCHED state, not the raw columns. "Founder
+  // backgrounds require manual research" and "Subcategory classification"
+  // were listed for almost every company and told a reviewer nothing about
+  // which records were actually worth their next ten minutes.
+  const enriched = enrichment[c.id];
+  if (!enriched) {
+    missing.push('Founder, sector, and stage (not yet researched — use “Research now” in the Founders section)');
+  } else {
+    if (enriched.founder.state !== 'confirmed') missing.push(`Founder — ${enriched.founder.summary}`);
+    if (enriched.vertical.state !== 'confirmed') missing.push(`Sector — ${enriched.vertical.summary}`);
+    if (enriched.stage.state !== 'confirmed') missing.push(`Stage — ${enriched.stage.summary}`);
+  }
   if (!c.founders.some((f) => f.email)) missing.push('Verified founder email');
   if (!c.founders.some((f) => f.identity)) missing.push('Founder identity signal (only added from explicit public statements — never inferred)');
 
@@ -995,8 +1017,27 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             )}
           </MemoSection>
 
-          <MemoSection n="03" id={`${c.id}-founders`} title="Founders">
-            <div className="space-y-1.5">{c.founders.map((f) => <FounderLine key={f.name} f={f} />)}</div>
+          <MemoSection n="03" id={`${c.id}-founders`} title="Founders, sector & stage">
+            {/*
+              The enrichment panel leads, because it is the sourced view:
+              every field carries its resolution state, the evidence, the
+              source families attempted, the last-researched date, and the
+              next action. The raw founder rows below are what the original
+              import recorded, kept for comparison.
+            */}
+            <EnrichmentPanel
+              companyId={c.id}
+              enrichment={enrichment[c.id]}
+              onChanged={() => { void refresh(); }}
+            />
+            {c.founders.some((f) => !f.name.toLowerCase().includes('unknown')) && (
+              <div className="mt-3 border-t border-line pt-2">
+                <p className="mb-1 font-mono text-[10px] uppercase tracking-widest text-slate-mid">
+                  As originally imported
+                </p>
+                <div className="space-y-1.5">{c.founders.map((f) => <FounderLine key={f.name} f={f} />)}</div>
+              </div>
+            )}
             <p className="mt-1.5 text-[11px] italic text-slate-mid">
               Founder identity indicators come only from explicit public statements, approved data, or user entry —
               never inferred from names, photos, appearance, language, or geography.

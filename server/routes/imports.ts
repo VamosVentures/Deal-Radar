@@ -11,6 +11,7 @@ import {
   clearImportedCompanies, importCompaniesCsv, importedCompanies,
 } from '../services/imports';
 import { refreshCompanyResearch } from '../services/companyRefresh';
+import { allCompanyEnrichment } from '../services/enrichmentView';
 import {
   confirmWebsite, previewWebsiteConfirmation, websiteConfirmationSchema,
 } from '../services/websiteConfirmation';
@@ -53,6 +54,15 @@ importsRouter.get('/companies/imported', wrap(async (_req, res) => {
     qualifications,
     dealEvidence,
     quarantine,
+    // Founder / vertical / stage enrichment, for the same reason as the
+    // two maps above: every row in the review queue displays it, and the
+    // alternative is one request per company.
+    //
+    // This is what replaced the four placeholders. Each field arrives as
+    // a resolution state plus a summary written from the research record,
+    // never as a null the UI has to render as "Unknown" — see
+    // services/enrichmentView.ts.
+    enrichment: allCompanyEnrichment(),
   });
 }));
 

@@ -66,16 +66,24 @@ export function ExceptionBadge({ flag, compact = false }: { flag: PolicyFlag; co
  */
 export function IdentityChips({ founders }: { founders: { identity?: VerifiedIdentity }[] }) {
   const ids = founders.map((f) => f.identity).filter((x): x is VerifiedIdentity => !!x);
-  if (ids.length === 0) {
-    return (
-      <span
-        className="cursor-help text-xs italic text-slate-mid"
-        title="No explicit public statement or self-identification is on record. Nothing is ever inferred from names, photos, appearance, language, or geography — adding an indicator requires human verification of an explicit source."
-      >
-        Identity not on record — requires human verification, never inferred
-      </span>
-    );
-  }
+  /**
+   * Nothing is rendered when no indicator is on record.
+   *
+   * This used to print "Identity not on record — requires human
+   * verification, never inferred" on every row, which was true and
+   * useless: it appeared identically on 209 of 209 companies, told a
+   * reviewer nothing they could act on, and took up the space where a
+   * real finding belongs.
+   *
+   * The policy it described has not changed and is not softened — a
+   * demographic indicator still requires explicit self-identification or
+   * a verified public statement, and is NEVER inferred from a name, a
+   * photograph, a language, a geography, or a surname. That rule is
+   * enforced where it matters, in the data layer: nothing in the founder
+   * enrichment pipeline can write one. Restating it as a caption on
+   * every row was documentation in the wrong place.
+   */
+  if (ids.length === 0) return null;
   const chips: { label: string; source: string }[] = [];
   const latino = ids.find((i) => i.latinoLed);
   const female = ids.find((i) => i.femaleLed);

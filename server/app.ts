@@ -16,6 +16,7 @@ import { outreachRouter } from './routes/outreach';
 import { refreshRouter } from './routes/refresh';
 import { discoveryRouter } from './routes/discovery';
 import { stealthRouter } from './routes/stealth';
+import { enrichmentRouter } from './routes/enrichment';
 import { scheduleRouter } from './routes/schedule';
 import { portfolioRouter } from './routes/portfolio';
 import { duplicatesRouter } from './routes/duplicates';
@@ -139,6 +140,7 @@ export function createApp() {
   app.use('/api', outreachRouter);
   app.use('/api', discoveryRouter);
   app.use('/api', stealthRouter);
+  app.use('/api', enrichmentRouter);
   app.use('/api', portfolioRouter);
   app.use('/api', duplicatesRouter);
   app.use('/api', importsRouter);

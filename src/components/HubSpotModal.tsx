@@ -182,12 +182,17 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                     <span className="font-mono uppercase">{ct.jobTitle}</span>
                     <span>· source: {ct.infoSource}</span>
                     <span>· {ct.verificationStatus}</span>
-                    {ct.demographics.length > 0 ? (
+                    {/*
+                      Nothing is rendered when no indicator is on record.
+                      The previous caption ("Identity not on record —
+                      never inferred") appeared on every contact and
+                      restated a policy that is enforced in the data
+                      layer, not by a label. See IdentityChips in ui.tsx.
+                    */}
+                    {ct.demographics.length > 0 && (
                       <span className="rounded-[2px] bg-verde-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-verde" title={ct.demographics.map((d) => `${d.indicator}: ${d.basis} — ${d.sourceName}`).join('\n')}>
                         {ct.demographics.map((d) => d.indicator).join(', ')} ✓ verified
                       </span>
-                    ) : (
-                      <span className="italic">Identity not on record — never inferred</span>
                     )}
                   </div>
                 </div>
