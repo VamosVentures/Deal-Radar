@@ -104,6 +104,22 @@ const NAME_STOPWORDS = new Set([
   'ceo', 'cto', 'coo', 'cfo', 'cmo', 'cso', 'director', 'manager', 'head', 'vp',
   'partner', 'position', 'categories', 'category', 'role', 'title', 'bio', 'biography',
   'advisor', 'board', 'staff', 'people', 'executive', 'management', 'officers',
+
+  /**
+   * Company and legal-entity words.
+   *
+   * "Startup Co", "Brex Co", "Assort Health Co", and "Walt Disney Studios
+   * Co" were all returned as PEOPLE on a live run — two capitalised
+   * tokens, no stopword between them, so the name check passed. An
+   * organisation stored as a founder is not a cosmetic error: it is
+   * asserted on the company record, shown as a verified founder, and
+   * matched against other sources under that key.
+   */
+  'co', 'inc', 'llc', 'ltd', 'lp', 'plc', 'gmbh', 'corp', 'corporation',
+  'ventures', 'venture', 'capital', 'partners', 'holdings', 'studios',
+  'systems', 'solutions', 'labs', 'lab', 'technologies', 'technology',
+  'industries', 'enterprises', 'associates', 'agency', 'foundation',
+  'institute', 'university', 'college', 'school', 'startup', 'startups',
 ]);
 
 /**
@@ -186,7 +202,18 @@ const TITLE_ALTERNATION = [...FOUNDER_TITLES]
  * case and cleanTitle trims whatever it does pick up.
  */
 const NAME_THEN_TITLE = new RegExp(
-  `([A-Z\\u00C0-\\u024F][\\w'’.-]+(?:\\s+[A-Z\\u00C0-\\u024F][\\w'’.-]+){1,3})\\s*[,–—|·:-]\\s*((?:${TITLE_ALTERNATION})[^.;|\\n]{0,40}?)(?=\\s+[A-Z\\u00C0-\\u024F]|[.;|\\n]|$)`,
+  `([A-Z\\u00C0-\\u024F][\\w'’.-]+(?:\\s+[A-Z\\u00C0-\\u024F][\\w'’.-]+){1,3})`
+  // The separator must be punctuation, or a hyphen with SPACE AROUND IT.
+  //
+  // A bare `-` in this class was splitting "Aidan Ng Co-Founder" into the
+  // name "Aidan Ng Co" and the title "Founder" — gluing a fragment of the
+  // word "Co-Founder" onto a real person's surname. It produced 19
+  // malformed names out of 93 on a live run ("Paul Gross Co", "Ilia
+  // Baranov Co"), each of which is a wrong statement about a named
+  // individual and would have been matched against other sources under
+  // that wrong key.
+  + `(?:\\s*[,–—|·:]\\s*|\\s+[-–—]\\s+)`
+  + `((?:${TITLE_ALTERNATION})[^.;|\\n]{0,40}?)(?=\\s+[A-Z\\u00C0-\\u024F]|[.;|\\n]|$)`,
   'gi',
 );
 

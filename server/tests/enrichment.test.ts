@@ -154,6 +154,38 @@ describe('founder extraction', () => {
     expect(trimToName('Alex Fisher')).toBe('Alex Fisher');
   });
 
+  /**
+   * Two failures from a live run of 209 companies, which together
+   * produced 19 malformed names out of 93.
+   *
+   * A bare `-` was in the name/title separator class, so
+   * "Aidan Ng Co-Founder" split into the name "Aidan Ng Co" and the
+   * title "Founder" — a real person with a fragment of the word
+   * "Co-Founder" welded to their surname. And "Co" was not a stopword,
+   * so "Startup Co" and "Brex Co" were returned as people outright.
+   *
+   * Both are worse than a blank: the name is stored, displayed as
+   * verified, and used as the key that matches this person against
+   * other sources.
+   */
+  it('does not split a hyphenated title into the name', () => {
+    const html = '<html><body><div>Aidan Ng Co-Founder &amp; CEO</div></body></html>';
+    const names = extractPeopleFromHtml(html).map((p) => p.fullName);
+    expect(names).not.toContain('Aidan Ng Co');
+    for (const n of names) expect(n).not.toMatch(/\bCo$/);
+  });
+
+  it('still splits on a hyphen that is genuinely a separator', () => {
+    const html = '<html><body><div>Aidan Ng - Chief Technology Officer</div></body></html>';
+    expect(extractPeopleFromHtml(html).map((p) => p.fullName)).toContain('Aidan Ng');
+  });
+
+  it('rejects an organisation presented as a person', () => {
+    for (const org of ['Startup Co', 'Brex Co', 'Assort Health Co', 'Walt Disney Studios', 'Acme Ventures']) {
+      expect(looksLikePersonName(org)).toBe(false);
+    }
+  });
+
   it('cuts a captured title at the next section boundary', () => {
     expect(cleanTitle('Chief Operating Officer & Co-Founder Categories: Leadership Ale'))
       .toBe('Chief Operating Officer & Co-Founder');
