@@ -217,3 +217,129 @@ export function extractDescription(siteText: string, companyName: string): strin
   }
   return null;
 }
+
+// ── Funding, read from the full article rather than a summary ─────
+
+/**
+ * A raise, extracted from press or investor text.
+ *
+ * WHY THIS IS SO NARROW
+ *
+ * A measurement across the live portfolio found that of 122 companies
+ * with no funding on record, only three had a money figure with any
+ * raise-adjacent word near it — and two of those three were not raises:
+ *
+ *   "$15B+ annually on symptom management"           market size
+ *   "$86.1 million in binding commercial contracts"  revenue
+ *
+ * A money-plus-keyword extractor would have been wrong twice for every
+ * once it was right, writing a market-size figure into a column labelled
+ * "funding raised". That is worse than the blank it replaces, because a
+ * reviewer can see a blank and cannot see a fabrication.
+ *
+ * So: the amount and the raise verb must sit in the same sentence and
+ * within a few words of each other, and a set of look-alike
+ * constructions is excluded outright.
+ */
+export interface ExtractedFunding {
+  /** Display text, e.g. "$12.5M Series A". */
+  amountText: string;
+  /** The round name when the same sentence states one, else null. */
+  roundType: string | null;
+  /** The sentence it came from, for the audit trail. */
+  evidence: string;
+}
+
+/** Money the company RECEIVED. "Valued at" and "manages" are not raises. */
+const RAISE_VERB = String.raw`(?:rais(?:e[sd]?|ing)|secur(?:e[sd]|ing)|clos(?:e[sd]|ing)|land(?:e[sd]|ing)|nett(?:e[sd])|announc(?:e[sd]|ing)\s+(?:a|an|its))`;
+
+const MONEY_SRC = String.raw`\$\s?\d[\d.,]*\s*(?:million|billion|[MBK])\b`;
+
+/**
+ * Constructions that contain money and a plausible verb but are not a
+ * raise. Every entry here was observed in the live corpus or is a direct
+ * near-miss of one.
+ */
+const NOT_A_RAISE: RegExp[] = [
+  /\bannually\b/i, /\ba year\b/i, /\bmarket\b/i, /\bTAM\b/, /\bindustry\b/i,
+  /\bcontracts?\b/i, /\brevenue\b/i, /\bARR\b/, /\bsaves?\b/i, /\bsavings\b/i,
+  /\bspend(?:ing|s)?\b/i, /\bcosts?\b/i, /\bvalu(?:ation|ed)\b/i,
+  /\bassets under management\b/i, /\bAUM\b/, /\bfund\s+(?:size|of)\b/i,
+  /\bmanages?\b/i, /\bportfolio of\b/i, /\bworth\b/i, /\bdeal size\b/i,
+];
+
+const ROUND_NAME = /\b(pre-?seed|seed|series\s+[a-e](?:-\d)?|bridge|growth|strategic)\b/i;
+
+/** "$ 12.5 million" → "$12.5M". */
+function tidyMoney(raw: string): string {
+  return raw
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\s*million\b/i, 'M')
+    .replace(/\s*billion\b/i, 'B')
+    .replace(/\$\s+/, '$');
+}
+
+/**
+ * Distinctive words of a company name — legal suffixes and filler out.
+ * "Antares Industries, Inc." → ["antares", "industries"].
+ */
+function nameTokens(name: string): string[] {
+  return name.toLowerCase()
+    .replace(/\b(inc|incorporated|corp|corporation|llc|ltd|limited|co|company|holdings?|group|the|and)\b/g, ' ')
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 3);
+}
+
+/**
+ * Read a raise out of text, requiring the sentence to name THIS company.
+ *
+ * The name requirement is not belt-and-braces; it is the whole
+ * correctness property. A first version without it wrote two wrong
+ * values out of six on the live corpus, and both were the same failure —
+ * a funding article naming somebody else's round:
+ *
+ *   Antares ← "In April, X-energy raised $1 billion through an IPO"
+ *   Agon    ← a sentence about UK MoD procurement friction
+ *
+ * An article about a funding event routinely lists comparable rounds,
+ * investor portfolios, and market context. Money in the same document is
+ * not money raised by the subject of the document, in exactly the way a
+ * person named on a page is not that page's founder.
+ */
+export function extractFunding(text: string, companyName: string): ExtractedFunding | null {
+  const clean = text.replace(/\s+/g, ' ');
+  const tokens = nameTokens(companyName);
+  // A company whose name has no distinctive token cannot be tied to a
+  // sentence, so no amount may be attributed to it from prose.
+  if (tokens.length === 0) return null;
+
+  // Sentence-scoped: a verb three paragraphs from a number says nothing
+  // about that number.
+  for (const sentence of clean.split(/(?<=[.!?])\s+/)) {
+    if (sentence.length > 400) continue;
+    if (NOT_A_RAISE.some((p) => p.test(sentence))) continue;
+
+    // The sentence must name this company. Without it, the extractor
+    // happily reports a competitor's round as our company's.
+    const lower = sentence.toLowerCase();
+    if (!tokens.some((t) => lower.includes(t))) continue;
+
+    // Verb and amount adjacent, in either order: "raised $12M" or
+    // "$12M was raised".
+    const forward = new RegExp(`${RAISE_VERB}[^.]{0,40}?(${MONEY_SRC})`, 'i').exec(sentence);
+    const backward = new RegExp(`(${MONEY_SRC})[^.]{0,30}?${RAISE_VERB}`, 'i').exec(sentence);
+    const hit = forward ?? backward;
+    if (!hit) continue;
+
+    const amount = tidyMoney(hit[1]);
+    const round = ROUND_NAME.exec(sentence);
+    const roundType = round ? titleCase(round[1]) : null;
+    return {
+      amountText: roundType ? `${amount} ${roundType}` : amount,
+      roundType,
+      evidence: sentence.trim().slice(0, 240),
+    };
+  }
+  return null;
+}

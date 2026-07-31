@@ -10,7 +10,9 @@ import {
   classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
 } from '../enrichment/founderExtraction';
 import { classifyCompany } from '../enrichment/verticalClassifier';
-import { extractDescription, extractLocation, resolveCityState } from '../enrichment/companyFacts';
+import {
+  extractDescription, extractFunding, extractLocation, resolveCityState,
+} from '../enrichment/companyFacts';
 import { readStatedStage, resolveStage, type StageEvidenceItem } from '../enrichment/stageResolver';
 import {
   buildResearchPlan, isOnCompanyDomain, type FamilyPlan, type PlanCompany,
@@ -191,6 +193,8 @@ interface ResearchedFacts {
   accelerator?: string;
   /** The phrase a location was read from, cited when the value is stored. */
   locationEvidence?: string;
+  /** The sentence a raise was read from, cited when the amount is stored. */
+  fundingEvidence?: string;
   description?: string;
 }
 
@@ -775,6 +779,7 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
     const candidates: FoundCandidate[] = [];
     const facts: ResearchedFacts = {};
     let siteText: string | null = null;
+    let pressText: string | null = null;
 
     for (const plan of plans) {
       const r = await researchFamily(c, plan, budget);
@@ -793,6 +798,12 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       // Keep the company's own page TEXT for classification — it is the
       // only source that counts as the company describing ITSELF.
       if (plan.family === 'company-site' && r.pageText.length > 0) siteText = r.pageText;
+      // Funding press and investor announcements, kept because the FULL
+      // article states the raise; the stored summary is a truncated
+      // intro that usually stops before the money is mentioned.
+      if ((plan.family === 'funding-press' || plan.family === 'investor-portfolio') && r.pageText.length > 0) {
+        pressText = pressText ? `${pressText}\n${r.pageText}` : r.pageText;
+      }
     }
 
     const verdict = deriveFounderStatus(c.name, candidates, attempts, at);
@@ -868,10 +879,30 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
      * row has nothing. Deal evidence states an amount and a publication
      * date; the YC directory states a batch.
      */
+    /**
+     * Funding, from the FULL article text rather than a bare money regex.
+     *
+     * This previously matched any `$12M`-shaped string anywhere in a
+     * stored summary, with no cue at all. On the live corpus that would
+     * have written "$15B" from "an estimated $15B+ annually on symptom
+     * management" into a column labelled funding raised — a market size
+     * presented as a company's raise.
+     *
+     * extractFunding requires the amount and a raise verb in the same
+     * sentence and rejects the look-alike constructions. The press pages
+     * are searched first because the stored summaries are truncated
+     * article intros that usually stop before the money is mentioned.
+     */
     if (!facts.amountText) {
-      const withAmount = c.dealEvidence.find((d) => /\$[\d.]+\s*[MBK]/i.test(d.summary));
-      const m = withAmount?.summary.match(/\$[\d.]+\s*[MBK]/i);
-      if (m) facts.amountText = m[0];
+      for (const source of [pressText, siteText, ...c.dealEvidence.map((d) => d.summary)]) {
+        if (!source) continue;
+        const found = extractFunding(source, c.name);
+        if (found) {
+          facts.amountText = found.amountText;
+          facts.fundingEvidence = found.evidence;
+          break;
+        }
+      }
     }
     if (!facts.fundingDate) {
       const dated = c.dealEvidence.filter((d) => d.publishedAt).sort((a, b) =>
@@ -912,6 +943,12 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
           }
           if (!facts.description && yc.record.oneLiner && /unknown/i.test(c.oneLiner)) {
             facts.description = yc.record.oneLiner;
+          }
+          // YC naming its own batch is the authoritative statement of
+          // accelerator participation — better than parsing it back out
+          // of a directory blurb.
+          if (!facts.accelerator && yc.record.batch) {
+            facts.accelerator = `Y Combinator (${yc.record.batch})`;
           }
         }
       } catch {
@@ -1075,7 +1112,9 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       const locSource = facts.locationEvidence ? `"${facts.locationEvidence}"` : secUrl;
       if (facts.city && (!c.city || c.city === 'Unknown')) stamp('city', facts.city, locSource);
       if (facts.state && (!c.state || c.state === '??' || c.state === 'Unknown')) stamp('state', facts.state, locSource);
-      if (facts.amountText) stamp('raising', facts.amountText, secUrl);
+      if (facts.amountText) {
+        stamp('raising', facts.amountText, facts.fundingEvidence ? `"${facts.fundingEvidence}"` : secUrl);
+      }
       if (facts.fundingDate) stamp('lastFundingDate', facts.fundingDate, secUrl);
       if (facts.accelerator && !c.accelerator) stamp('accelerator', facts.accelerator, 'Y Combinator public directory');
       if (facts.description) {

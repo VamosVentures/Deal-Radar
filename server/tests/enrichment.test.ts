@@ -21,7 +21,9 @@ import {
   type StageContext, type StageEvidenceItem,
 } from '../enrichment/stageResolver';
 import { buildResearchPlan, primaryDocFromIndexUrl } from '../enrichment/researchPlan';
-import { extractDescription, extractLocation, normalizeState, resolveCityState } from '../enrichment/companyFacts';
+import {
+  extractDescription, extractFunding, extractLocation, normalizeState, resolveCityState,
+} from '../enrichment/companyFacts';
 import {
   ENRICHMENT_VERSION, meetsMatchThreshold, NON_SECTOR_STATUS, outcomeAnswered,
   outcomeInconclusive, personKey, scoreMatch,
@@ -878,6 +880,58 @@ describe('company facts', () => {
   it('records a foreign city without inventing a US state', () => {
     expect(resolveCityState('London')).toEqual({ city: 'London', state: null });
     expect(resolveCityState('Barcelona, Spain')).toEqual({ city: 'Barcelona', state: null });
+  });
+
+  /**
+   * The two false positives that shaped this extractor, taken verbatim
+   * from the live corpus. A money-plus-keyword approach would have
+   * written a market-size figure and a revenue figure into a column
+   * labelled "funding raised" — wrong twice for every once right, and
+   * worse than the blank it replaced, because a reviewer can see a blank.
+   */
+  it('refuses market size and revenue that look like a raise', () => {
+    expect(extractFunding('Play Health: women experiencing perimenopause spend an estimated $15B+ annually on symptom management.', 'Play Health')).toBe(null);
+    expect(extractFunding('Spaceium has secured $86.1 million in binding commercial contracts to date.', 'Spaceium Inc')).toBe(null);
+    expect(extractFunding('Acme Robotics is valued at $400 million after the deal.', 'Acme Robotics')).toBe(null);
+    expect(extractFunding('Acme Robotics manages $2 billion in assets under management.', 'Acme Robotics')).toBe(null);
+    expect(extractFunding('Acme Robotics saves customers $30 million a year.', 'Acme Robotics')).toBe(null);
+  });
+
+  it('reads a real raise, with the round when the sentence names one', () => {
+    expect(extractFunding('Acme Robotics raised $12.5 million in a Series A led by Menlo Ventures.', 'Acme Robotics'))
+      .toMatchObject({ amountText: '$12.5M Series A', roundType: 'Series A' });
+    expect(extractFunding('Acme Robotics closed a $3M seed round.', 'Acme Robotics'))
+      .toMatchObject({ roundType: 'Seed' });
+    // A raise with no round named yields the amount alone, not a guess.
+    expect(extractFunding('Acme Robotics raised $40 million from Lowercarbon Capital.', 'Acme Robotics'))
+      .toMatchObject({ amountText: '$40M', roundType: null });
+  });
+
+  it('requires the amount and the verb to be in the same sentence', () => {
+    expect(extractFunding('Acme Robotics raised money last year. The market is worth $5 billion.', 'Acme Robotics')).toBe(null);
+  });
+
+  /**
+   * The two wrong values a first version wrote to the live database.
+   * Both are the same failure: a funding article naming somebody else's
+   * round. An article about a raise routinely lists comparable rounds
+   * and market context, and money in the same document is not money
+   * raised by the subject of the document.
+   */
+  it('refuses a raise the sentence attributes to a different company', () => {
+    expect(extractFunding(
+      'In April, X-energy raised $1 billion through an IPO, while Radiant Energy also expanded.',
+      'Antares',
+    )).toBe(null);
+    expect(extractFunding(
+      'Selling to the UK MoD is full of friction; the programme secured $8.7 billion last year.',
+      'Agon',
+    )).toBe(null);
+    // The same article DOES yield a value once the sentence names us.
+    expect(extractFunding(
+      'In April, X-energy raised $1 billion. Separately, Antares raised $25 million in a Series B.',
+      'Antares',
+    )).toMatchObject({ amountText: '$25M Series B' });
   });
 
   it('takes a real self-description and skips boilerplate', () => {
