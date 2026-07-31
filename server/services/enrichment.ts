@@ -5,12 +5,12 @@ import { politeFetch, RequestBudget } from '../sourcing/politeness';
 import { parseFormD } from '../sourcing/formd';
 import { isThinPage, readableText } from '../sourcing/pageSignals';
 import { getQualification } from './issuerQualification';
-import { discoverOfficialWebsite } from './corroborate';
+import { discoverOfficialWebsite, findInYc } from './corroborate';
 import {
   classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
 } from '../enrichment/founderExtraction';
 import { classifyCompany } from '../enrichment/verticalClassifier';
-import { extractDescription, extractLocation } from '../enrichment/companyFacts';
+import { extractDescription, extractLocation, resolveCityState } from '../enrichment/companyFacts';
 import { readStatedStage, resolveStage, type StageEvidenceItem } from '../enrichment/stageResolver';
 import {
   buildResearchPlan, isOnCompanyDomain, type FamilyPlan, type PlanCompany,
@@ -878,6 +878,48 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
         (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''));
       if (dated[0]?.publishedAt) facts.fundingDate = dated[0].publishedAt;
     }
+    /**
+     * The Y Combinator directory API, for companies YC actually lists.
+     *
+     * The directory PAGE is rendered in the browser and serves 39
+     * characters to a fetcher, so the accelerator family reads nothing
+     * from it. The API behind it returns the same facts as structured
+     * JSON — location, website, team size, one-liner — and YC stating
+     * where its own portfolio company is based is a citable source.
+     *
+     * Only consulted for companies already linked to YC, and only for
+     * fields still missing, so it is not a fishing expedition.
+     */
+    const ycLinked = c.accelerator?.toLowerCase().includes('combinator')
+      || c.dealEvidence.some((d) => d.sourceId === 'yc')
+      || c.evidence.some((e) => /ycombinator/i.test(e.url));
+    if (ycLinked && (!facts.city || !facts.state || !c.website)) {
+      try {
+        const yc = await findInYc(c.name);
+        if (yc) {
+          const loc = yc.record.locations?.[0];
+          const resolved = loc ? resolveCityState(loc) : null;
+          if (resolved) {
+            facts.city ??= resolved.city;
+            // Null for a non-US location — the column holds a two-letter
+            // US code and there is no honest value for a London company.
+            if (resolved.state) facts.state ??= resolved.state;
+            facts.locationEvidence ??= `Y Combinator directory: ${loc}`;
+          }
+          if (!c.website && yc.record.website && /^https?:\/\//.test(yc.record.website)) {
+            discoveredSite ??= yc.record.website;
+            c.website = yc.record.website;
+          }
+          if (!facts.description && yc.record.oneLiner && /unknown/i.test(c.oneLiner)) {
+            facts.description = yc.record.oneLiner;
+          }
+        }
+      } catch {
+        // Best effort — a YC lookup failing must not cost the company
+        // the sources that did answer.
+      }
+    }
+
     /**
      * Location and description from text already fetched — the company's
      * own site first, then the funding coverage on file. Only consulted

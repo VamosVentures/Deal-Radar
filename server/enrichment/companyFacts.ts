@@ -78,6 +78,38 @@ const IMPLIED_CITY_STATE: Record<string, { city: string; state: string }> = {
   'washington dc': { city: 'Washington', state: 'DC' },
 };
 
+/**
+ * Resolve a directory-style location string into a city and, when it is
+ * a US location, a state.
+ *
+ * The Y Combinator API returns "San Francisco" — a city with no state —
+ * for most of its portfolio. Requiring an explicit state discarded every
+ * one of those, which is why a lookup that was hitting on 8 of 8
+ * companies changed nothing.
+ *
+ * Foreign locations ("London", "Barcelona, Spain") return a city and a
+ * NULL state on purpose. The state column holds a two-letter US code, and
+ * there is no honest value to put there for a London company — recording
+ * the city is a real fact, and inventing a state to fill the column
+ * would not be.
+ */
+export function resolveCityState(raw: string): { city: string; state: string | null } | null {
+  const loc = raw.trim().replace(/\s+/g, ' ');
+  if (!loc) return null;
+
+  const parts = loc.split(',').map((x) => x.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    const state = normalizeState(parts[1]);
+    // "Barcelona, Spain" — a real city, not a US state.
+    return { city: titleCase(parts[0]), state };
+  }
+
+  const implied = IMPLIED_CITY_STATE[loc.toLowerCase()];
+  if (implied) return { city: implied.city, state: implied.state };
+  // A bare city we do not recognise. Still a fact worth recording.
+  return { city: titleCase(loc), state: null };
+}
+
 export interface ExtractedLocation {
   city: string;
   state: string;

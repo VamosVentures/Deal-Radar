@@ -21,7 +21,7 @@ import {
   type StageContext, type StageEvidenceItem,
 } from '../enrichment/stageResolver';
 import { buildResearchPlan, primaryDocFromIndexUrl } from '../enrichment/researchPlan';
-import { extractDescription, extractLocation, normalizeState } from '../enrichment/companyFacts';
+import { extractDescription, extractLocation, normalizeState, resolveCityState } from '../enrichment/companyFacts';
 import {
   ENRICHMENT_VERSION, meetsMatchThreshold, NON_SECTOR_STATUS, outcomeAnswered,
   outcomeInconclusive, personKey, scoreMatch,
@@ -856,6 +856,28 @@ describe('company facts', () => {
     expect(normalizeState('Ontario')).toBe(null);
     expect(normalizeState('tx')).toBe('TX');
     expect(normalizeState('Texas')).toBe('TX');
+  });
+
+  /**
+   * The YC directory API returns "San Francisco" — a city with no state
+   * — for most of its portfolio. Requiring an explicit state discarded
+   * every one of those, so a lookup hitting on 8 of 8 companies changed
+   * nothing at all.
+   */
+  it('resolves a bare well-known city to its state', () => {
+    expect(resolveCityState('San Francisco')).toEqual({ city: 'San Francisco', state: 'CA' });
+    expect(resolveCityState('Austin, TX')).toEqual({ city: 'Austin', state: 'TX' });
+    expect(resolveCityState('Boulder, Colorado')).toEqual({ city: 'Boulder', state: 'CO' });
+  });
+
+  /**
+   * A London company has no honest two-letter US state. The city is a
+   * real fact and is recorded; the state stays null rather than being
+   * invented to fill a column.
+   */
+  it('records a foreign city without inventing a US state', () => {
+    expect(resolveCityState('London')).toEqual({ city: 'London', state: null });
+    expect(resolveCityState('Barcelona, Spain')).toEqual({ city: 'Barcelona', state: null });
   });
 
   it('takes a real self-description and skips boilerplate', () => {

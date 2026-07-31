@@ -60,10 +60,19 @@ export function sameCompany(a: string, b: string): boolean {
   return isHighConfidenceFuzzy(ka, kb);
 }
 
-interface YcRecord {
+export interface YcRecord {
   name: string; website?: string | null; oneLiner?: string | null;
   batch?: string | null; url?: string | null; slug?: string | null;
   status?: string | null; industries?: string[] | null; tags?: string[] | null;
+  /**
+   * "San Francisco, CA". The directory PAGE renders this in the browser
+   * and serves a 39-character shell to a fetcher, so it is unreadable
+   * there — the API returns the same fact as structured data, and YC
+   * stating where its own portfolio company is based is a citable
+   * source for a field that is otherwise blank on 53% of the portfolio.
+   */
+  locations?: string[] | null;
+  teamSize?: number | null;
 }
 
 /**
