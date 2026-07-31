@@ -1,4 +1,5 @@
 import { getDb } from '../db/client';
+import { applyFieldUpdate, setResolvedFounder } from '../db/repos/companies';
 import { audit } from '../lib/guard';
 import { politeFetch, RequestBudget } from '../sourcing/politeness';
 import { parseFormD } from '../sourcing/formd';
@@ -8,6 +9,7 @@ import {
   classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
 } from '../enrichment/founderExtraction';
 import { classifyCompany } from '../enrichment/verticalClassifier';
+import { extractDescription, extractLocation } from '../enrichment/companyFacts';
 import { readStatedStage, resolveStage, type StageEvidenceItem } from '../enrichment/stageResolver';
 import {
   buildResearchPlan, isOnCompanyDomain, type FamilyPlan, type PlanCompany,
@@ -20,6 +22,7 @@ import {
 import {
   ENRICHMENT_VERSION, isAuthoritativeFamily, meetsMatchThreshold, personKey, scoreMatch,
   SOURCE_FAMILY_SPECS, isClassified, NON_SECTOR_STATUS, outcomeAnswered, outcomeInconclusive,
+  STAGE_LABELS,
   type FounderResolutionStatus, type MatchSignal, type ResearchOutcome, type SourceFamily,
   type StageResolution, type VerticalClassification,
 } from '../../shared/enrichment';
@@ -164,6 +167,32 @@ function loadCompanies(opts: EnrichmentOptions): RawCompany[] {
 
 // ── Founder research ──────────────────────────────────────────────
 
+/**
+ * Facts about the COMPANY (not its founders) that the research already
+ * has in hand, and that the scoring model reads off the company row.
+ *
+ * These were being parsed and thrown away. The SEC Form D primary
+ * document states the issuer's city, state, amount sold, and date of
+ * first sale; the YC directory states the batch. Meanwhile the dashboard
+ * showed N/A for location on 62% of companies and no funding on 69%, and
+ * the fit score excluded the geography and funding components for the
+ * same records — a gap in our plumbing being reported as a gap in the
+ * evidence.
+ *
+ * Every value here is copied from a source we fetched and cited. Nothing
+ * is inferred, and nothing overwrites a value with stronger provenance.
+ */
+interface ResearchedFacts {
+  city?: string;
+  state?: string;
+  amountText?: string;
+  fundingDate?: string;
+  accelerator?: string;
+  /** The phrase a location was read from, cited when the value is stored. */
+  locationEvidence?: string;
+  description?: string;
+}
+
 interface FoundCandidate {
   personKey: string;
   fullName: string;
@@ -238,7 +267,7 @@ async function researchFamily(
   c: RawCompany,
   plan: FamilyPlan,
   budget: RequestBudget,
-): Promise<{ outcome: ResearchOutcome; detail: string; candidates: FoundCandidate[]; url: string | null; pageText: string }> {
+): Promise<{ outcome: ResearchOutcome; detail: string; candidates: FoundCandidate[]; url: string | null; pageText: string; facts: ResearchedFacts }> {
   if (plan.unavailableReason) {
     return {
       outcome: plan.unavailableReason,
@@ -249,6 +278,7 @@ async function researchFamily(
       candidates: [],
       url: null,
       pageText: '',
+      facts: {},
     };
   }
 
@@ -281,6 +311,7 @@ async function researchFamily(
    * 3 of 209 records reached an `explicit` classification as a result.
    */
   const gatheredText: string[] = [];
+  const facts: ResearchedFacts = {};
 
   for (const fetchPlan of plan.fetches) {
     lastUrl = fetchPlan.url;
@@ -335,6 +366,15 @@ async function researchFamily(
           confidence: candidateConfidence(score, plan.family, true),
         });
       }
+      // The issuer's own filing states these. Recorded rather than
+      // discarded — see ResearchedFacts.
+      if (filing.city && !facts.city) facts.city = filing.city.trim();
+      if (filing.stateOrCountry && !facts.state) facts.state = filing.stateOrCountry.trim();
+      if (filing.totalAmountSoldUsd && !facts.amountText) {
+        facts.amountText = `$${(filing.totalAmountSoldUsd / 1_000_000).toFixed(2)}M sold (Form D)`;
+      }
+      if (filing.dateOfFirstSale && !facts.fundingDate) facts.fundingDate = filing.dateOfFirstSale;
+
       readOk += 1;
       firstReadUrl ??= fetchPlan.url;
       notes.push(filing.relatedPersons.length > 0
@@ -410,19 +450,19 @@ async function researchFamily(
   // the concurrent pool.
   const pageText = gatheredText.join(' \n ').slice(0, 20_000);
 
-  if (candidates.length > 0) return { outcome: 'found-candidate', detail, candidates, url, pageText };
+  if (candidates.length > 0) return { outcome: 'found-candidate', detail, candidates, url, pageText, facts };
 
   // A family that read at least one real page HAS answered: it was
   // readable and it names nobody.
-  if (readOk > 0) return { outcome: 'reached-no-founder-stated', detail, candidates: [], url, pageText };
+  if (readOk > 0) return { outcome: 'reached-no-founder-stated', detail, candidates: [], url, pageText, facts };
 
   // Everything below is an attempt, NOT a finding about the company —
   // see the note on founder_research_attempts in migration 11.
   if (unreadable > 0 && failed === 0 && blocked === 0) {
-    return { outcome: 'source-unreadable', detail, candidates: [], url, pageText };
+    return { outcome: 'source-unreadable', detail, candidates: [], url, pageText, facts };
   }
-  if (blocked > 0 && failed === 0) return { outcome: 'source-blocked', detail, candidates: [], url, pageText };
-  return { outcome: 'source-unreachable', detail, candidates: [], url, pageText };
+  if (blocked > 0 && failed === 0) return { outcome: 'source-blocked', detail, candidates: [], url, pageText, facts };
+  return { outcome: 'source-unreachable', detail, candidates: [], url, pageText, facts };
 }
 
 /**
@@ -667,12 +707,18 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
     const plans = buildResearchPlan(c);
     const attempts: { family: SourceFamily; outcome: ResearchOutcome; detail: string; url: string | null; found: number }[] = [];
     const candidates: FoundCandidate[] = [];
+    const facts: ResearchedFacts = {};
     let siteText: string | null = null;
 
     for (const plan of plans) {
       const r = await researchFamily(c, plan, budget);
       attempts.push({ family: plan.family, outcome: r.outcome, detail: r.detail, url: r.url, found: r.candidates.length });
       candidates.push(...r.candidates);
+      // First source to state a fact wins; families run in confirming
+      // order, so this prefers the filing over the press write-up.
+      for (const [k, v] of Object.entries(r.facts)) {
+        if (v && !(k in facts)) (facts as Record<string, string>)[k] = v;
+      }
       if (r.outcome === 'source-unreachable' || r.outcome === 'source-blocked') {
         const key = `${plan.family}:${r.detail.slice(0, 80)}`;
         const prev = errorCounts.get(key);
@@ -750,6 +796,48 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
     const stage: StageResolution = {
       companyId: c.id, ...stageOutcome, lastCheckedAt: at, version: ENRICHMENT_VERSION,
     };
+
+    /**
+     * Facts the records already carry, filled in only where the company
+     * row has nothing. Deal evidence states an amount and a publication
+     * date; the YC directory states a batch.
+     */
+    if (!facts.amountText) {
+      const withAmount = c.dealEvidence.find((d) => /\$[\d.]+\s*[MBK]/i.test(d.summary));
+      const m = withAmount?.summary.match(/\$[\d.]+\s*[MBK]/i);
+      if (m) facts.amountText = m[0];
+    }
+    if (!facts.fundingDate) {
+      const dated = c.dealEvidence.filter((d) => d.publishedAt).sort((a, b) =>
+        (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''));
+      if (dated[0]?.publishedAt) facts.fundingDate = dated[0].publishedAt;
+    }
+    /**
+     * Location and description from text already fetched — the company's
+     * own site first, then the funding coverage on file. Only consulted
+     * where the SEC filing did not already state it.
+     */
+    if (!facts.city || !facts.state) {
+      const haystacks = [siteText ?? '', ...c.dealEvidence.map((d) => d.summary), c.oneLiner];
+      for (const h of haystacks) {
+        const loc = extractLocation(h);
+        if (loc) {
+          facts.city ??= loc.city;
+          facts.state ??= loc.state;
+          facts.locationEvidence = loc.evidence;
+          break;
+        }
+      }
+    }
+    if (siteText && /unknown/i.test(c.oneLiner)) {
+      const desc = extractDescription(siteText, c.name);
+      if (desc) facts.description = desc;
+    }
+    if (!facts.accelerator) {
+      const yc = c.dealEvidence.find((d) => d.sourceId === 'yc' && /batch\s+([A-Z]\d{2})/i.test(d.summary));
+      const batch = yc?.summary.match(/batch\s+([A-Z]\d{2})/i);
+      if (batch) facts.accelerator = `Y Combinator (${batch[1].toUpperCase()})`;
+    }
 
     // ── Totals ──────────────────────────────────────────────────────
     if (verdict.status === 'verified-founder') totals.foundersVerified += 1;
@@ -834,6 +922,71 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       });
       saveVerticalClassification(vertical);
       saveStageResolution(stage);
+
+      /**
+       * Write the researched facts onto the company row.
+       *
+       * The scoring model reads the ROW, not these tables, so without
+       * this step the research was being done and then ignored: 195
+       * companies had a resolved stage and still scored as 'Unknown'
+       * with the 15-point stage component excluded, and the dashboard
+       * showed N/A for a location the SEC filing had stated all along.
+       *
+       * applyFieldUpdate enforces provenance, so `extracted` never
+       * overwrites a `verified` or `user-entered` value — a reviewer's
+       * correction and a human-confirmed website both survive this.
+       */
+      const stamp = (field: Parameters<typeof applyFieldUpdate>[1], value: string, source: string) => {
+        const res = applyFieldUpdate(c.id, field, value, 'extracted', source);
+        if (res.applied) changes.push({ field: String(field), previous: null, next: value });
+      };
+
+      // Stage, as the label the row and the score both understand.
+      if (stage.stage !== 'stage-conflict-manual-review') {
+        stamp('stage', STAGE_LABELS[stage.stage], stage.evidenceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
+      }
+      /**
+       * The subvertical fills the subcategory ONLY where the stored one
+       * is a placeholder.
+       *
+       * A value already matching the Vamos taxonomy is the stronger
+       * statement and scores higher, so overwriting it with a
+       * free-text subvertical would trade a taxonomy match for a
+       * near-miss — which is exactly what happened on the first run and
+       * took thesis fit from 47% assessable to 0%.
+       */
+      if (vertical.subvertical && /unclassified|unknown/i.test(c.subcategory)) {
+        stamp('subcategory', vertical.subvertical, vertical.sourceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
+      }
+      const secUrl = attempts.find((a) => a.family === 'sec-form-d')?.url ?? 'SEC Form D';
+      // Cite the phrase a location was read from when it came from prose,
+      // and the filing when it came from the filing.
+      const locSource = facts.locationEvidence ? `"${facts.locationEvidence}"` : secUrl;
+      if (facts.city && (!c.city || c.city === 'Unknown')) stamp('city', facts.city, locSource);
+      if (facts.state && (!c.state || c.state === '??' || c.state === 'Unknown')) stamp('state', facts.state, locSource);
+      if (facts.amountText) stamp('raising', facts.amountText, secUrl);
+      if (facts.fundingDate) stamp('lastFundingDate', facts.fundingDate, secUrl);
+      if (facts.accelerator && !c.accelerator) stamp('accelerator', facts.accelerator, 'Y Combinator public directory');
+      if (facts.description) {
+        stamp('oneLiner', facts.description, c.website ?? `enrichment:${ENRICHMENT_VERSION}`);
+      }
+
+      /**
+       * A verified founder replaces the "Unknown founder" placeholder on
+       * the founders table, so the score, the HubSpot contact builder,
+       * and the outreach drafter can all see them. Only verified — a
+       * candidate is never written anywhere that treats it as fact.
+       */
+      if (verdict.status === 'verified-founder' && verdict.resolvedName) {
+        const replaced = setResolvedFounder(c.id, {
+          name: verdict.resolvedName,
+          role: verdict.resolvedTitle ?? '',
+          background: verdict.summary,
+        });
+        if (replaced) {
+          changes.push({ field: 'founder-row', previous: 'Unknown founder', next: verdict.resolvedName });
+        }
+      }
 
       if (prevFounder?.status !== verdict.status) {
         changes.push({ field: 'founder-status', previous: prevFounder?.status ?? null, next: verdict.status });

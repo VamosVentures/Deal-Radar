@@ -577,6 +577,32 @@ company you already hold across every source that might mention it. Its cost is
 bounded by the single company and its own API-call budget, and breadth is the
 entire point.
 
+### What the enrichment writes back, and what stays empty
+
+Enrichment writes researched facts onto the company row — stage, sector,
+subvertical, city/state, funding amount and date, accelerator, a self-description,
+and a verified founder. This matters because the **fit score reads the company
+row**, not the enrichment tables: before the write-back, 195 companies had a
+researched stage and still scored as `Unknown` with the 15-point stage component
+excluded entirely. The research was being done and then ignored.
+
+Provenance is enforced on every write (`extracted` never overwrites `verified` or
+`user-entered`), so a human confirmation always wins.
+
+Two components stay unassessable for almost every company, by design:
+
+- **Mission alignment (15 pts)** needs a *verified* demographic indicator —
+  founder self-identification or a verified public statement. This is the one
+  field that must never be automated, and no amount of research will fill it.
+  It is filled by a human recording an explicit source, or not at all.
+- **Traction signal (10 pts)** is a 0–10 analyst judgement with a written
+  justification. There is no public source for "how much traction does this have";
+  a reviewer enters it.
+
+Everything else fell as the pipeline improved: average model coverage went from
+**30% to 56%**, and no company is `provisional` any more (previously most were).
+Remaining gaps are genuine absences of public information, not plumbing.
+
 ---
 
 ## 12. Useful commands
@@ -584,7 +610,7 @@ entire point.
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start web + API (the demo command) |
-| `npm test` | Unit suite (759 tests) |
+| `npm test` | Unit suite (767 tests) |
 | `npm run test:e2e` | Playwright suite (isolated DB and ports) |
 | `npm run typecheck` | TypeScript across app, server, and scripts |
 | `npm run lint` | oxlint |

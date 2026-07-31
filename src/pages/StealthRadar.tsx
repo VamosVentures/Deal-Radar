@@ -1,11 +1,27 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PageHeader } from '../components/ui';
+import { CompanyNotes } from '../components/CompanyNotes';
+import { HubSpotModal } from '../components/HubSpotModal';
+import { OutreachPanel } from '../components/OutreachPanel';
+import { useCompanies } from '../store/companies';
+import { scoreCompany } from '../lib/scoring';
+import type { Company } from '../types';
+import type { CompanyStatus } from '../../shared/integrations';
 import { StealthSignalFeed } from '../components/StealthSignalFeed';
 import { api } from '../lib/api';
 import {
   RADAR_FILTERS, RADAR_FILTER_LABELS,
-  type RadarEntry, type RadarFilter, type RadarPerson,
+  type CompanyEnrichment, type RadarEntry, type RadarFilter, type RadarPerson,
 } from '../../shared/enrichment';
+
+/**
+ * Statuses a reviewer can set straight from the radar. Deliberately the
+ * triage subset — 'Approved for HubSpot' and 'Synced to HubSpot' are not
+ * here, because those are outcomes of the sync flow rather than
+ * something to assert from a list.
+ */
+const RADAR_STATUSES: CompanyStatus[] = ['Awaiting Review', 'Research Needed', 'Monitor', 'Passed'];
 
 /**
  * Stealth Founder Radar.
@@ -145,8 +161,64 @@ function PersonCard({
   );
 }
 
-function RadarRow({ entry, onReviewed }: { entry: RadarEntry; onReviewed: () => void }) {
+/**
+ * A radar row is a company, so it gets a company's actions.
+ *
+ * The radar previously ended at "here is what we found and could not
+ * confirm", which left a reviewer who wanted to act on it navigating to
+ * the Companies queue and searching for the same record by name. These
+ * are the same components the normal deal queue uses, so behaviour,
+ * guardrails, and audit are identical — a stealth record is not a
+ * second-class one.
+ */
+function RadarRow({
+  entry, company, enrichment, onReviewed, onChanged,
+}: {
+  entry: RadarEntry;
+  company: Company | undefined;
+  enrichment: CompanyEnrichment | undefined;
+  onReviewed: () => void;
+  onChanged: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [panel, setPanel] = useState<'outreach' | 'hubspot' | 'notes' | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const fit = useMemo(() => (company ? scoreCompany(company) : null), [company]);
+  const verified = enrichment?.founder.value ?? null;
+
+  /**
+   * Outreach targets the VERIFIED founder, not whatever the imported
+   * founders table happens to hold. When nothing is verified the action
+   * is disabled rather than hidden, with the reason attached — a
+   * disabled control that explains itself tells a reviewer what to do
+   * next; a missing one just looks broken.
+   */
+  const outreachCompany: Company | null = company && verified
+    ? {
+      ...company,
+      founders: [{
+        name: verified.name,
+        role: verified.title ?? '',
+        background: enrichment?.founder.summary ?? '',
+      }],
+    }
+    : null;
+
+  const setStatus = async (status: CompanyStatus) => {
+    if (!company) return;
+    setStatusBusy(true);
+    setActionError(null);
+    try {
+      await api.imports.setStatus(company.id, status, 'team');
+      onChanged();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setStatusBusy(false);
+    }
+  };
   return (
     <article className="border border-line bg-panel p-3" data-testid="radar-entry">
       <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -293,6 +365,92 @@ function RadarRow({ entry, onReviewed }: { entry: RadarEntry; onReviewed: () => 
           )}
         </div>
       </details>
+
+      {/* ── More info: the same facts the deal queue shows ── */}
+      {company && (
+        <div className="mt-2 border-t border-line pt-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-mid">
+            {fit && (
+              <span title={fit.explanation}>
+                <span className="font-mono uppercase tracking-widest">Fit</span>{' '}
+                <span className="font-semibold text-ink">{fit.score.toFixed(1)}/10</span>
+                {fit.provisional && <span className="ml-1 text-marigold">provisional</span>}
+              </span>
+            )}
+            {enrichment?.vertical.value && (
+              <span>{enrichment.vertical.value.primaryLabel}
+                {enrichment.vertical.value.subvertical ? ` · ${enrichment.vertical.value.subvertical}` : ''}</span>
+            )}
+            {enrichment?.stage.value && <span>{enrichment.stage.value.label}</span>}
+            {company.raising && <span>{company.raising}</span>}
+            {company.accelerator && <span>{company.accelerator}</span>}
+          </div>
+          {company.oneLiner && !/unknown/i.test(company.oneLiner) && (
+            <p className="mt-1 text-xs leading-relaxed text-ink">{company.oneLiner}</p>
+          )}
+
+          {/* ── Actions, same as a normal deal ── */}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => setPanel('outreach')}
+              disabled={!outreachCompany}
+              data-testid="radar-outreach"
+              className="rounded-[2px] border border-line bg-panel px-2.5 py-1 text-[11px] font-semibold text-ink disabled:opacity-40"
+              title={outreachCompany
+                ? 'Draft outreach to the verified founder. Nothing is ever sent automatically.'
+                : 'No verified founder yet. Confirm a candidate above before drafting outreach — writing to an unconfirmed person is the mistake this radar exists to prevent.'}
+            >
+              Draft outreach
+            </button>
+            <button
+              onClick={() => setPanel('hubspot')}
+              data-testid="radar-hubspot"
+              className="rounded-[2px] border border-line bg-panel px-2.5 py-1 text-[11px] font-semibold text-ink"
+              title="Review and add this company to HubSpot. A contact is only created for a verified founder."
+            >
+              Add to HubSpot
+            </button>
+            <button
+              onClick={() => setPanel(panel === 'notes' ? null : 'notes')}
+              data-testid="radar-notes"
+              className="rounded-[2px] border border-line bg-panel px-2.5 py-1 text-[11px] font-semibold text-ink"
+            >
+              Notes
+            </button>
+            <select
+              disabled={statusBusy}
+              defaultValue=""
+              onChange={(e) => { if (e.target.value) void setStatus(e.target.value as CompanyStatus); }}
+              data-testid="radar-status"
+              className="rounded-[2px] border border-line bg-panel px-2 py-1 text-[11px] text-ink"
+              aria-label={`Set review status for ${entry.companyName}`}
+            >
+              <option value="">Set status…</option>
+              {RADAR_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+            </select>
+            <Link
+              to={`/companies?c=${encodeURIComponent(entry.companyId)}`}
+              className="text-[11px] text-slate-mid underline decoration-dotted hover:text-ink"
+            >
+              Open full record →
+            </Link>
+          </div>
+          {actionError && <p className="mt-1 text-[11px] text-alerta">{actionError}</p>}
+
+          {panel === 'notes' && (
+            <div className="mt-2 border-t border-line pt-2">
+              <CompanyNotes companyId={entry.companyId} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {panel === 'outreach' && outreachCompany && (
+        <OutreachPanel c={outreachCompany} onClose={() => setPanel(null)} />
+      )}
+      {panel === 'hubspot' && company && (
+        <HubSpotModal c={company} onClose={() => setPanel(null)} onSynced={onChanged} />
+      )}
     </article>
   );
 }
@@ -305,6 +463,10 @@ export function StealthRadar() {
   const [loading, setLoading] = useState(true);
   const [hints, setHints] = useState<{ aId: string; aName: string; bId: string; bName: string; basis: string }[]>([]);
   const [showSignals, setShowSignals] = useState(false);
+  // The radar rows carry full company actions, so they need the same
+  // company records and enrichment the deal queue uses.
+  const { companies, enrichment: enrichmentMap, refresh: refreshCompanies } = useCompanies();
+  const companyById = useMemo(() => new Map(companies.map((c) => [c.id, c])), [companies]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -383,7 +545,16 @@ export function StealthRadar() {
       )}
 
       <div className="space-y-2">
-        {entries.map((e) => <RadarRow key={e.companyId} entry={e} onReviewed={load} />)}
+        {entries.map((e) => (
+          <RadarRow
+            key={e.companyId}
+            entry={e}
+            company={companyById.get(e.companyId)}
+            enrichment={enrichmentMap[e.companyId]}
+            onReviewed={load}
+            onChanged={() => { void refreshCompanies(); load(); }}
+          />
+        ))}
       </div>
 
       {/*

@@ -298,6 +298,39 @@ export function appendEvidence(
   return added;
 }
 
+/**
+ * Replace placeholder founder rows with a researched, verified person.
+ *
+ * The enrichment tables are the system of record for founder research,
+ * but three things read the `founders` TABLE and cannot see them: the
+ * fit score's founder component, the HubSpot contact builder, and the
+ * outreach drafter. So a company with a confirmed founder still scored
+ * as having no founder evidence and still offered "Unknown founder" as
+ * an outreach target.
+ *
+ * Only PLACEHOLDER rows are replaced. A real name already on the record
+ * — from an import, or a human — is left alone, because this is a
+ * derived write and it must not overwrite a stronger source.
+ */
+export function setResolvedFounder(
+  companyId: string,
+  founder: { name: string; role: string; background: string },
+): boolean {
+  const db = getDb();
+  const rows = db.prepare('SELECT id, name FROM founders WHERE company_id = ? ORDER BY position')
+    .all(companyId) as { id: number; name: string }[];
+  const isPlaceholder = (n: string) => !n?.trim() || /\bunknown\b/i.test(n);
+  const realOnes = rows.filter((r) => !isPlaceholder(r.name));
+  // Somebody real is already recorded, including possibly this person.
+  if (realOnes.length > 0) return false;
+
+  for (const r of rows) db.prepare('DELETE FROM founders WHERE id = ?').run(r.id);
+  db.prepare('INSERT INTO founders (company_id, position, name, role, background) VALUES (?, 0, ?, ?, ?)')
+    .run(companyId, founder.name, founder.role, founder.background);
+  db.prepare('UPDATE companies SET updated_at = ? WHERE id = ?').run(now(), companyId);
+  return true;
+}
+
 export function addExternalId(companyId: string, sourceId: string, externalId: string): void {
   getDb().prepare('INSERT OR IGNORE INTO company_external_ids (company_id, source_id, external_id) VALUES (?, ?, ?)')
     .run(companyId, sourceId, externalId);

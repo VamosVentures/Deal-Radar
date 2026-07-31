@@ -18,7 +18,24 @@ export type VerticalId =
 // real misrepresentation: the discovery importer mapped every
 // stage-less candidate to 'Stealth', so a company that had publicly
 // raised $117M was displayed as stealth.
-export type Stage = 'Pre-seed' | 'Seed' | 'Series A' | 'Stealth' | 'Unknown';
+export type Stage =
+  | 'Pre-seed' | 'Seed' | 'Series A' | 'Stealth' | 'Unknown'
+  /**
+   * Researched stage results, written back by the enrichment pipeline.
+   *
+   * These exist on the company row because the scoring model reads the
+   * ROW, not the enrichment tables — so without them, 195 companies whose
+   * stage HAD been researched still scored as 'Unknown' and had the
+   * 15-point stage component excluded entirely. The research was being
+   * done and then ignored.
+   *
+   * `Early-stage — round not publicly disclosed` is the common one and is
+   * a real finding, not a gap: the company is early and no source names
+   * the round. It is scored as such rather than excluded.
+   */
+  | 'Series B+' | 'Bootstrapped' | 'Grant-funded' | 'Pre-launch'
+  | 'Early-stage — round not publicly disclosed'
+  | 'Stage conflict — manual review required';
 
 export type PolicyFlag = 'defi-adjacent' | 'hardware-heavy' | 'outside-thesis';
 

@@ -57,10 +57,31 @@ const STAGE_POINTS: Record<Company['stage'], number> = {
   'Pre-seed': 12,
   'Series A': 9,
   'Stealth': 7,
+  // Researched results. These are findings, not gaps, so they score.
+  'Pre-launch': 11,
+  'Bootstrapped': 8,
+  'Grant-funded': 8,
+  // The company is early and no source names the round. Scored between
+  // Series A and Stealth: early enough to be in scope, but the specific
+  // round is genuinely undisclosed rather than assumed to be seed.
+  'Early-stage — round not publicly disclosed': 9,
+  // Past the firm's stage. A real finding, scored low on FIT — which is
+  // different from being excluded for lack of data.
+  'Series B+': 3,
+  // Sources disagree. We do not know, so this is excluded rather than
+  // scored — see `assessable` in stageFit.
+  'Stage conflict — manual review required': 5,
   // Unknown is not a stage the company chose — it is a gap in OUR data.
   // Scored low and said plainly, never guessed upward.
   'Unknown': 5,
 };
+
+/**
+ * Stages we do not actually know. Excluded from the score rather than
+ * counted low, because a gap in our data is not evidence about the
+ * company. Everything else in STAGE_POINTS is a researched finding.
+ */
+const UNKNOWABLE_STAGES: Company['stage'][] = ['Unknown', 'Stage conflict — manual review required'];
 
 const EXCEPTION_MESSAGES: Record<PolicyFlag, string> = {
   'defi-adjacent':
@@ -76,7 +97,28 @@ function thesisFit(c: Company): ScoreComponent {
   const sub = v.subcategories.find((s) => s.name === c.subcategory);
   let points: number;
   let rationale: string;
-  if (!sub) {
+  /**
+   * A researched SECTOR is thesis-relevant on its own.
+   *
+   * This used to require an exact taxonomy subcategory match, so a
+   * company confidently classified as "Health & Wellness → virtual care
+   * delivery" scored as unassessable simply because that subvertical is
+   * not a literal row in the taxonomy table. Knowing the sector is most
+   * of what this component measures; the subcategory refines it.
+   *
+   * It is scored BELOW an exact match, because an exact match is a
+   * stronger statement — and it stays assessable, because "we know the
+   * sector and a specific subvertical" is knowledge, not a gap.
+   */
+  const sectorKnown = c.vertical !== 'aoi' && !!c.subcategory
+    && !/unclassified|unknown/i.test(c.subcategory);
+
+  if (!sub && sectorKnown) {
+    points = v.core ? 16 : 11;
+    rationale = v.core
+      ? `${v.name} → ${c.subcategory}. Sector confirmed by research; the subvertical is more specific than the taxonomy, so this scores below an exact taxonomy match.`
+      : `${v.name} is outside the core sectors and scored on a separate scale.`;
+  } else if (!sub) {
     points = 5;
     rationale = `Subcategory "${c.subcategory}" is not in the ${v.name} taxonomy — review classification.`;
   } else if (!v.core) {
@@ -91,7 +133,10 @@ function thesisFit(c: Company): ScoreComponent {
   }
   // An unclassified subcategory is a gap in OUR classification, not a
   // judgement that the company fits the thesis badly.
-  return { key: 'thesis', about: 'company', label: 'Thesis / vertical fit', points, max: 20, rationale, assessable: !!sub };
+  return {
+    key: 'thesis', about: 'company', label: 'Thesis / vertical fit', points, max: 20, rationale,
+    assessable: !!sub || sectorKnown,
+  };
 }
 
 function stageFit(c: Company): ScoreComponent {
@@ -105,8 +150,23 @@ function stageFit(c: Company): ScoreComponent {
           ? 'Series A is in range but latest stage the firm leads.'
           : c.stage === 'Stealth'
             ? 'Stealth — the company is operating in stealth.'
-            : 'Stage is not on record, so this component is excluded from the score rather than scored low — an unrecorded stage is a gap in our data, not evidence that the company is early. Confirm the stage during review.';
-  return { key: 'stage', about: 'company', label: 'Stage fit', points, max: 15, rationale, assessable: c.stage !== 'Unknown' };
+            : c.stage === 'Early-stage — round not publicly disclosed'
+              ? 'Researched as early-stage with the specific round undisclosed. Scored on that finding rather than excluded — the company is in scope; only the round name is unknown.'
+              : c.stage === 'Series B+'
+                ? 'Series B or later — past the stage the firm leads. Scored low on fit, which is a judgement about the company, not a gap in our data.'
+                : c.stage === 'Bootstrapped'
+                  ? 'Bootstrapped — no institutional round on record.'
+                  : c.stage === 'Grant-funded'
+                    ? 'Grant-funded — non-dilutive funding on record, no equity round.'
+                    : c.stage === 'Pre-launch'
+                      ? 'Pre-launch — earlier than the sweet spot but squarely in scope.'
+                      : c.stage === 'Stage conflict — manual review required'
+                        ? 'Sources disagree on the round, so the stage is excluded from the score until a reviewer settles it.'
+                        : 'Stage is not on record, so this component is excluded from the score rather than scored low — an unrecorded stage is a gap in our data, not evidence that the company is early. Confirm the stage during review.';
+  return {
+    key: 'stage', about: 'company', label: 'Stage fit', points, max: 15, rationale,
+    assessable: !UNKNOWABLE_STAGES.includes(c.stage),
+  };
 }
 
 function missionAlignment(c: Company): ScoreComponent {

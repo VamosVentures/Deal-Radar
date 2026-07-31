@@ -196,4 +196,49 @@ test.describe('Stealth Founder Radar', () => {
       await expect(person.getByTestId('candidate-confirm')).toBeDisabled();
     }
   });
+
+  /**
+   * A radar row is a company, so it carries a company's actions. Before
+   * this, a reviewer who wanted to act on a stealth record had to leave
+   * the page and find the same company by name in the deal queue.
+   */
+  test('a radar row offers the same actions as a normal deal', async ({ page }) => {
+    await page.goto('/stealth');
+    const entry = page.getByTestId('radar-entry').filter({ hasText: FINTECH });
+    await expect(entry).toBeVisible({ timeout: 15_000 });
+    await expect(entry.getByTestId('radar-hubspot')).toBeVisible();
+    await expect(entry.getByTestId('radar-notes')).toBeVisible();
+    await expect(entry.getByTestId('radar-status')).toBeVisible();
+    await expect(entry.getByRole('link', { name: /Open full record/ })).toBeVisible();
+  });
+
+  /**
+   * The load-bearing guard on the new actions. Drafting to an
+   * unconfirmed candidate is precisely the mistake this radar exists to
+   * prevent, so the control is disabled — and disabled rather than
+   * hidden, so it can explain what to do instead.
+   */
+  test('outreach is blocked until a founder is verified', async ({ page }) => {
+    await page.goto('/stealth');
+    const entry = page.getByTestId('radar-entry').filter({ hasText: FINTECH });
+    await expect(entry).toBeVisible({ timeout: 15_000 });
+    // The fintech fixture has conflicting evidence and no verified founder.
+    await expect(entry.getByTestId('radar-outreach')).toBeDisabled();
+    await expect(entry.getByTestId('radar-outreach')).toHaveAttribute('title', /No verified founder/i);
+  });
+
+  test('a radar row shows the fit score and sector inline', async ({ page }) => {
+    await page.goto('/stealth');
+    const entry = page.getByTestId('radar-entry').filter({ hasText: FINTECH });
+    await expect(entry.getByText(/Fit/).first()).toBeVisible({ timeout: 15_000 });
+    await expect(entry.getByText('FinTech').first()).toBeVisible();
+  });
+
+  test('notes open inline on a radar row', async ({ page }) => {
+    await page.goto('/stealth');
+    const entry = page.getByTestId('radar-entry').filter({ hasText: FINTECH });
+    await expect(entry).toBeVisible({ timeout: 15_000 });
+    await entry.getByTestId('radar-notes').click();
+    await expect(entry.getByTestId('company-notes')).toBeVisible();
+  });
 });

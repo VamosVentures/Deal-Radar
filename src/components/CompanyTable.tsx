@@ -493,9 +493,6 @@ export function CompanyTable({
                     </td>
                     <td className="cursor-pointer px-3 py-2.5" onClick={() => requestOpen(open ? null : c.id)}>
                       <ScoreGauge score={fit.score} size={38} />
-                      <div className="mt-1 font-mono text-[9px] tabular-nums text-slate-mid" title="Evidence confidence — how well-sourced this record is">
-                        {Math.round(fit.evidenceConfidence * 100)}% ev.
-                      </div>
                       {/*
                         Marked on the ROW, not only in the triage column.
                         Every company here is "Awaiting review", so the
@@ -830,21 +827,17 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
               <div className="flex items-center justify-between gap-2">
                 <span>Vamos Fit Score:</span><span className="text-ink">{fit.score.toFixed(1)}/10</span>
               </div>
-              <div
-                className="flex items-center justify-between gap-2"
-                title={`The score is computed over the ${fit.assessablePoints} points of the 100-point model that could actually be judged from what is on record. Unrecorded components are excluded rather than counted as zero, so a gap in our data never reads as a mark against the company.`}
-              >
-                <span>Model assessable</span>
-                <span className={fit.completeness < 0.3 ? 'text-marigold' : 'text-ink'}>
-                  {Math.round(fit.completeness * 100)}% ({fit.assessablePoints}/100)
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-2" title="How well-sourced this record is (count, primary sources, diversity, freshness). Separate from thesis fit.">
-                <span>Evidence confidence</span><span className="text-ink">{Math.round(fit.evidenceConfidence * 100)}%</span>
-              </div>
-              <div className="flex items-center justify-between gap-2" title={fit.explanation}>
-                <span>Scoring model</span><span className="text-ink">{fit.version}</span>
-              </div>
+              {/*
+                Model-assessable %, evidence confidence, and the scoring
+                model version were removed from this panel. They describe
+                how the number was computed, not the company, and a
+                reviewer deciding whether to take a meeting has no action
+                to take on any of them.
+
+                The per-component breakdown below still shows which parts
+                could not be judged and why, which is the same
+                information at the altitude where it is actionable.
+              */}
             </div>
             <div className="mt-2 flex flex-wrap gap-1 border-t border-line pt-2">
               {m?.reviewStatus && <span className="rounded-[2px] bg-marigold-soft px-1.5 py-0.5 font-mono text-[10px] font-semibold text-marigold">{m.reviewStatus}</span>}

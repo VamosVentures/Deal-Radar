@@ -99,15 +99,28 @@ describe('csvCell', () => {
 });
 
 describe('row content', () => {
-  it('carries the provisional flag and completeness next to the score', () => {
+  it('carries the provisional flag next to the score', () => {
     const r = row();
     expect(r.fit.provisional).toBe(true); // bare record — nothing about the company is judgeable
 
     expect(cell(r, 'Company')).toBe('Fixture Health, Inc.');
     expect(cell(r, 'Vamos fit score (1-10)')).toBe(r.fit.score.toFixed(1));
     expect(cell(r, 'Score is provisional')).toBe('yes');
-    expect(cell(r, 'Model assessable (%)')).toBe(String(Math.round(r.fit.completeness * 100)));
-    expect(cell(r, 'Assessable points (of 100)')).toBe(String(r.fit.assessablePoints));
+  });
+
+  /**
+   * Model-assessable %, assessable points, and evidence confidence were
+   * removed from the export along with their on-screen counterparts.
+   * They describe how the number was computed rather than the company,
+   * and a reader outside the app has no action to take on any of them.
+   *
+   * The provisional flag and the caveat text stay: those DO change how
+   * the score should be read.
+   */
+  it('no longer exports the scoring-model internals', () => {
+    for (const gone of ['Model assessable (%)', 'Assessable points (of 100)', 'Evidence confidence (%)']) {
+      expect(EXPORT_COLUMNS as readonly string[]).not.toContain(gone);
+    }
   });
 
   it('states the caveat that the score reflects only our sourcing', () => {

@@ -21,6 +21,7 @@ import {
   type StageContext, type StageEvidenceItem,
 } from '../enrichment/stageResolver';
 import { buildResearchPlan, primaryDocFromIndexUrl } from '../enrichment/researchPlan';
+import { extractDescription, extractLocation, normalizeState } from '../enrichment/companyFacts';
 import {
   ENRICHMENT_VERSION, meetsMatchThreshold, NON_SECTOR_STATUS, outcomeAnswered,
   outcomeInconclusive, personKey, scoreMatch,
@@ -771,5 +772,48 @@ describe('enrichment view', () => {
     for (const f of [view.founder, view.vertical, view.stage]) {
       expect(f.nextAction.trim().length).toBeGreaterThan(0);
     }
+  });
+});
+
+// ── Company facts read from text we already fetched ───────────────
+
+describe('company facts', () => {
+  /**
+   * Geography is a SCORED component, so a wrong headquarters does not
+   * just mislead a reader — it silently moves a thesis-fit number. Every
+   * extractor requires an explicit cue rather than a bare place name.
+   */
+  it('reads a headquarters when the text says so explicitly', () => {
+    expect(extractLocation('Acme is headquartered in Austin, TX and hiring.'))
+      .toMatchObject({ city: 'Austin', state: 'TX' });
+    expect(extractLocation('The company is based in Boulder, Colorado.'))
+      .toMatchObject({ city: 'Boulder', state: 'CO' });
+    expect(extractLocation('San Francisco-based Acme raised a round.'))
+      .toMatchObject({ city: 'San Francisco', state: 'CA' });
+    expect(extractLocation('Mail us at 1 Main St, Austin, TX 78701.'))
+      .toMatchObject({ city: 'Austin', state: 'TX' });
+  });
+
+  it('refuses a place name with no cue tying it to the company', () => {
+    // Serving customers somewhere is not being headquartered there.
+    expect(extractLocation('We serve customers in Chicago and Denver.')).toBe(null);
+    expect(extractLocation('Our platform is used across Texas.')).toBe(null);
+    expect(extractLocation('No location here at all.')).toBe(null);
+  });
+
+  it('refuses a non-US state', () => {
+    expect(extractLocation('Headquartered in Toronto, Ontario.')).toBe(null);
+    expect(normalizeState('Ontario')).toBe(null);
+    expect(normalizeState('tx')).toBe('TX');
+    expect(normalizeState('Texas')).toBe('TX');
+  });
+
+  it('takes a real self-description and skips boilerplate', () => {
+    const site = 'Acme Health. Cookie policy and privacy policy apply. '
+      + 'Acme Health builds claims automation for third-party administrators and regional health plans. '
+      + 'All rights reserved.';
+    expect(extractDescription(site, 'Acme Health')).toMatch(/claims automation/);
+    expect(extractDescription('Acme Health. Acme Health. Acme Health.', 'Acme Health')).toBe(null);
+    expect(extractDescription('Too short.', 'Acme Health')).toBe(null);
   });
 });

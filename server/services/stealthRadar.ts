@@ -367,19 +367,34 @@ export function reviewCandidate(args: {
     args.candidateId, args.decision, { id: args.reviewer.id, label: args.reviewer.label }, args.reason,
   )!;
 
-  recordFieldCorrection({
-    companyId: existing.companyId,
-    field: 'founder',
-    // The previous value is the AUTOMATED conclusion, so the correction
-    // record shows what was changed away from, not just what it became.
-    previousValue: `${existing.status}: ${existing.fullName}${existing.title ? ` (${existing.title})` : ''}`,
-    newValue: args.decision === 'confirmed'
-      ? `${existing.fullName}${existing.title ? ` (${existing.title})` : ''}`
-      : `Rejected: ${existing.fullName}`,
-    reason: args.reason,
-    sourceUrl: existing.sourceUrl,
-    reviewer: args.reviewer,
-  });
+  /**
+   * Only a CONFIRMATION records a field correction.
+   *
+   * A correction asserts "the value is X". A rejection asserts the
+   * opposite — that this person is NOT the founder — and routing it
+   * through the same table made the read path treat the string
+   * "Rejected: Jane Okonkwo" as the confirmed founder name. That in turn
+   * enabled the outreach action against a person who does not exist,
+   * which is the precise failure this radar exists to prevent.
+   *
+   * The rejection is still fully recorded: on the candidate row itself
+   * (decision, reviewer, timestamp, reason), in classification history,
+   * and in the audit log. Nothing about the audit trail is lost — what
+   * changes is that a rejection can no longer masquerade as a value.
+   */
+  if (args.decision === 'confirmed') {
+    recordFieldCorrection({
+      companyId: existing.companyId,
+      field: 'founder',
+      // The previous value is the AUTOMATED conclusion, so the record
+      // shows what was changed away from, not just what it became.
+      previousValue: `${existing.status}: ${existing.fullName}${existing.title ? ` (${existing.title})` : ''}`,
+      newValue: `${existing.fullName}${existing.title ? ` (${existing.title})` : ''}`,
+      reason: args.reason,
+      sourceUrl: existing.sourceUrl,
+      reviewer: args.reviewer,
+    });
+  }
 
   recordClassificationChange({
     companyId: existing.companyId,
