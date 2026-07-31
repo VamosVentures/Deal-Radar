@@ -69,6 +69,24 @@ test.describe('Fresh-browser walkthrough', () => {
   }
 
   /**
+   * Coverage is the one view that answers "where is the pipeline weakest",
+   * and it distinguishes a gap in the world from a gap in our own
+   * searching — which is the difference between a finding to accept and a
+   * task to do.
+   */
+  test('the overview shows portfolio research coverage', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const panel = page.getByTestId('enrichment-coverage');
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText(/Coverage gaps — ours to close/)).toBeVisible();
+    await expect(panel.getByText(/Verified founder/).first()).toBeVisible();
+    // The permanently-manual field is stated as such, not left looking
+    // like a backlog item.
+    await expect(panel.getByText(/a reviewer enters it/i)).toBeVisible();
+  });
+
+  /**
    * The enrichment payload is the largest addition to the companies
    * request. A page that renders while its data request quietly 500s
    * would pass every other test in this file.

@@ -314,6 +314,56 @@ describe('research outcomes', () => {
    * "exhausted" is the one claim in this pipeline that has to be
    * trustworthy.
    */
+  /**
+   * "Exhausted" has to mean what it says.
+   *
+   * The first version counted a family we never fetched as searched, so
+   * a company where two pages were read and seven families had no URL
+   * on record was reported as "No attributable founder was confirmed
+   * across [all nine families]". 93 of 209 live companies carried that
+   * sentence while only one or two sources had actually answered — the
+   * same overclaim this pipeline refuses everywhere else, pointed
+   * inward.
+   */
+  it('does not count a family it never fetched as one it searched', () => {
+    const v = deriveFounderStatus('Acme', [], [
+      { family: 'company-site', outcome: 'reached-no-founder-stated' },
+      { family: 'sec-form-d', outcome: 'reached-no-founder-stated' },
+      { family: 'investor-portfolio', outcome: 'no-source-url-known' },
+      { family: 'funding-press', outcome: 'no-source-url-known' },
+    ], now);
+    expect(v.status).toBe('research-exhausted');
+    // Says what it actually read…
+    expect(v.summary).toContain('Company website');
+    expect(v.summary).toContain('SEC Form D');
+    // …and admits what it could not reach, by name and count.
+    expect(v.summary).toMatch(/2 further source families have no URL on record/i);
+    expect(v.summary).toContain('Investor portfolio');
+  });
+
+  /**
+   * The single most useful thing a human can do, named specifically —
+   * not a generic "resolve manually".
+   */
+  it('names the missing website as the concrete next action when that is the gap', () => {
+    const v = deriveFounderStatus('Acme', [], [
+      { family: 'sec-form-d', outcome: 'reached-no-founder-stated' },
+      { family: 'company-site', outcome: 'no-source-url-known' },
+    ], now);
+    expect(v.nextAction).toMatch(/No website is on record/i);
+    expect(v.nextAction).toMatch(/re-run research/i);
+  });
+
+  it('claims a clean exhaustion only when every family was actually reachable', () => {
+    const v = deriveFounderStatus('Acme', [], [
+      { family: 'company-site', outcome: 'reached-no-founder-stated' },
+      { family: 'sec-form-d', outcome: 'reached-no-founder-stated' },
+      { family: 'accelerator', outcome: 'source-not-applicable' },
+    ], now);
+    expect(v.summary).not.toMatch(/no URL on record/i);
+    expect(v.nextAction).toMatch(/Every reachable source family has been searched/i);
+  });
+
   it('does not claim exhaustion when a source did not respond', () => {
     const v = deriveFounderStatus('Acme', [], [
       { family: 'company-site', outcome: 'source-unreachable' },

@@ -6,6 +6,7 @@ import { scoreCompany } from '../lib/scoring';
 import { VERTICALS } from '../data/taxonomy';
 import { PageHeader, PriorityStat, PriorityStrip } from '../components/ui';
 import { Ranking } from '../components/Ranking';
+import { EnrichmentCoverage } from '../components/EnrichmentCoverage';
 import { SectorShortlists } from '../components/SectorShortlists';
 import { api } from '../lib/api';
 import { DEFAULT_STALE_SETTINGS, type StaleSettings } from '../../shared/integrations';
@@ -78,6 +79,17 @@ export function Overview() {
           <span className="font-semibold text-ink">No companies are on record yet.</span>{' '}
           Run Deal Discovery against live public sources, or import a CSV under Settings.
           Nothing is pre-populated: every record here comes from a real import you can audit.
+        </div>
+      )}
+
+      {/*
+        Research coverage sits above the priority strip because it answers
+        the question that comes first: is the pipeline's picture of these
+        companies complete enough to rank them at all?
+      */}
+      {loaded && companies.length > 0 && (
+        <div className="mb-5">
+          <EnrichmentCoverage />
         </div>
       )}
 

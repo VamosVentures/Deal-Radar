@@ -5,6 +5,7 @@ import { politeFetch, RequestBudget } from '../sourcing/politeness';
 import { parseFormD } from '../sourcing/formd';
 import { isThinPage, readableText } from '../sourcing/pageSignals';
 import { getQualification } from './issuerQualification';
+import { discoverOfficialWebsite } from './corroborate';
 import {
   classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
 } from '../enrichment/founderExtraction';
@@ -532,7 +533,6 @@ export function deriveFounderStatus(
   attempts: { family: SourceFamily; outcome: ResearchOutcome }[],
   atIso: string,
 ): FounderVerdict {
-  const attemptedLabels = attempts.map((a) => SOURCE_FAMILY_SPECS[a.family].label);
   const answered = attempts.filter((a) => outcomeAnswered(a.outcome));
   // Unreadable counts as unanswered alongside unreachable and blocked:
   // a browser-rendered page we could not execute has not told us
@@ -624,15 +624,53 @@ export function deriveFounderStatus(
     };
   }
 
+  /**
+   * "Research exhausted" has to mean what it says.
+   *
+   * The first version counted a family we never fetched as searched, so
+   * a company where two pages were read and seven families had no URL on
+   * record was reported as "No attributable founder was confirmed across
+   * [all nine families]". 93 of 209 companies carried that sentence
+   * while only one or two sources had actually answered.
+   *
+   * That is the same overclaim this pipeline refuses everywhere else,
+   * pointed inward. A family with no URL was not searched and not ruled
+   * out — it is a limit of our coverage, and the summary now says so by
+   * name so a reviewer knows whether "exhausted" means "this is not
+   * public" or "we had nowhere to look".
+   */
+  const searched = attempts.filter((a) =>
+    a.outcome === 'found-candidate' || a.outcome === 'reached-no-founder-stated');
+  const noUrl = attempts.filter((a) => a.outcome === 'no-source-url-known');
+  const searchedLabels = searched.map((a) => SOURCE_FAMILY_SPECS[a.family].label);
+  const noUrlLabels = noUrl.map((a) => SOURCE_FAMILY_SPECS[a.family].label);
+
+  const coverageNote = noUrl.length > 0
+    ? ` ${noUrl.length} further source famil${noUrl.length === 1 ? 'y has' : 'ies have'} no URL on record for this `
+      + `company and could not be searched (${noUrlLabels.slice(0, 4).join(', ')}${noUrlLabels.length > 4 ? ', …' : ''}).`
+    : '';
+
+  // The single most useful thing a human can do, named specifically.
+  const nextAction = noUrl.some((a) => a.family === 'company-site')
+    ? 'No website is on record, so the company’s own About/Team pages — the strongest founder source — were never '
+      + 'searched. Find and record a website, then re-run research for this company.'
+    : noUrl.length > 0
+      ? `Nothing we could reach names a founder. The unsearched families (${noUrlLabels.slice(0, 3).join(', ')}) `
+        + 'have no URL on record; adding one and re-running would extend the search.'
+      : 'Every reachable source family has been searched and none names a founder. Resolve manually from a source '
+        + 'outside this pipeline, or record the company as having no public founder attribution.';
+
   return {
     status: 'research-exhausted',
     resolvedPersonKey: null,
     resolvedName: null,
     resolvedTitle: null,
-    summary: `Founder research completed ${longDate(atIso)}. No attributable founder was confirmed across `
-      + `${attemptedLabels.join(', ')}. Manual review queued.`,
-    nextAction: 'Every applicable public source family has been searched and none names a founder. '
-      + 'Resolve manually from a source outside this pipeline, or record the company as having no public founder attribution.',
+    summary: `Founder research completed ${longDate(atIso)}. `
+      + (searchedLabels.length > 0
+        ? `Searched ${searchedLabels.join(' and ')}; no attributable founder is named by ${searchedLabels.length === 1 ? 'it' : 'any of them'}.`
+        : 'No source family could be reached.')
+      + `${coverageNote} Manual review queued.`,
+    nextAction,
   };
 }
 
@@ -704,6 +742,34 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
   const enrichOne = async (c: RawCompany): Promise<CompanyEnrichmentResult> => {
     totals.companiesAttempted += 1;
     const at = now();
+
+    /**
+     * A company with no website on record cannot have its strongest
+     * founder source searched at all — its own About and Team pages.
+     * 49 of 209 companies were in that state, and they are
+     * over-represented among the ones reported as "research exhausted".
+     *
+     * discoverOfficialWebsite derives a candidate domain from the name,
+     * fetches it, and confirms the company is actually named on the
+     * page. It refuses ambiguous names outright ("Natural", "Enigma"),
+     * because a matching domain for a common word is not evidence of
+     * identity. A refusal is recorded and the family stays honestly
+     * unsearched rather than being pointed at a guess.
+     */
+    let discoveredSite: string | null = null;
+    if (!c.website && !c.quarantined) {
+      try {
+        const found = await discoverOfficialWebsite(c.name);
+        if (found.url) {
+          discoveredSite = found.url;
+          c.website = found.url;
+        }
+      } catch {
+        // Discovery is best-effort. A failure here must not cost the
+        // company the source families that DO have URLs.
+      }
+    }
+
     const plans = buildResearchPlan(c);
     const attempts: { family: SourceFamily; outcome: ResearchOutcome; detail: string; url: string | null; found: number }[] = [];
     const candidates: FoundCandidate[] = [];
@@ -957,6 +1023,9 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
        */
       if (vertical.subvertical && /unclassified|unknown/i.test(c.subcategory)) {
         stamp('subcategory', vertical.subvertical, vertical.sourceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
+      }
+      if (discoveredSite) {
+        stamp('website', discoveredSite, `Derived from the company name and confirmed by the company being named on the page (${discoveredSite})`);
       }
       const secUrl = attempts.find((a) => a.family === 'sec-form-d')?.url ?? 'SEC Form D';
       // Cite the phrase a location was read from when it came from prose,
