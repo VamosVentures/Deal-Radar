@@ -10,6 +10,7 @@ import {
   microsoftLoginAvailable,
   microsoftSsoConfigured,
   microsoftSsoPending,
+  awaitingSsoCutover,
 } from '../env';
 import { audit } from '../lib/guard';
 import {
@@ -39,6 +40,16 @@ export const authRouter = Router();
  * integration panel, and the API all say the same thing.
  */
 export const AWAITING_MICROSOFT_CONFIG = 'Awaiting Microsoft administrator configuration';
+
+/**
+ * Shown on the default deployment before the Entra app registration
+ * exists. Deliberately states the END STATE as well as today's, so
+ * nobody reads the password form and concludes the shared password is
+ * how this application is meant to be secured.
+ */
+export const AWAITING_SSO_CUTOVER =
+  'Sign-in will move to Microsoft single sign-on, limited to @vamosventures.com accounts. '
+  + 'The shared password works until the Entra app registration is complete, and stops working automatically once it is.';
 
 const SESSION_MAX_AGE_MS = 12 * 60 * 60_000;
 
@@ -79,6 +90,7 @@ const loginLimiter = rateLimit({
 authRouter.get('/auth/status', wrap(async (req, res) => {
   const session = readSession(readCookie(req, SESSION_COOKIE));
   const pending = microsoftSsoPending();
+  const awaiting = awaitingSsoCutover();
   res.json({
     /**
      * Whether a sign-in is possible at all. Historically this meant
@@ -100,6 +112,20 @@ authRouter.get('/auth/status', wrap(async (req, res) => {
      */
     microsoftPending: pending,
     microsoftPendingMessage: pending ? AWAITING_MICROSOFT_CONFIG : null,
+    /**
+     * True on the DEFAULT deployment while Entra is not configured yet:
+     * the shared password is the way in today, and will stop being one
+     * the moment the app registration lands.
+     *
+     * Reported separately from `microsoftPending` so the sign-in screen
+     * can be honest that the password is a temporary state rather than
+     * the intended end state — without showing a warning about
+     * something nobody explicitly asked for.
+     */
+    awaitingSsoCutover: awaiting,
+    awaitingSsoCutoverMessage: awaiting ? AWAITING_SSO_CUTOVER : null,
+    /** The domain that will be allowed to sign in once SSO is live. */
+    allowedEmailDomain: env.MICROSOFT_ALLOWED_EMAIL_DOMAIN,
     /** Who is signed in, for attribution in the UI. Never a token. */
     identity: session
       ? { label: session.label, source: session.source, email: session.email ?? null }

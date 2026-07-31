@@ -25,7 +25,7 @@ import { classifyCandidate, matchesSector } from '../server/sourcing/classify';
 import { listCompanies } from '../server/db/repos/companies';
 import { VERTICALS } from '../src/data/taxonomy';
 import type { VerticalId } from '../src/types';
-import type { DiscoveryQuery } from '../shared/discovery';
+import { MAX_SOURCES_PER_RUN, type DiscoveryQuery } from '../shared/discovery';
 
 const args = process.argv.slice(2);
 const PER_SECTOR = Number(args[args.indexOf('--per-sector') + 1]) || 5;
@@ -50,6 +50,25 @@ const SECTOR_TERMS: Record<VerticalId, string[]> = {
 /** Credential-free adapters only. Product Hunt needs a token and is skipped. */
 const SOURCES: DiscoveryQuery['sources'] = ['yc', 'github', 'funding-news', 'grants', 'research', 'sec'];
 
+/**
+ * A discovery run may query at most MAX_SOURCES_PER_RUN sources, so this
+ * script sweeps its full source list in batches rather than asking for
+ * all six at once.
+ *
+ * Same coverage and the same total number of third-party requests — the
+ * cap bounds how wide any ONE run is, not how many runs an operator may
+ * make. Batching here rather than exempting scripts from the rule keeps
+ * a single enforcement point: the shared schema, which the server
+ * applies to every caller regardless of which client built the request.
+ */
+function sourceBatches(): DiscoveryQuery['sources'][] {
+  const batches: DiscoveryQuery['sources'][] = [];
+  for (let i = 0; i < SOURCES.length; i += MAX_SOURCES_PER_RUN) {
+    batches.push(SOURCES.slice(i, i + MAX_SOURCES_PER_RUN));
+  }
+  return batches;
+}
+
 const DAYS_90 = 90;
 const DAYS_365 = 365;
 
@@ -57,7 +76,7 @@ function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
-function baseQuery(terms: string[], windowDays: number): DiscoveryQuery {
+function baseQuery(terms: string[], windowDays: number, sources: DiscoveryQuery['sources']): DiscoveryQuery {
   return {
     vertical: null, // classification happens after retrieval, not as a source filter
     subcategory: null,
@@ -66,10 +85,10 @@ function baseQuery(terms: string[], windowDays: number): DiscoveryQuery {
     geography: 'United States',
     states: [],
     stages: ['Pre-seed', 'Seed', 'Series A'],
-    sources: SOURCES,
+    sources,
     dateFrom: isoDaysAgo(windowDays),
     dateTo: new Date().toISOString().slice(0, 10),
-    maxResults: 40,
+    maxResults: 20,
     maxApiCalls: 14,
     maxModelCalls: 0,
     maxEstimatedTokens: 0,
@@ -78,6 +97,35 @@ function baseQuery(terms: string[], windowDays: number): DiscoveryQuery {
     minEvidenceRecencyDays: null,
     staleAfterDays: 30,
   } as DiscoveryQuery;
+}
+
+/**
+ * One logical sweep across every source, executed as several
+ * within-cap runs and merged back into a single run-shaped result.
+ *
+ * The counters are summed and the candidate lists concatenated, so the
+ * report a caller reads describes the sweep as a whole rather than
+ * whichever batch happened to run last. `status` takes the worst of the
+ * batches: a sweep in which one batch failed is not a clean sweep, and
+ * reporting it as one would hide a source that returned nothing.
+ */
+async function runBatched(terms: string[], windowDays: number, initiatedBy: string) {
+  const runs = [];
+  for (const sources of sourceBatches()) {
+    runs.push(await runDiscovery(baseQuery(terms, windowDays, sources), initiatedBy));
+  }
+  const worst = runs.find((r) => r.status === 'Failed')
+    ?? runs.find((r) => r.status === 'Completed with warnings')
+    ?? runs[0];
+  return {
+    ...worst,
+    discovered: runs.reduce((n, r) => n + r.discovered, 0),
+    imported: runs.reduce((n, r) => n + r.imported, 0),
+    rejectedByValidation: runs.reduce((n, r) => n + r.rejectedByValidation, 0),
+    duplicatesSkipped: runs.reduce((n, r) => n + r.duplicatesSkipped, 0),
+    errors: runs.flatMap((r) => r.errors),
+    sourceResults: runs.flatMap((r) => r.sourceResults),
+  };
 }
 
 interface SectorOutcome {
@@ -95,7 +143,7 @@ interface SectorOutcome {
 async function sourceSector(v: { id: VerticalId; name: string }): Promise<SectorOutcome> {
   const terms = SECTOR_TERMS[v.id];
   let windowUsed = 'last 90 days';
-  let run = await runDiscovery(baseQuery(terms, DAYS_90), `populate:${v.id}`);
+  let run = await runBatched(terms, DAYS_90, `populate:${v.id}`);
 
   // Rule: prefer the last 90 days; widen to 12 months only if a sector
   // cannot fill its quota. Widening is recorded, not hidden.
@@ -108,7 +156,7 @@ async function sourceSector(v: { id: VerticalId; name: string }): Promise<Sector
 
   if (matches.length < PER_SECTOR) {
     windowUsed = 'widened to last 12 months (90 days was insufficient)';
-    run = await runDiscovery(baseQuery(terms, DAYS_365), `populate:${v.id}:wide`);
+    run = await runBatched(terms, DAYS_365, `populate:${v.id}:wide`);
     pending = existingCandidates().filter((c) => c.status === 'pending');
     matches = pending.filter((c) => matchesSector({
       companyName: c.companyName, pitch: c.pitch ?? undefined,

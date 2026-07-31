@@ -1,6 +1,6 @@
 import { getDb } from '../client';
 import {
-  classifyOpportunity, isLiveDeal, tierOf, ACCELERATOR_SIGNAL_LABELS,
+  classifyOpportunity, deriveEvidenceConfidence, isLiveDeal, tierOf, ACCELERATOR_SIGNAL_LABELS,
   type DealEvidence, type Opportunity, type OpportunityClass, type SourceTier,
 } from '../../../shared/opportunity';
 import { DISQUALIFYING_RESULTS, type WebsiteEvidenceLevel } from '../../../shared/qualification';
@@ -68,14 +68,14 @@ export function addDealEvidence(
     INSERT INTO deal_evidence (
       company_id, opportunity_type, source_id, source_name, tier, url,
       published_at, retrieved_at, summary, why_current,
-      amount_usd, amount_text, round_type, investors, confidence
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      amount_usd, amount_text, round_type, investors
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     companyId, evidence.opportunityType, evidence.sourceId, evidence.sourceName,
     evidence.tier, evidence.url, evidence.publishedAt, evidence.retrievedAt,
     evidence.summary, evidence.whyCurrent,
     evidence.amountUsd, evidence.amountText, evidence.roundType,
-    JSON.stringify(evidence.investors), evidence.confidence,
+    JSON.stringify(evidence.investors),
   );
   return { added: true, dateBackfilled: false };
 }
@@ -101,7 +101,6 @@ function rowToEvidence(r: Record<string, unknown>): DealEvidence {
     amountText: (r.amount_text as string | null) ?? null,
     roundType: (r.round_type as string | null) ?? null,
     investors: JSON.parse(String(r.investors ?? '[]')) as string[],
-    confidence: Number(r.confidence),
   };
 }
 
@@ -266,7 +265,9 @@ export function reclassifyCompany(companyId: string, opts: { today?: string } = 
     amountText: primary?.amountText ?? null,
     roundType: primary?.roundType ?? null,
     investors: primary?.investors ?? [],
-    evidenceConfidence: primary?.confidence ?? 0,
+    // Derived from the source tier and any recorded conflicts, not from
+    // a per-source number an adapter invented. See shared/opportunity.ts.
+    evidenceConfidence: deriveEvidenceConfidence(primary?.tier, conflicts.length),
     conflicts,
     missingInformation: missing,
     classifiedAt: nowIso(),

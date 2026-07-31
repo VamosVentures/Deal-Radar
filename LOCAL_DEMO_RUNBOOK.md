@@ -481,12 +481,110 @@ the five-per-sector cap are untouched.
 
 ---
 
-## 11. Useful commands
+## 11. Sign-in, HubSpot, and per-run limits
+
+### Sign-in is moving to Microsoft single sign-on
+
+The end state is that **only @vamosventures.com accounts can sign in**, with no
+shared password. The code for that is written, tested, and enforces the domain
+already — what is missing is one Entra app registration.
+
+`AUTH_MODE` defaults to **`auto`**, which means:
+
+| Entra configured? | What happens |
+| --- | --- |
+| No (today) | The shared administrator password works. The sign-in screen says the cutover is coming. |
+| Yes | The password form disappears and stops being accepted. Microsoft SSO is the only way in. |
+
+**The switch is automatic.** Nobody has to remember to also flip a variable
+afterwards — that step is exactly the kind that does not happen, and its failure
+mode is silent: a shared password everyone knows quietly keeps working for
+months after it was supposed to be gone.
+
+Set `AUTH_MODE=local` to opt out of the cutover entirely, or `AUTH_MODE=hybrid`
+to keep both live during testing.
+
+**What an Entra administrator has to do once** (~15 minutes):
+
+1. Register one application in the Vamos Entra tenant.
+2. Add two redirect URIs, exactly as written in `.env.example` — one for
+   sign-in, one for the Outlook mailbox. They are separate because they request
+   different scopes, and a mailbox-consent response must not be redeemable by
+   the sign-in handler.
+3. Grant the delegated sign-in scopes (`openid`, `profile`, `email`). No
+   application-level `Mail.*` permission is needed or wanted.
+4. Return the **client id**, **client secret**, and **tenant GUID**.
+5. Put them in `.env` as `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`,
+   `MICROSOFT_TENANT_ID`, `MICROSOFT_SSO_REDIRECT_URI`.
+
+`MICROSOFT_TENANT_ID` must be the real tenant GUID. `common`, `organizations`,
+and `consumers` are **refused**: they would let any Microsoft account anywhere
+complete the flow, leaving a domain string as the only defense.
+
+Access is gated three ways, in this order: the token must come from the Vamos
+tenant, the directory must report the address as verified, and the address must
+end in `@vamosventures.com`. The domain check is the *last* of the three on
+purpose — on its own it is just text in a token.
+
+An incomplete handover never locks anyone out: any mode falls back to the
+password when Entra cannot actually run.
+
+### HubSpot
+
+HubSpot is **implemented and not connected**. It reports itself that way and
+never simulates: `hubspotService()` throws an honest "not connected" error
+rather than returning fake data, and the status panel only says *Connected*
+after a real verified call to your portal.
+
+To connect, add to `.env` either:
+
+- `HUBSPOT_ACCESS_TOKEN` (private app token — simplest), or
+- `HUBSPOT_CLIENT_ID` + `HUBSPOT_CLIENT_SECRET` + `HUBSPOT_REDIRECT_URI` (OAuth).
+
+Then set the pipeline mapping in **Data Sources & Refresh → HubSpot → Pipeline
+mapping**. Submissions are blocked until every Deal Radar status maps to a real
+HubSpot stage id — an unmapped sync would otherwise land deals in whatever stage
+HubSpot defaulted to.
+
+**Who becomes a contact.** Only a founder the research **verified**, or one a
+reviewer corrected by hand. Two exclusions, enforced on the server so they hold
+for any client:
+
+- **Placeholder rows.** The imported founder list still carries "Unknown
+  founder" for most companies. Syncing one creates a contact literally named
+  that in a CRM the whole team shares and builds outreach from.
+- **Probable candidates.** A candidate is a person the research found and is not
+  willing to assert. Writing one to HubSpot asserts it — to everyone,
+  permanently, in the system of record.
+
+When no founder qualifies, the company and deal still sync and the modal says
+why. Confirm a founder on the Stealth Founder Radar, then re-sync to attach the
+person.
+
+### Per-run limits
+
+A discovery run may query at most **3 sources** and return at most **20
+candidates**. Both are enforced server-side, so the limit holds regardless of
+which client built the request.
+
+The constraint is reviewer attention and cost, not storage. Every extra source
+costs third-party requests and tokens for candidates that are usually discarded
+before a human sees them, and two or three well-chosen sources answer the
+question actually being asked.
+
+Deliberately **not** capped: the per-company **refresh**, which re-checks one
+company you already hold across every source that might mention it. Its cost is
+bounded by the single company and its own API-call budget, and breadth is the
+entire point.
+
+---
+
+## 12. Useful commands
 
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start web + API (the demo command) |
-| `npm test` | Unit suite (746 tests) |
+| `npm test` | Unit suite (759 tests) |
 | `npm run test:e2e` | Playwright suite (isolated DB and ports) |
 | `npm run typecheck` | TypeScript across app, server, and scripts |
 | `npm run lint` | oxlint |

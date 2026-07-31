@@ -148,7 +148,6 @@ export async function corroborateCompany(companyId: string): Promise<Corroborati
           ? `Accelerator batch beginning approximately ${batchDate} (a batch season, not an exact day).`
           : 'A directory listing with no batch date proves participation, not a current raise.',
         amountUsd: null, amountText: null, roundType: null, investors: [],
-        confidence: 0.7,
       };
       const added = addDealEvidence(companyId, evidence);
       attempt.found.push({
@@ -315,7 +314,6 @@ export async function corroborateViaWebsite(companyId: string): Promise<{ url: s
     summary: `Official website ${found.url} responds with real content naming ${company.name}.`,
     whyCurrent: 'Confirms the company is an operating business. Carries no date, so it cannot by itself make an opportunity current.',
     amountUsd: null, amountText: null, roundType: null, investors: [],
-    confidence: 0.6,
   });
   return { url: found.url, added: added.added, detail: found.detail };
 }

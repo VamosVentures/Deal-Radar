@@ -555,7 +555,7 @@ describe('an investor announcement becomes a second source family on an existing
       url: 'https://techcrunch.com/2026/07/21/karoo-health/',
       publishedAt: '2026-07-21', retrievedAt: TODAY,
       summary: 'Karoo Health raises $12M Series A', whyCurrent: 'Funding reported 2026-07-21 by techcrunch.com.',
-      amountUsd: 12_000_000, amountText: '$12M', roundType: 'Series A', investors: [], confidence: 0.65,
+      amountUsd: 12_000_000, amountText: '$12M', roundType: 'Series A', investors: [],
     });
 
     expect(assessCorroboration('news-karoo-health').independentFamilies).toEqual(['press:techcrunch.com']);

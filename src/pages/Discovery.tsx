@@ -3,7 +3,7 @@ import { PageHeader, SourceStateBadge } from '../components/ui';
 import { api } from '../lib/api';
 import { useCompanies } from '../store/companies';
 import type { DiscoveryCandidate, DiscoveryQuery, DiscoveryRun } from '../../shared/discovery';
-import { GEOGRAPHIES, PREFERRED_STATES_P4 } from '../../shared/discovery';
+import { GEOGRAPHIES, MAX_RESULTS_PER_RUN, MAX_SOURCES_PER_RUN, PREFERRED_STATES_P4 } from '../../shared/discovery';
 import { VERTICAL_OPTIONS } from '../data/taxonomy';
 
 // Derived from the taxonomy so a new sector shows up here automatically
@@ -36,7 +36,21 @@ const modeChip: Record<string, string> = {
 export function Discovery() {
   const { refresh: refreshCompanies } = useCompanies();
   const [sources, setSources] = useState<{ id: string; name: string; state: 'live' | 'credentials-required' | 'planned' | 'unavailable'; needs: string }[]>([]);
-  const [picked, setPicked] = useState<string[]>(['yc', 'github', 'funding-news', 'grants', 'research']);
+  /**
+   * Three sources, because three is the per-run cap.
+   *
+   * This defaulted to five, which meant the page opened, immediately
+   * priced a run the server would refuse, and showed a 400 in the
+   * console before anyone touched a control. The list is sliced against
+   * MAX_SOURCES_PER_RUN rather than just shortened so that raising or
+   * lowering the cap can never leave this default illegal again.
+   *
+   * These three are the ones that actually sourced this database: the YC
+   * directory, SEC Form D filings, and funding press.
+   */
+  const [picked, setPicked] = useState<string[]>(
+    ['yc', 'sec', 'funding-news'].slice(0, MAX_SOURCES_PER_RUN),
+  );
   const [vertical, setVertical] = useState('');
   const [subcategory, setSubcategory] = useState('');
   const [terms, setTerms] = useState('');
@@ -45,7 +59,7 @@ export function Discovery() {
   const [stages, setStages] = useState<string[]>([...STAGES]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [maxResults, setMaxResults] = useState(25);
+  const [maxResults, setMaxResults] = useState(MAX_RESULTS_PER_RUN);
   const [maxApiCalls, setMaxApiCalls] = useState(10);
   const [maxModelCalls, setMaxModelCalls] = useState(0);
   const [maxTokens, setMaxTokens] = useState(20000);
@@ -239,7 +253,7 @@ export function Discovery() {
         {/* Budgets */}
         <div className="mt-3 grid gap-3 md:grid-cols-4">
           {[
-            ['Max results', maxResults, setMaxResults, 200],
+            ['Max results', maxResults, setMaxResults, MAX_RESULTS_PER_RUN],
             ['Max API calls', maxApiCalls, setMaxApiCalls, 100],
             ['Max model calls', maxModelCalls, setMaxModelCalls, 50],
             ['Max estimated tokens', maxTokens, setMaxTokens, 500000],
@@ -257,10 +271,23 @@ export function Discovery() {
 
         {/* Sources */}
         <div className="mt-3">
-          <label className={label}>Sources (authorized only)</label>
+          <label className={label}>
+            Sources (authorized only) — {picked.length} of {MAX_SOURCES_PER_RUN}
+          </label>
+          {/*
+            The cap is stated up front rather than enforced by a failed
+            request. Every extra source costs third-party requests and
+            tokens for candidates that are usually discarded, and two or
+            three well-chosen sources answer the question actually asked.
+            The server enforces the same limit for any client.
+          */}
+          <p className="mb-1 text-[11px] text-slate-mid">
+            A run may query at most {MAX_SOURCES_PER_RUN} sources and return at most {MAX_RESULTS_PER_RUN} candidates.
+          </p>
           <div className="grid gap-1 md:grid-cols-2">
             {sources.map((s) => {
-              const disabled = s.state === 'planned' || s.state === 'unavailable';
+              const atCap = picked.length >= MAX_SOURCES_PER_RUN && !picked.includes(s.id);
+              const disabled = s.state === 'planned' || s.state === 'unavailable' || atCap;
               return (
                 <label key={s.id} className={`flex items-start gap-2 rounded-[2px] border border-line px-2 py-1 text-sm ${disabled ? 'opacity-60' : ''}`}>
                   <input
@@ -274,6 +301,11 @@ export function Discovery() {
                     <span className="font-medium text-ink">{s.name}</span>{' '}
                     <SourceStateBadge state={s.state} />
                     {stateNote(s.state) && <span className="ml-1 text-[10px] text-slate-mid">— {stateNote(s.state)}</span>}
+                    {atCap && (
+                      <span className="ml-1 text-[10px] text-slate-mid">
+                        — deselect another source to pick this one
+                      </span>
+                    )}
                     <span className="block text-[11px] text-slate-mid">{s.needs}</span>
                   </span>
                 </label>

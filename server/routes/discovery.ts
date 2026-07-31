@@ -6,7 +6,7 @@ import {
   importCandidates, runDiscovery,
 } from '../services/discovery';
 import { getSourceMeta } from '../services/sources';
-import { discoveryQuerySchema } from '../../shared/discovery';
+import { discoveryRequestSchema } from '../../shared/discovery';
 
 export const discoveryRouter = Router();
 
@@ -15,7 +15,9 @@ discoveryRouter.get('/discovery/sources', wrap(async (_req, res) => {
 }));
 
 discoveryRouter.post('/discovery/estimate', wrap(async (req, res) => {
-  const q = discoveryQuerySchema.parse(req.body);
+  // The request schema, so an estimate can never be produced for a run
+  // the server would refuse — a quote for something you cannot buy.
+  const q = discoveryRequestSchema.parse(req.body);
   res.json(estimateCost(q));
 }));
 

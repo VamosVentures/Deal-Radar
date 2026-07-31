@@ -46,8 +46,7 @@ function secEvidence(over: Partial<DealEvidence> = {}): DealEvidence {
     url: 'https://www.sec.gov/Archives/edgar/data/1699390/x-index.htm',
     publishedAt: daysAgo(30), retrievedAt: TODAY,
     summary: 'Form D exempt-offering filing.', whyCurrent: 'Filed 30 days ago.',
-    amountUsd: 5_000_000, amountText: '$5,000,000 offering', roundType: null, investors: [],
-    confidence: 0.8, ...over,
+    amountUsd: 5_000_000, amountText: '$5,000,000 offering', roundType: null, investors: [], ...over,
   };
 }
 
@@ -57,7 +56,7 @@ function websiteEvidence(): DealEvidence {
     url: 'https://acmerobotics.com', publishedAt: null, retrievedAt: TODAY,
     summary: 'Official website responds with real content naming the company.',
     whyCurrent: 'Confirms an operating business; carries no date.',
-    amountUsd: null, amountText: null, roundType: null, investors: [], confidence: 0.6,
+    amountUsd: null, amountText: null, roundType: null, investors: [],
   };
 }
 

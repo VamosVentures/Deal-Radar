@@ -710,6 +710,34 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_field_corrections_company ON field_corrections (company_id, field, at);
     `,
   },
+  {
+    version: 12,
+    name: 'drop-per-source-deal-evidence-confidence',
+    sql: `
+      -- The per-source confidence on a deal-evidence row was assigned by
+      -- each adapter from a small set of hardcoded constants — 0.5, 0.55,
+      -- 0.6, 0.65, 0.7 — with no stated basis for any of them and no way
+      -- to check whether one was right.
+      --
+      -- A number nobody can falsify is worse than no number. It reads as
+      -- a measurement, it sorts and filters as a measurement, and it is a
+      -- guess wearing a decimal point. Keeping it "just in case" would
+      -- have meant every future reader assuming somebody had measured
+      -- something.
+      --
+      -- What actually distinguishes these rows is already on them and IS
+      -- checkable: tier (1 = filing or primary document, 2 = independent
+      -- press or a participating investor, 3 = the company's own site),
+      -- published_at, and whether other rows contradict it. Opportunity
+      -- confidence is now derived from those — see
+      -- deriveEvidenceConfidence() in shared/opportunity.ts.
+      --
+      -- company_opportunity.evidence_confidence is deliberately KEPT: it
+      -- is still reported, it is simply computed from facts now instead
+      -- of copied from an invented per-source figure.
+      ALTER TABLE deal_evidence DROP COLUMN confidence;
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

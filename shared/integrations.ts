@@ -93,6 +93,42 @@ export const hubspotContactRecordSchema = z.object({
 });
 export type HubSpotContactRecord = z.infer<typeof hubspotContactRecordSchema>;
 
+/**
+ * Whether a person may be written to HubSpot as a contact.
+ *
+ * Lives here, in shared, rather than in the client's CRM helpers,
+ * because BOTH tiers have to agree and the server has to be the one that
+ * actually enforces it — a rule only the UI applies is a rule anyone
+ * with the API can skip.
+ *
+ * Two exclusions, for the same underlying reason:
+ *
+ *   - Placeholder rows. The imported founders table still carries
+ *     "Unknown founder" for most companies. Syncing one creates a
+ *     contact literally named that in a CRM the whole team shares and
+ *     builds outreach from.
+ *
+ *   - Single-token names. They cannot be matched against an existing
+ *     record, so they create a duplicate person instead of finding the
+ *     real one.
+ *
+ * Probable founder CANDIDATES are excluded too, but upstream of this
+ * function: a candidate is a person the research found and is not
+ * willing to assert, and writing it to a shared system of record
+ * asserts it permanently. Only a verified founder reaches here.
+ */
+export function isSyncableContactName(name: string): boolean {
+  const trimmed = (name ?? '').trim();
+  if (trimmed.length < 3) return false;
+  if (/\bunknown\b/i.test(trimmed)) return false;
+  return trimmed.split(/\s+/).filter(Boolean).length >= 2;
+}
+
+/** "Unknown" is what the importer wrote when a source stated no role. An empty title is honest; the word is not. */
+export function cleanJobTitle(role: string): string {
+  return /^unknown$/i.test((role ?? '').trim()) ? '' : role;
+}
+
 export const hubspotDealRecordSchema = z.object({
   companyName: z.string().min(1),
   fitScore: z.number().min(1).max(10),

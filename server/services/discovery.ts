@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import {
-  discoveryCandidateSchema, discoveryQuerySchema, discoveryRunSchema,
+  discoveryCandidateSchema, discoveryRequestSchema, discoveryRunSchema,
   RESTRICTED_SOURCES,
   type DiscoveryCandidate, type DiscoveryQuery, type DiscoveryRun,
 } from '../../shared/discovery';
@@ -163,7 +163,17 @@ function releaseRunLock(): void {
 
 export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType: DiscoveryRun['runType'] = 'manual'): Promise<DiscoveryRun> {
   assertNoRestrictedSources(rawReq);
-  const q = discoveryQuerySchema.parse(rawReq);
+  /**
+   * The USER-facing schema, not the internal one.
+   *
+   * Every wide-net run funnels through here — the API route, a scheduled
+   * job, and the operator scripts alike — so this is the single place
+   * the per-run ceilings can be enforced for all of them. A per-company
+   * refresh does not pass through this function (it drives runSource
+   * directly, one source at a time, under its own budget), which is why
+   * breadth there is unaffected.
+   */
+  const q = discoveryRequestSchema.parse(rawReq);
 
   if (!acquireRunLock(initiatedBy)) {
     throw Object.assign(

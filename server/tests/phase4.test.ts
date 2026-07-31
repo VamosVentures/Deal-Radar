@@ -24,8 +24,10 @@ beforeEach(() => {
 afterAll(() => uninstallFixtureSources());
 
 const BASE_QUERY = {
-  sources: ['yc', 'funding-news', 'accelerators', 'grants'],
-  maxResults: 25,
+  // Three sources and twenty results are the per-run ceilings — see
+  // MAX_SOURCES_PER_RUN / MAX_RESULTS_PER_RUN in shared/discovery.ts.
+  sources: ['yc', 'funding-news', 'accelerators'],
+  maxResults: 20,
   maxApiCalls: 10,
 };
 
@@ -100,12 +102,81 @@ describe('discovery pipeline (fixture sources injected — no network in tests)'
     expect(run.status).not.toBe('Cancelled');
   });
 
+  /**
+   * Per-run cost ceilings.
+   *
+   * Enforced on the REQUEST, not on the internal query shape, because a
+   * per-company refresh legitimately sweeps every source that might
+   * mention one company (services/companyRefresh.ts). Capping both would
+   * have degraded that for no saving — the expensive operation is the
+   * wide net, and this is where the wide net is cast.
+   */
+  it('refuses a run asking for more than the source cap', async () => {
+    const app = createApp();
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/run')
+      .send({ ...BASE_QUERY, sources: ['yc', 'funding-news', 'accelerators', 'grants'] });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toMatch(/at most 3 sources/i);
+  });
+
+  it('refuses a run asking for more than the result cap', async () => {
+    const app = createApp();
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/run').send({ ...BASE_QUERY, maxResults: 200 });
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body)).toMatch(/at most 20 candidates/i);
+  });
+
+  it('defaults an unspecified result count to the cap rather than a larger legacy value', async () => {
+    const { discoveryRequestSchema, MAX_RESULTS_PER_RUN } = await import('../../shared/discovery');
+    const parsed = discoveryRequestSchema.parse({ sources: ['yc'] });
+    expect(parsed.maxResults).toBe(MAX_RESULTS_PER_RUN);
+  });
+
+  it('accepts a run exactly at both caps', async () => {
+    const app = createApp();
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/run')
+      .send({ ...BASE_QUERY, sources: ['yc', 'funding-news', 'accelerators'], maxResults: 20 });
+    expect(res.status).toBe(200);
+  });
+
+  /**
+   * The estimate must be refused on the same terms as the run. A quote
+   * for a run the server would reject is a quote for something you
+   * cannot buy.
+   */
+  it('refuses to estimate a run that exceeds the caps', async () => {
+    const app = createApp();
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/estimate')
+      .send({ ...BASE_QUERY, sources: ['yc', 'funding-news', 'accelerators', 'grants'] });
+    expect(res.status).toBe(400);
+  });
+
+  /**
+   * A per-company refresh is deliberately NOT capped: its cost is bounded
+   * by the single company and its own API-call budget, and breadth is the
+   * whole point of re-checking a record we already hold.
+   */
+  it('leaves the per-company refresh free to sweep every source', async () => {
+    const { discoveryQuerySchema } = await import('../../shared/discovery');
+    const wide = discoveryQuerySchema.parse({
+      sources: ['github', 'sec', 'grants', 'yc', 'funding-news', 'research', 'producthunt'],
+      maxResults: 10,
+    });
+    expect(wide.sources).toHaveLength(7);
+  });
+
   it('partial source failure preserves other sources (HTTP)', async () => {
     const app = createApp();
     const agent = await adminAgent(app);
     const res = await agent.post('/api/discovery/run').send({ ...BASE_QUERY });
     expect(res.status).toBe(200);
-    expect(res.body.sourceResults.length).toBe(4);
+    // One result per requested source — BASE_QUERY asks for the
+    // maximum a run may query (MAX_SOURCES_PER_RUN).
+    expect(res.body.sourceResults.length).toBe(BASE_QUERY.sources.length);
     expect(res.body.errors).toBeInstanceOf(Array);
   });
 });

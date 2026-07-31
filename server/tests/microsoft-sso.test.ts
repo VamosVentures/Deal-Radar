@@ -348,15 +348,66 @@ describe('Microsoft configuration gating', () => {
     }
   });
 
-  it('defaults to local mode when AUTH_MODE is unset', async () => {
+  /**
+   * The self-completing cutover.
+   *
+   * The intended end state is "only @vamosventures.com accounts can sign
+   * in", and the only thing between here and there is an Entra app
+   * registration. Under the `auto` default the password stops being
+   * offered the moment that registration lands — nobody has to remember
+   * to also flip AUTH_MODE afterwards.
+   *
+   * That "remember to flip it" step is exactly the kind of thing that
+   * does not happen, and its failure mode is silent: a shared password
+   * everyone knows quietly keeps working for months after it was
+   * supposed to be gone.
+   */
+  it('switches to Microsoft-only on its own once Entra is configured (AUTH_MODE unset)', async () => {
     configureMicrosoft();
     delete process.env.AUTH_MODE;
     vi.resetModules();
-    const { effectiveAuthMode, microsoftLoginAvailable, microsoftSsoPending } = await import('../env');
-    expect(effectiveAuthMode()).toBe('local');
-    expect(microsoftLoginAvailable()).toBe(false);
-    // Nothing was requested, so nothing is "pending".
+    const { effectiveAuthMode, localLoginAvailable, microsoftLoginAvailable, microsoftSsoPending, awaitingSsoCutover } =
+      await import('../env');
+    expect(effectiveAuthMode()).toBe('microsoft');
+    expect(microsoftLoginAvailable()).toBe(true);
+    // The shared password is no longer a way in.
+    expect(localLoginAvailable()).toBe(false);
+    // Nothing is pending or awaiting — the cutover already happened.
     expect(microsoftSsoPending()).toBe(false);
+    expect(awaitingSsoCutover()).toBe(false);
+  });
+
+  /**
+   * The state this deployment is actually in today: no Entra credentials
+   * yet, so the password still works. It must keep working — locking the
+   * team out of their own tool while waiting on an Azure registration
+   * would be a far worse outcome than a password that lives a week
+   * longer.
+   */
+  it('keeps the password working while Entra is unconfigured, and says so', async () => {
+    configureMicrosoft();
+    delete process.env.AUTH_MODE;
+    delete process.env.MICROSOFT_CLIENT_ID;
+    vi.resetModules();
+    const { effectiveAuthMode, localLoginAvailable, microsoftLoginAvailable, microsoftSsoPending, awaitingSsoCutover } =
+      await import('../env');
+    expect(effectiveAuthMode()).toBe('local');
+    expect(localLoginAvailable()).toBe(true);
+    expect(microsoftLoginAvailable()).toBe(false);
+    // Not "pending" — nobody explicitly asked for Microsoft. But the
+    // deployment IS awaiting the cutover, and the UI says that rather
+    // than implying the password is the intended end state.
+    expect(microsoftSsoPending()).toBe(false);
+    expect(awaitingSsoCutover()).toBe(true);
+  });
+
+  it('an explicit AUTH_MODE=local opts out of the automatic cutover entirely', async () => {
+    configureMicrosoft({ AUTH_MODE: 'local' });
+    vi.resetModules();
+    const { effectiveAuthMode, localLoginAvailable, awaitingSsoCutover } = await import('../env');
+    expect(effectiveAuthMode()).toBe('local');
+    expect(localLoginAvailable()).toBe(true);
+    expect(awaitingSsoCutover()).toBe(false);
   });
 });
 

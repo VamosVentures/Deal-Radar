@@ -164,9 +164,43 @@ export const dealEvidenceSchema = z.object({
   amountText: z.string().nullable().default(null),
   roundType: z.string().nullable().default(null),
   investors: z.array(z.string()).default([]),
-  confidence: z.number().min(0).max(1),
+  /**
+   * There is deliberately NO per-source confidence field.
+   *
+   * It used to exist and was assigned by each adapter from a small set
+   * of hardcoded constants — 0.5, 0.55, 0.6, 0.65, 0.7 — with no stated
+   * basis for any of them and no way to check whether one was right. A
+   * number nobody can falsify is worse than no number: it reads as a
+   * measurement, it sorts and filters as a measurement, and it is a
+   * guess wearing a decimal point.
+   *
+   * What actually distinguishes these rows is already here and IS
+   * checkable: `tier` (1 = filing or primary document, 2 = independent
+   * press or a participating investor, 3 = the company's own site),
+   * `publishedAt`, and whether other rows contradict it. Opportunity
+   * confidence is derived from those — see deriveEvidenceConfidence().
+   */
 });
 export type DealEvidence = z.infer<typeof dealEvidenceSchema>;
+
+/**
+ * Opportunity-level confidence, derived from facts we hold rather than
+ * from a number an adapter made up.
+ *
+ * The tier IS the quality signal: a Form D is a filing, a funding
+ * article is a third party who carries some cost for being wrong, and
+ * the company's own website is the company talking about itself. A
+ * recorded conflict lowers it, because sources disagreeing is a real
+ * property of the evidence and not something to average away.
+ */
+export function deriveEvidenceConfidence(
+  tier: 1 | 2 | 3 | undefined,
+  conflictCount: number,
+): number {
+  const base = tier === 1 ? 0.9 : tier === 2 ? 0.7 : tier === 3 ? 0.4 : 0;
+  const penalty = Math.min(0.3, conflictCount * 0.15);
+  return Number(Math.max(0, base - penalty).toFixed(2));
+}
 
 export const opportunitySchema = z.object({
   companyId: z.string().min(1),

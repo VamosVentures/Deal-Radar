@@ -7,8 +7,12 @@ import {
   hubspotService,
 } from '../services/hubspot';
 import { MockHubSpot } from './mocks/hubspot';
+import type { Founder } from '../../src/types';
 import {
+  cleanJobTitle,
   hubspotContactRecordSchema,
+  RADAR_HUBSPOT_STAGES,
+  isSyncableContactName,
   normalizeCompanyName,
   normalizeDomain,
   type HubSpotCompanyRecord,
@@ -261,5 +265,119 @@ describe('fixture behavior (tests only)', () => {
     const dealObj = store.raw.mockHubSpot.find((o) => o.id === res.dealId)!;
     expect(dealObj.associations).toContain(res.companyId);
     expect(dealObj.associations).toContain(res.contactIds[0]);
+  });
+});
+
+// ── What may become a CRM contact ─────────────────────────────────
+
+describe('founder contacts written to HubSpot', () => {
+  const founder = (over: Partial<Founder> = {}): Founder => ({
+    name: 'Jane Okonkwo', role: 'Co-Founder & CEO', background: 'Built X.', ...over,
+  });
+
+  /**
+   * The imported `founders` table still carries "Unknown founder" for
+   * most companies. Syncing one creates a contact literally named that
+   * in a CRM the whole team shares and outreach is built from — a
+   * mistake that is trivial to make and tedious to undo.
+   */
+  it('refuses to sync a placeholder founder row', () => {
+    expect(isSyncableContactName(founder({ name: 'Unknown founder' }).name)).toBe(false);
+    expect(isSyncableContactName('unknown')).toBe(false);
+    expect(isSyncableContactName('')).toBe(false);
+  });
+
+  /**
+   * A single token cannot be matched against an existing CRM record, so
+   * it creates a duplicate person rather than finding the real one.
+   */
+  it('refuses a name with no surname', () => {
+    expect(isSyncableContactName('Jane')).toBe(false);
+  });
+
+  it('accepts a real, fully-named founder', () => {
+    expect(isSyncableContactName(founder().name)).toBe(true);
+    expect(isSyncableContactName('Oriana Papin-Zoghbi')).toBe(true);
+  });
+
+  /**
+   * "Unknown" is what the importer wrote when a source stated no role.
+   * An empty job title is honest; the literal word in a CRM field is not.
+   */
+  it('does not write the literal word "Unknown" as a job title', () => {
+    expect(cleanJobTitle('Unknown')).toBe('');
+    expect(cleanJobTitle('  unknown ')).toBe('');
+    expect(cleanJobTitle('Co-Founder & CEO')).toBe('Co-Founder & CEO');
+  });
+
+  /**
+   * Enforced on the SERVER, not only in the modal that usually builds
+   * the payload. A rule the UI applies is a rule anyone with the API can
+   * skip — including our own retry path, which replays a payload stored
+   * before this check existed.
+   */
+  it('drops a placeholder contact at the sync route while still syncing the company', async () => {
+    const { createApp } = await import('../app');
+    const { adminAgent } = await import('./testAuth');
+    const { __setHubSpotServiceForTests } = await import('../services/hubspot');
+    const mock = new MockHubSpot();
+    __setHubSpotServiceForTests(mock);
+
+    const app = createApp();
+    const agent = await adminAgent(app);
+    // Submissions are blocked without a stage mapping. That guard is
+    // covered by mapping.test.ts; here it is just a precondition, so the
+    // mapping is seeded directly rather than driven through the portal.
+    const { setConfig } = await import('../db/repos/operations');
+    setConfig('hubspot-pipeline-mapping', {
+      pipelineId: 'p-1',
+      pipelineLabel: 'Test pipeline',
+      stages: Object.fromEntries(RADAR_HUBSPOT_STAGES.map((st) => [st, 's-1'])),
+    });
+
+    const res = await agent.post('/api/hubspot/sync-company').send({
+      company: {
+        dealRadarId: 'c-guard-1', name: 'Guard Co', domain: 'guard.example.com',
+        website: 'https://guard.example.com', vertical: 'Health & Wellness', subcategory: 'Care',
+        stage: 'Seed', city: 'Austin', state: 'TX', description: 'A company.',
+        accelerator: null, fundingRaised: null,
+        dateFirstSurfaced: '2026-07-01', lastRefreshed: '2026-07-30',
+        primarySource: 'company-site', policyException: '', dealRadarUrl: 'https://radar.local/c-guard-1',
+      },
+      contacts: [
+        {
+          firstName: 'Unknown', lastName: 'founder', email: null, jobTitle: '', linkedinUrl: null,
+          companyName: 'Guard Co', infoSource: 'import', verificationStatus: 'Unverified',
+          relationshipOwner: null, lastOutreachDate: null, demographics: [],
+        },
+        {
+          firstName: 'Jane', lastName: 'Okonkwo', email: null, jobTitle: 'Co-Founder & CEO', linkedinUrl: null,
+          companyName: 'Guard Co', infoSource: 'company-site', verificationStatus: 'Unverified',
+          relationshipOwner: null, lastOutreachDate: null, demographics: [],
+        },
+      ],
+      deal: {
+        companyName: 'Guard Co', fitScore: 7, recommendation: 'Track', vertical: 'Health & Wellness',
+        stage: 'Seed', scoreBreakdown: [], rationale: 'x', risks: '', nextAction: 'y',
+        sourceEvidence: [], reviewer: null,
+        evidenceQualityScore: 5, policyException: '', sourcingStatus: 'Approved to Track',
+        dateSurfaced: '2026-07-01', relationshipOwner: '', dealRadarId: 'c-guard-1',
+        dealRadarUrl: 'https://radar.local/c-guard-1',
+      },
+      radarStage: 'Approved to Track',
+      duplicateResolution: 'create-new',
+      existingRecordId: null,
+    });
+
+    expect(res.status).toBe(200);
+    const contacts = store.raw.mockHubSpot.filter((o) => o.type === 'contact');
+    const names = contacts.map((o) => `${o.properties.firstname} ${o.properties.lastname}`);
+    // The real person is created; the placeholder never reaches the CRM.
+    expect(names).toContain('Jane Okonkwo');
+    expect(names.some((n) => /unknown/i.test(n))).toBe(false);
+    // The company still synced — only the unusable contact was withheld.
+    expect(store.raw.mockHubSpot.some((o) => o.type === 'company')).toBe(true);
+
+    __setHubSpotServiceForTests(null);
   });
 });

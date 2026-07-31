@@ -227,7 +227,7 @@ describe('missing credentials', () => {
 describe('no fallback to fake data — ever', () => {
   it('a fully failed run discovers nothing and stores no candidates', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
-    const run = await runDiscovery({ sources: ['github', 'sec', 'grants', 'funding-news'], maxResults: 25, maxApiCalls: 10 }, 'tester');
+    const run = await runDiscovery({ sources: ['github', 'sec', 'grants'], maxResults: 20, maxApiCalls: 10 }, 'tester');
     expect(run.status).toBe('Failed');
     expect(run.discovered).toBe(0);
     expect(run.errors.length).toBeGreaterThan(0);

@@ -283,7 +283,6 @@ function persistInvestorEvent(
       investors: event.investors,
       // A disputed figure is not a fact, so a conflicted event carries
       // less confidence than a clean one.
-      confidence: event.conflicts.length > 0 ? 0.55 : 0.7,
     });
     if (added.added) evidenceRows += 1;
   }
@@ -303,7 +302,6 @@ function persistInvestorEvent(
       summary: website.detail,
       whyCurrent: 'Confirms the company is an operating business. Undated, so it cannot establish currency, and it cannot independently verify the financing amount.',
       amountUsd: null, amountText: null, roundType: null, investors: [],
-      confidence: 0.6,
     });
   }
 

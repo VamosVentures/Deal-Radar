@@ -60,7 +60,7 @@ export function opportunityTypeForSource(sourceId: string): OpportunityType {
 export interface DealEvidenceSource {
   sourceId: string;
   evidence: {
-    claim: string; source: string; url: string; dateAccessed: string; confidence: number;
+    claim: string; source: string; url: string; dateAccessed: string;
     /** The source's own publication date, when it gave one. */
     publishedAt?: string | null;
   }[];
@@ -108,7 +108,6 @@ export function candidateToDealEvidence(c: DealEvidenceSource): DealEvidence[] {
       // Tier 3 may not assert who invested, for the same reason it may
       // not assert an amount.
       investors: tier <= 2 ? (c.investors ?? []) : [],
-      confidence: e.confidence,
     };
   });
 }

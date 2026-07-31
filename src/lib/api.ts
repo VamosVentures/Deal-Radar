@@ -36,6 +36,12 @@ export type StatusMap = Record<'hubspot' | 'outlook' | 'ai' | 'refresh', { statu
 
 /** Which identity providers may open a session — see server/env.ts AUTH_MODE. */
 export type AuthMode = 'local' | 'microsoft' | 'hybrid';
+/**
+ * What AUTH_MODE was set to. Includes 'auto' (the default), which
+ * resolves to microsoft-only once Entra is configured and local until
+ * then — so `requestedMode` and `mode` legitimately differ.
+ */
+export type RequestedAuthMode = AuthMode | 'auto';
 
 export interface AuthStatus {
   /** Some provider is configured, so signing in is possible at all. */
@@ -44,12 +50,17 @@ export interface AuthStatus {
   /** The mode actually in force (falls back to 'local' if Microsoft is incomplete). */
   mode: AuthMode;
   /** What AUTH_MODE asked for — differs from `mode` while Entra config is pending. */
-  requestedMode: AuthMode;
+  requestedMode: RequestedAuthMode;
   localLoginAvailable: boolean;
   microsoftLoginAvailable: boolean;
   /** Microsoft was requested but its variables are incomplete. */
   microsoftPending: boolean;
   microsoftPendingMessage: string | null;
+  /** True while the shared password is still the way in, pending the Entra registration. */
+  awaitingSsoCutover: boolean;
+  awaitingSsoCutoverMessage: string | null;
+  /** The domain that will be allowed to sign in once SSO is live. */
+  allowedEmailDomain: string | null;
   /** Who is signed in — for attribution. Never contains a token. */
   identity: { label: string; source: 'local-admin' | 'microsoft-sso'; email: string | null } | null;
 }

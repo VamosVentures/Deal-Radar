@@ -36,7 +36,6 @@ function evidence(over: Partial<DealEvidence> = {}): DealEvidence {
     amountText: '$5,000,000 offering',
     roundType: null,
     investors: [],
-    confidence: 0.8,
     ...over,
   };
 }

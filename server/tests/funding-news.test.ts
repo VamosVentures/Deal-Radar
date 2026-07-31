@@ -65,9 +65,8 @@ describe('publication dates survive the whole pipeline', () => {
     const evidence = leadToEvidence({
       sourceId: 'funding-news', sourceName: 'techcrunch.com (public RSS)', sourceType: 'rss',
       sourceUrl: 'https://techcrunch.com/a', evidenceText: 'Headline',
-      publishedAt: '2026-07-23T15:00:00.000Z', discoveredAt: '2026-07-29T09:00:00.000Z',
-      confidence: 0.6, founderNames: [], founderProfiles: [], tractionSignals: [],
-      investors: [], corroboratingUrls: [], conflictNotes: [], nameAmbiguous: false,
+      publishedAt: '2026-07-23T15:00:00.000Z', discoveredAt: '2026-07-29T09:00:00.000Z', founderNames: [], founderProfiles: [], tractionSignals: [],
+      investors: [], corroboratingUrls: [], conflictNotes: [], nameAmbiguous: false, confidence: 0.6,
     });
     // The bug: dateAccessed is the RUN time and must never stand in for
     // the publication date.
@@ -80,7 +79,7 @@ describe('publication dates survive the whole pipeline', () => {
       sourceId: 'funding-news',
       evidence: [{
         claim: 'Acme Robotics raises $5M Seed', source: 'techcrunch.com (public RSS)',
-        url: 'https://techcrunch.com/a', dateAccessed: TODAY, publishedAt: '2026-07-23', confidence: 0.6,
+        url: 'https://techcrunch.com/a', dateAccessed: TODAY, publishedAt: '2026-07-23',
       }],
       publicFunding: '$5M', mostRecentRound: 'Seed', investors: ['Index Ventures'],
       discoveredAt: `${TODAY}T00:00:00.000Z`,
@@ -100,7 +99,7 @@ describe('publication dates survive the whole pipeline', () => {
       sourceId: 'funding-news',
       evidence: [{
         claim: 'Undated mention', source: 'x', url: 'https://x.example.com/a',
-        dateAccessed: TODAY, publishedAt: null, confidence: 0.5,
+        dateAccessed: TODAY, publishedAt: null,
       }],
       discoveredAt: `${TODAY}T00:00:00.000Z`,
     });

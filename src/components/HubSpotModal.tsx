@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import type { Company } from '../types';
 import { scoreCompany } from '../lib/scoring';
-import { companyToHubSpot, dealToHubSpot, founderToHubSpot, recommendationFor } from '../lib/crm';
+import { companyToHubSpot, dealToHubSpot, founderToHubSpot, isSyncableFounder, recommendationFor } from '../lib/crm';
 import { api, ApiError } from '../lib/api';
 import { useIntegrations } from '../store/integrations';
+import { useCompanies } from '../store/companies';
 import { ExceptionBadge, ScoreGauge } from './ui';
 import { btnGhost, btnPrimary, ErrorNote, Field, Modal } from './Modal';
 import {
@@ -25,6 +26,7 @@ type Step = 'review' | 'duplicates' | 'done';
  */
 export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: () => void; onSynced?: () => void }) {
   const { status } = useIntegrations();
+  const { enrichment: enrichmentMap } = useCompanies();
   const fit = useMemo(() => scoreCompany(c), [c]);
 
   const [company, setCompany] = useState(() => companyToHubSpot(c));
@@ -32,7 +34,32 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
   const [nextAction, setNextAction] = useState('Review evidence and approve outreach');
   const [notes, setNotes] = useState('');
   const [radarStage, setRadarStage] = useState<RadarHubSpotStage>('Approved to Track');
-  const [contacts, setContacts] = useState(() => c.founders.map((f) => founderToHubSpot(c, f, 'DR')));
+  /**
+   * Contacts come from the ENRICHED founder when research verified one,
+   * and otherwise from any imported founder row that is a real person.
+   *
+   * The imported `founders` table still carries "Unknown founder" for
+   * most companies — syncing that would create a contact by that name in
+   * a CRM the whole team shares. A probable candidate is excluded too:
+   * it is a person we found and are not willing to assert, and writing
+   * it to HubSpot asserts it permanently. See isSyncableFounder.
+   */
+  const enrichment = enrichmentMap[c.id];
+  const [contacts, setContacts] = useState(() => {
+    const verified = enrichment?.founder.value;
+    if (verified) {
+      return [founderToHubSpot(
+        c,
+        {
+          name: verified.name,
+          role: verified.title ?? '',
+          background: enrichment.founder.summary,
+        },
+        'DR',
+      )];
+    }
+    return c.founders.filter(isSyncableFounder).map((f) => founderToHubSpot(c, f, 'DR'));
+  });
 
   const [step, setStep] = useState<Step>('review');
   const [busy, setBusy] = useState(false);
@@ -165,6 +192,23 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
 
           <section>
             <h3 className="mb-1.5 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Founder contacts ({contacts.length})</h3>
+            {/*
+              An empty contacts list is a deliberate outcome, not a bug,
+              so it explains itself. The company and deal still sync —
+              only the person is withheld, because a placeholder or an
+              unconfirmed candidate written to HubSpot is asserted to the
+              whole team permanently.
+            */}
+            {contacts.length === 0 && (
+              <p className="mb-2 border border-line bg-paper px-3 py-2 text-xs leading-relaxed text-slate-mid">
+                <span className="font-semibold text-ink">No founder contact will be created.</span>{' '}
+                {enrichment
+                  ? enrichment.founder.summary
+                  : 'This company has not been through founder research yet.'}{' '}
+                The company and deal still sync. Confirm a founder on the Stealth Founder Radar, or add the
+                contact by hand in HubSpot, and re-sync to attach the person.
+              </p>
+            )}
             <div className="space-y-2">
               {contacts.map((ct, i) => (
                 <div key={i} className="grid gap-2 rounded-[2px] border border-line bg-paper p-2.5 sm:grid-cols-3">

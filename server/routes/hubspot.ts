@@ -13,6 +13,7 @@ import {
 import {
   companySyncRequestSchema,
   hubspotPipelineMappingSchema,
+  isSyncableContactName,
   RADAR_HUBSPOT_STAGES,
   type CompanySyncRequest,
 } from '../../shared/integrations';
@@ -155,6 +156,28 @@ hubspotRouter.post('/hubspot/company', wrap(async (req, res) => {
  */
 async function performSync(parsed: CompanySyncRequest) {
   const svc = hubspotService();
+
+  /**
+   * Placeholder people are dropped here, on the server, not only in the
+   * modal that usually builds this payload.
+   *
+   * The imported founders table still carries "Unknown founder" for most
+   * companies, and a rule only the UI applies is a rule anyone with the
+   * API can skip — including our own retry path, which replays a stored
+   * payload that may predate this check. The company and deal still
+   * sync; only the unusable contact is withheld.
+   */
+  const contacts = parsed.contacts.filter((ct) =>
+    isSyncableContactName(`${ct.firstName} ${ct.lastName}`.trim()));
+  if (contacts.length !== parsed.contacts.length) {
+    audit({
+      provider: 'hubspot', mode: 'live', action: 'contact-withheld',
+      subject: parsed.company.dealRadarId, outcome: 'ok',
+      detail: `${parsed.contacts.length - contacts.length} contact(s) withheld from the sync: `
+        + 'a placeholder or single-token name cannot be matched in HubSpot and would create a junk record.',
+    });
+  }
+  parsed = { ...parsed, contacts };
   const { pipelineId, stageId } = resolveStage(parsed.radarStage);
 
   // Idempotency tier 1: our own persisted link.

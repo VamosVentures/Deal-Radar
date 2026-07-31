@@ -32,8 +32,7 @@ function pressEvidence(over: Partial<DealEvidence> = {}): DealEvidence {
     publishedAt: '2026-07-20', retrievedAt: TODAY,
     summary: 'Natural raises $30M to reinvent payments for AI agents.',
     whyCurrent: 'Published 9 days ago.',
-    amountUsd: 30_000_000, amountText: '$30M', roundType: null, investors: [],
-    confidence: 0.65, ...over,
+    amountUsd: 30_000_000, amountText: '$30M', roundType: null, investors: [], ...over,
   };
 }
 
@@ -184,7 +183,7 @@ describe('manual website confirmation', () => {
       opportunityType: 'none', sourceId: 'websites', sourceName: 'Official company website (human-confirmed)',
       tier: 3, url: 'https://www.natural.com', publishedAt: null, retrievedAt: TODAY,
       summary: 'Human-confirmed official website.', whyCurrent: 'Operating business; undated.',
-      amountUsd: null, amountText: null, roundType: null, investors: [], confidence: 0.6,
+      amountUsd: null, amountText: null, roundType: null, investors: [],
     });
     await qualifyIssuer('c1', {
       today: TODAY,
@@ -225,7 +224,7 @@ describe('a website that cannot be verified', () => {
       opportunityType: 'none', sourceId: 'websites', sourceName: 'Official company website (human-confirmed)',
       tier: 3, url: 'https://infinity.inc', publishedAt: null, retrievedAt: TODAY,
       summary: 'Human-confirmed official website.', whyCurrent: 'Operating business; undated.',
-      amountUsd: null, amountText: null, roundType: null, investors: [], confidence: 0.6,
+      amountUsd: null, amountText: null, roundType: null, investors: [],
     });
 
     const q = await qualifyIssuer('c1', {

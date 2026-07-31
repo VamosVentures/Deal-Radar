@@ -32,6 +32,19 @@ export const VERTICAL_ID_VALUES_WITH_UNKNOWN = [...VERTICAL_ID_VALUES, 'Unknown'
 export const GEOGRAPHIES = ['Preferred states', 'United States', 'LATAM'] as const;
 export const PREFERRED_STATES_P4 = ['NM', 'NY', 'NJ', 'OR', 'CA', 'TX', 'IL'] as const;
 
+/**
+ * Per-run ceilings for USER-INITIATED discovery, shared by the request
+ * schema and the UI controls so the two cannot disagree.
+ *
+ * Both are deliberately low. A discovery run is a funnel into a HUMAN
+ * review queue, and the constraint on that queue is reviewer attention,
+ * not how many rows a database can hold. Returning two hundred
+ * candidates does not surface more good companies; it buries the good
+ * ones and spends tokens and third-party requests doing it.
+ */
+export const MAX_RESULTS_PER_RUN = 20;
+export const MAX_SOURCES_PER_RUN = 3;
+
 export const discoveryQuerySchema = z.object({
   vertical: z.enum(VERTICAL_ID_VALUES).nullable().default(null),
   subcategory: z.string().nullable().default(null),
@@ -43,7 +56,7 @@ export const discoveryQuerySchema = z.object({
   sources: z.array(z.enum(DISCOVERY_SOURCES)).min(1),
   dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
   dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
-  maxResults: z.number().int().min(1).max(200).default(25),
+  maxResults: z.number().int().min(1).max(200).default(MAX_RESULTS_PER_RUN),
   maxApiCalls: z.number().int().min(1).max(100).default(20),
   maxModelCalls: z.number().int().min(0).max(50).default(0),
   maxEstimatedTokens: z.number().int().min(0).max(500_000).default(50_000),
@@ -64,6 +77,40 @@ export const discoveryQuerySchema = z.object({
   staleAfterDays: z.number().int().min(1).max(365).default(30),
 });
 export type DiscoveryQuery = z.infer<typeof discoveryQuerySchema>;
+
+/**
+ * What a USER may ask for, as opposed to what the pipeline can express.
+ *
+ * The cost controls live here rather than on `discoveryQuerySchema`
+ * because the two describe genuinely different operations, and capping
+ * both would degrade one of them for no saving:
+ *
+ *   A discovery RUN casts a wide net for companies nobody has seen yet.
+ *   It is the expensive one, it is the one a user triggers, and three
+ *   well-chosen sources answer the question they actually asked — a
+ *   fifteen-source sweep returning twenty rows spends most of its budget
+ *   on candidates discarded before a human sees them.
+ *
+ *   A per-company REFRESH re-checks one company we already hold across
+ *   every source that might mention it. Its cost is bounded by the
+ *   single company and its own API-call budget, and breadth is the
+ *   entire point (see services/companyRefresh.ts).
+ *
+ * Enforced server-side, at the request boundary, so the limit holds for
+ * any client. Validating only in the UI would leave the API open to
+ * exactly the expensive run this exists to prevent.
+ */
+export const discoveryRequestSchema = discoveryQuerySchema.extend({
+  sources: z.array(z.enum(DISCOVERY_SOURCES)).min(1).max(
+    MAX_SOURCES_PER_RUN,
+    `A run may query at most ${MAX_SOURCES_PER_RUN} sources. Choose the ones most likely to answer the question — `
+    + 'every extra source costs third-party requests and tokens for candidates that are usually discarded.',
+  ),
+  maxResults: z.number().int().min(1).max(
+    MAX_RESULTS_PER_RUN,
+    `A run may return at most ${MAX_RESULTS_PER_RUN} candidates. The limit is reviewer attention, not storage.`,
+  ).default(MAX_RESULTS_PER_RUN),
+});
 
 export const VERIFICATION_STATUSES = ['Verified', 'Not verified', 'Unknown', 'Requires manual review'] as const;
 

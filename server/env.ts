@@ -40,15 +40,30 @@ const envSchema = z.object({
   /**
    * Which identity providers may establish a session.
    *
-   *   local     — the shared administrator password only (today's behavior)
+   *   auto      — Entra SSO alone once it is fully configured; the shared
+   *               password until then. THE DEFAULT.
+   *   local     — the shared administrator password only
    *   microsoft — Microsoft Entra SSO only
    *   hybrid    — both, for migration/live-testing before cutting over
    *
-   * Defaults to `local`, and falls back to `local` whenever Microsoft is
-   * requested but not fully configured, so a missing credential can
-   * never lock the team out. See effectiveAuthMode() below.
+   * `auto` exists because the intended end state is "only @vamosventures.com
+   * accounts can sign in", and the only thing standing between here and
+   * there is an Entra app registration. Requiring somebody to ALSO remember
+   * to flip this variable afterwards would mean the shared password quietly
+   * kept working for months after it was supposed to be gone — the failure
+   * is silent, and the whole point of the change is to stop relying on a
+   * password that everyone knows.
+   *
+   * Under `auto` the switch happens on its own: the moment a client id,
+   * secret, SSO redirect URI, and concrete tenant GUID are all present,
+   * the password form stops being offered and `passwordMatches` stops
+   * being consulted.
+   *
+   * Every mode still degrades to `local` when Microsoft is requested but
+   * not fully configured, so a half-finished credential handover can never
+   * lock the team out of its own tool. See effectiveAuthMode() below.
    */
-  AUTH_MODE: z.enum(['local', 'microsoft', 'hybrid']).default('local'),
+  AUTH_MODE: z.enum(['auto', 'local', 'microsoft', 'hybrid']).default('auto'),
 
   AI_PROVIDER: z.enum(['anthropic', 'openai']).optional(),
   AI_API_KEY: z.string().optional(),
@@ -179,12 +194,38 @@ export function microsoftSsoConfigured(): boolean {
  */
 export function effectiveAuthMode(): 'local' | 'microsoft' | 'hybrid' {
   if (env.AUTH_MODE === 'local') return 'local';
+  // `auto` is the self-completing path: SSO-only as soon as SSO can
+  // actually run, and the password until then. Nobody has to remember to
+  // come back and turn the password off.
+  if (env.AUTH_MODE === 'auto') return microsoftSsoConfigured() ? 'microsoft' : 'local';
   return microsoftSsoConfigured() ? env.AUTH_MODE : 'local';
 }
 
-/** True when Microsoft was asked for but cannot run yet — drives the awaiting-configuration notice. */
+/**
+ * True when Microsoft was EXPLICITLY asked for but cannot run yet —
+ * drives the awaiting-configuration notice.
+ *
+ * `auto` deliberately does not count. It is the default, so treating it
+ * as a pending request would show every local-only deployment a standing
+ * "SSO not configured" warning about something nobody asked for, and a
+ * warning that is always on is one nobody reads.
+ */
 export function microsoftSsoPending(): boolean {
-  return env.AUTH_MODE !== 'local' && !microsoftSsoConfigured();
+  return (env.AUTH_MODE === 'microsoft' || env.AUTH_MODE === 'hybrid') && !microsoftSsoConfigured();
+}
+
+/**
+ * True when the shared password is still the way in, but only because
+ * Entra is not configured yet.
+ *
+ * Distinct from `microsoftSsoPending`: this is the honest status of the
+ * DEFAULT deployment, and it is what the sign-in screen and the settings
+ * page use to say "the password works today and will stop working once
+ * SSO is registered" instead of implying the password is the intended
+ * end state.
+ */
+export function awaitingSsoCutover(): boolean {
+  return env.AUTH_MODE === 'auto' && !microsoftSsoConfigured();
 }
 
 /** The password form is offered in every mode except Microsoft-only. */

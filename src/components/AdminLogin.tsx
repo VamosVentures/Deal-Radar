@@ -89,6 +89,24 @@ export function AdminLogin({ auth, onAuthenticated }: { auth: AuthStatus; onAuth
         </p>
       )}
 
+      {/*
+        The default deployment's honest status: the password works today
+        and is on its way out. Stated so nobody reads this form and
+        concludes a shared password is how this application is meant to
+        be secured — it is a stopgap with a defined end.
+      */}
+      {auth.awaitingSsoCutover && (
+        <div className="mt-3 border border-line border-l-[3px] border-l-marigold bg-paper px-3 py-2 text-xs leading-relaxed text-slate-mid">
+          <p className="font-semibold text-ink">
+            Sign-in is moving to Microsoft single sign-on
+          </p>
+          <p className="mt-1">
+            {auth.awaitingSsoCutoverMessage
+              ?? `Access will be limited to @${auth.allowedEmailDomain ?? 'vamosventures.com'} accounts.`}
+          </p>
+        </div>
+      )}
+
       {auth.localLoginAvailable ? (
         <form onSubmit={submit} className="mt-3 flex items-end gap-2">
           <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-slate-mid">

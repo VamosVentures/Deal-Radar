@@ -351,7 +351,6 @@ function persistEvent(event: FundingEvent, website: WebsiteResolution, today: st
         url: source.url,
         dateAccessed: today,
         publishedAt: source.announcedAt,
-        confidence: event.conflicts.length > 0 ? 0.5 : 0.65,
       }],
       // What THIS outlet said, not the merged event's primary figure. The
       // panel used to print "$27M (as stated by siliconangle.com)" on a
@@ -380,7 +379,6 @@ function persistEvent(event: FundingEvent, website: WebsiteResolution, today: st
       summary: website.detail,
       whyCurrent: 'Confirms the company is an operating business. Undated, so it cannot establish currency, and it cannot independently verify the financing amount.',
       amountUsd: null, amountText: null, roundType: null, investors: [],
-      confidence: 0.6,
     });
   }
 

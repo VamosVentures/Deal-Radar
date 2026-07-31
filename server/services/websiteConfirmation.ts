@@ -244,7 +244,6 @@ export async function confirmWebsite(
     summary: `${input.actor} confirmed ${input.website} is the official website of ${company.name}, citing ${input.evidenceUrl}. ${input.reason}`,
     whyCurrent: 'Confirms the company is an operating business. Carries no date, so it cannot by itself make an opportunity current.',
     amountUsd: null, amountText: null, roundType: null, investors: [],
-    confidence: 0.6,
   });
 
   // 4. Re-qualify with live checks (the website is new, so it has never

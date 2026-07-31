@@ -3,6 +3,8 @@ import { scoreCompany } from './scoring';
 import { verticalById } from '../data/taxonomy';
 import { flagLabel } from './scoring';
 import {
+  cleanJobTitle,
+  isSyncableContactName,
   normalizeDomain,
   type EmailGenContext,
   type HubSpotCompanyRecord,
@@ -69,13 +71,33 @@ export function founderDemographics(f: Founder): VerifiedDemographic[] {
   return out;
 }
 
+/**
+ * Which founders may become CRM contacts.
+ *
+ * ONLY a founder the research pipeline VERIFIED, or one a reviewer
+ * corrected by hand. Two things are deliberately excluded:
+ *
+ *   - Placeholder rows. The imported `founders` table still carries
+ *     "Unknown founder" for most companies; pushing one creates a
+ *     contact literally named that in a CRM the whole team shares.
+ *
+ *   - Probable candidates. A candidate is a person we found and are not
+ *     willing to assert. Writing one into HubSpot asserts it — to
+ *     everyone, permanently, in the system of record that outreach is
+ *     built from. The company still syncs; it just syncs without a
+ *     contact until somebody confirms who the founder is.
+ */
+export function isSyncableFounder(f: Founder): boolean {
+  return isSyncableContactName(f.name);
+}
+
 export function founderToHubSpot(c: Company, f: Founder, owner: string | null): HubSpotContactRecord {
   const [firstName, ...rest] = f.name.split(' ');
   return {
     firstName,
     lastName: rest.join(' '),
     email: f.email ?? null,
-    jobTitle: f.role,
+    jobTitle: cleanJobTitle(f.role),
     linkedinUrl: f.linkedin ?? null,
     companyName: c.name,
     infoSource: f.emailSource ?? c.evidence[0]?.source ?? 'Deal Radar',

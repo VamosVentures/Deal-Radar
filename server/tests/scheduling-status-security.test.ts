@@ -28,7 +28,7 @@ beforeEach(() => {
   resetIdempotencyForTests();
 });
 
-const BASE_QUERY = { sources: ['yc', 'funding-news'], maxResults: 25, maxApiCalls: 10 };
+const BASE_QUERY = { sources: ['yc', 'funding-news'], maxResults: 20, maxApiCalls: 10 };
 
 const fixtureCompany = (over: Partial<ImportedCompany> = {}): ImportedCompany => ({
   id: 'status-test-co',

@@ -69,7 +69,7 @@ function query(terms: string[], sources: string[]): DiscoveryQuery {
     sources: sources as DiscoveryQuery['sources'],
     dateFrom: new Date(Date.now() - DAYS * 86_400_000).toISOString().slice(0, 10),
     dateTo: new Date().toISOString().slice(0, 10),
-    maxResults: 25, maxApiCalls: 20, maxModelCalls: 0, maxEstimatedTokens: 0,
+    maxResults: 20, maxApiCalls: 20, maxModelCalls: 0, maxEstimatedTokens: 0,
     minConfidence: 0, mode: 'all',
     minEvidenceRecencyDays: null, staleAfterDays: 30,
   } as DiscoveryQuery;

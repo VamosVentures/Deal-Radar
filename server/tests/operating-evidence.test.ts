@@ -99,8 +99,7 @@ function formD(over: Partial<DealEvidence> = {}): DealEvidence {
     url: 'https://www.sec.gov/Archives/edgar/data/1699390/x-index.htm',
     publishedAt: daysAgo(30), retrievedAt: TODAY,
     summary: 'Form D exempt-offering filing.', whyCurrent: 'Filed 30 days ago.',
-    amountUsd: 5_000_000, amountText: '$5,000,000 offering', roundType: null, investors: [],
-    confidence: 0.8, ...over,
+    amountUsd: 5_000_000, amountText: '$5,000,000 offering', roundType: null, investors: [], ...over,
   };
 }
 
@@ -111,8 +110,7 @@ function press(over: Partial<DealEvidence> = {}): DealEvidence {
     url: 'https://techcrunch.com/2026/07/10/acme-robotics-raises-30m/',
     publishedAt: daysAgo(20), retrievedAt: TODAY,
     summary: 'Acme Robotics raises $30M.', whyCurrent: 'Reported 20 days ago.',
-    amountUsd: 30_000_000, amountText: '$30M', roundType: 'Series A', investors: ['Example Ventures'],
-    confidence: 0.8, ...over,
+    amountUsd: 30_000_000, amountText: '$30M', roundType: 'Series A', investors: ['Example Ventures'], ...over,
   };
 }
 
@@ -123,8 +121,7 @@ function investor(over: Partial<DealEvidence> = {}): DealEvidence {
     url: 'https://exampleventures.com/writing/our-investment-in-acme-robotics',
     publishedAt: daysAgo(18), retrievedAt: TODAY,
     summary: 'Why we invested in Acme Robotics.', whyCurrent: 'Published 18 days ago.',
-    amountUsd: 30_000_000, amountText: '$30M', roundType: 'Series A', investors: ['Example Ventures'],
-    confidence: 0.8, ...over,
+    amountUsd: 30_000_000, amountText: '$30M', roundType: 'Series A', investors: ['Example Ventures'], ...over,
   };
 }
 
@@ -135,7 +132,7 @@ function websiteRow(url: string): DealEvidence {
     url, publishedAt: null, retrievedAt: TODAY,
     summary: 'Official website responds with real content naming the company.',
     whyCurrent: 'Confirms an operating business; carries no date.',
-    amountUsd: null, amountText: null, roundType: null, investors: [], confidence: 0.6,
+    amountUsd: null, amountText: null, roundType: null, investors: [],
   };
 }
 
