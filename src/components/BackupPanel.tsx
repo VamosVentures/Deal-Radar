@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError, type BackupMetadata } from '../lib/api';
+import { DEMO_MODE } from '../lib/demoMode';
 
 /**
  * Backup list + "create backup now" — deliberately NOT a restore
@@ -36,8 +37,13 @@ export function BackupPanel() {
     <section className="mt-6 border border-line bg-panel p-4">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-display text-base font-semibold text-ink">Database backups</h2>
-        <button onClick={createNow} disabled={busy} className="ml-auto rounded-[2px] border border-line bg-panel px-3 py-1.5 text-xs font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50">
-          {busy ? 'Backing up…' : 'Create backup now'}
+        <button
+          onClick={createNow}
+          disabled={busy || DEMO_MODE}
+          title={DEMO_MODE ? 'Disabled in demo — no real database exists to back up.' : undefined}
+          className="ml-auto rounded-[2px] border border-line bg-panel px-3 py-1.5 text-xs font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
+        >
+          {DEMO_MODE ? 'Disabled in demo' : busy ? 'Backing up…' : 'Create backup now'}
         </button>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-slate-mid">

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageHeader, SourceStateBadge } from '../components/ui';
 import { api } from '../lib/api';
+import { DEMO_MODE } from '../lib/demoMode';
 import { useCompanies } from '../store/companies';
 import type { DiscoveryCandidate, DiscoveryQuery, DiscoveryRun } from '../../shared/discovery';
 import { GEOGRAPHIES, MAX_RESULTS_PER_RUN, MAX_SOURCES_PER_RUN, PREFERRED_STATES_P4 } from '../../shared/discovery';
@@ -329,10 +330,11 @@ export function Discovery() {
             )}
             <button
               onClick={run}
-              disabled={running || picked.length === 0}
+              disabled={running || picked.length === 0 || DEMO_MODE}
+              title={DEMO_MODE ? 'Sourcing runs are disabled in this demo — showing a previously captured example instead.' : undefined}
               className="rounded-[2px] bg-verde px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100"
             >
-              {running ? 'Running sources…' : 'Run discovery'}
+              {DEMO_MODE ? 'Disabled in demo' : running ? 'Running sources…' : 'Run discovery'}
             </button>
           </div>
         </div>

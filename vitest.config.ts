@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['server/tests/**/*.test.ts'],
+    include: ['server/tests/**/*.test.ts', 'src/**/*.test.ts'],
     environment: 'node',
     env: {
       DATABASE_FILE: ':memory:',

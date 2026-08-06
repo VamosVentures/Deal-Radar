@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
+import { DEMO_MODE } from '../lib/demoMode';
 import type { DiscoveryQuery, ScheduledJob } from '../../shared/discovery';
 import { GEOGRAPHIES, PREFERRED_STATES_P4 } from '../../shared/discovery';
 import { VERTICAL_OPTIONS } from '../data/taxonomy';
@@ -199,8 +200,13 @@ export function SchedulePanel() {
           </div>
         </div>
 
-        <button onClick={add} className="mt-1 w-fit rounded-[2px] border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold">
-          Save schedule
+        <button
+          onClick={add}
+          disabled={DEMO_MODE}
+          title={DEMO_MODE ? 'Disabled in demo — scheduled sourcing cannot be configured from this build.' : undefined}
+          className="mt-1 w-fit rounded-[2px] border border-line bg-panel px-3 py-1.5 font-semibold hover:border-marigold hover:text-marigold disabled:opacity-50"
+        >
+          {DEMO_MODE ? 'Disabled in demo' : 'Save schedule'}
         </button>
       </div>
       {err && <p className="mt-1 text-xs text-alerta">{err}</p>}
@@ -217,15 +223,17 @@ export function SchedulePanel() {
               </span>
               <button
                 onClick={() => runNow(j.id)}
-                disabled={runningId === j.id}
+                disabled={runningId === j.id || DEMO_MODE}
                 className="ml-auto rounded-[2px] border border-marigold px-2 py-0.5 font-mono text-[10px] font-semibold text-marigold hover:bg-marigold-soft disabled:opacity-40"
-                title="Administrator-only: run this schedule's search immediately, outside its normal cadence."
+                title={DEMO_MODE ? 'Sourcing runs are disabled in this demo.' : "Administrator-only: run this schedule's search immediately, outside its normal cadence."}
               >
-                {runningId === j.id ? 'Running…' : 'Run sourcing now'}
+                {DEMO_MODE ? 'Disabled in demo' : runningId === j.id ? 'Running…' : 'Run sourcing now'}
               </button>
               <button
                 onClick={async () => { await api.schedule.remove(j.id); load(); }}
-                className="text-alerta underline decoration-dotted"
+                disabled={DEMO_MODE}
+                title={DEMO_MODE ? 'Disabled in demo.' : undefined}
+                className="text-alerta underline decoration-dotted disabled:opacity-40 disabled:no-underline"
               >
                 Delete
               </button>

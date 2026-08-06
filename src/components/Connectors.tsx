@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, type ConnectorInfo, type RefreshLogEntry } from '../lib/api';
+import { DEMO_MODE } from '../lib/demoMode';
 import { useCompanies } from '../store/companies';
 import { useIntegrations } from '../store/integrations';
 import { VERTICAL_OPTIONS } from '../data/taxonomy';
@@ -63,8 +64,13 @@ export function ConnectorPanel() {
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <h2 className="font-display text-base font-semibold text-ink">Refresh connectors</h2>
         <div className="ml-auto flex gap-2">
-          <button className={btnPrimary} disabled={running} onClick={() => run(null)}>
-            {running ? 'Refreshing…' : 'Run refresh (all enabled)'}
+          <button
+            className={btnPrimary}
+            disabled={running || DEMO_MODE}
+            onClick={() => run(null)}
+            title={DEMO_MODE ? 'Refresh runs are disabled in this demo build.' : undefined}
+          >
+            {DEMO_MODE ? 'Disabled in demo' : running ? 'Refreshing…' : 'Run refresh (all enabled)'}
           </button>
           <button
             className={btnGhost}
@@ -166,18 +172,21 @@ function ConnectorCard({ c, running, onRun, onChanged }: {
         */}
         <button
           className={btnGhost}
-          disabled={running || !c.state.enabled}
+          disabled={running || !c.state.enabled || DEMO_MODE}
           title={
-            running ? 'A refresh run is already in progress — wait for it to finish.'
+            DEMO_MODE ? 'Refresh runs are disabled in this demo build.'
+            : running ? 'A refresh run is already in progress — wait for it to finish.'
             : !c.state.enabled ? `${c.meta.name} is disabled. Use Enable first, then run a sync.`
             : `Run ${c.meta.name} now and import whatever it returns.`
           }
           onClick={onRun}
         >
-          Run sync
+          {DEMO_MODE ? 'Disabled in demo' : 'Run sync'}
         </button>
         <button
           className={btnGhost}
+          disabled={DEMO_MODE}
+          title={DEMO_MODE ? 'Connector configuration is disabled in this demo build.' : undefined}
           onClick={async () => { await api.refresh.setEnabled(c.meta.id, !c.state.enabled); await onChanged(); }}
         >
           {c.state.enabled ? 'Disable' : 'Enable'}

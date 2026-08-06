@@ -5,10 +5,16 @@
 Verified 2026-08-06 against the current worktree (branch `frontend-redesign`, schema v20).
 
 The local pilot is ready and documented in [PILOT_RUNBOOK.md](PILOT_RUNBOOK.md). A hosted
-pilot is **not** deployed, and was not attempted, because the security prerequisites for
-hosting real deal and founder data are not met. Nothing in this document is a to-do list
-for the app code — every remaining item needs an administrator with authority this session
-does not have.
+pilot of the **real application and real data is not deployed**, and was not attempted,
+because the security prerequisites for hosting real deal and founder data are not met.
+Nothing in this document is a to-do list for the app code — every remaining item needs an
+administrator with authority this session does not have.
+
+**Separately**, a protected demo *preview* — synthetic data only, fully static, no backend,
+no database — was built and deployed this session for documentation/team-demo purposes. See
+§8. **Do not confuse the two.** The demo preview proves the UI and screenshots; it proves
+nothing about the real hosted pilot's readiness, which remains blocked exactly as described
+below.
 
 ---
 
@@ -183,3 +189,81 @@ schedule would be fiction.
 - No deal data was deployed publicly.
 - The earlier static-frontend-only Vercel deployment was not repeated, and a static
   deployment is not treated here as a working hosted application.
+
+## 8. Is Vercel appropriate for the *real* hosted pilot?
+
+Vercel is not assumed to be the only option, and the answer changes depending on what "the
+real hosted pilot" actually needs once #2 (durable database) is decided. Evaluated fresh
+against the current architecture (Express API + `node:sqlite`, both in `server/`):
+
+**What Vercel handles well, unmodified:**
+- The static frontend build (`vite build`) — this is exactly what Vercel's Vite framework
+  preset already deploys correctly (confirmed working for the demo preview in §9).
+- Preview Deployments with Vercel Authentication / password protection for pre-launch review
+  — used for the demo preview in §9, and equally usable for a real-data preview once auth and
+  storage are fixed, before inviting real users.
+- Secret management via the project's Environment Variables (separate values per
+  Production/Preview/Development) — a reasonable home for `MICROSOFT_*`, `SESSION_SECRET`,
+  and `HUBSPOT_*` once they exist, provided they are entered directly in the dashboard/CLI,
+  never committed.
+
+**What does not fit as-is, and why:**
+- **The backend is a long-running Express process with an in-process interval scheduler**
+  (`server/services/schedule.ts` — `setInterval`, checked hourly). Vercel's compute model is
+  serverless functions that start per-request and do not persist a timer between invocations.
+  Deployed to Vercel unmodified, the scheduler simply never fires — this is the same defect
+  the prior static-only Vercel deployment had in a different form (§1's note that "every API
+  route returned 404" was the front end deployed without the backend at all; even *with* the
+  backend deployed as functions, this specific in-process loop still would not survive).
+- **`node:sqlite` is a single file on local disk.** Vercel's serverless filesystem is
+  ephemeral and read-only outside `/tmp`, and `/tmp` does not persist or share across
+  invocations or regions. This is the datastore problem §2 already identifies; Vercel does
+  not change which of the two options there (managed Postgres, or a small persistent-volume
+  host) is right — it only rules out "keep SQLite and put it on Vercel," which was never a
+  viable option on *any* serverless platform, not specifically this one.
+
+**If Vercel remains the proposed host after #2 is decided, the concrete adaptation is:**
+1. Convert `server/index.ts`'s Express app into Vercel Serverless (or Edge, if the crypto/DB
+   calls are compatible) Functions — typically one catch-all function wrapping the existing
+   Express app via a request adapter, not a rewrite of the route handlers themselves.
+2. Replace the in-process scheduler with **Vercel Cron Jobs** (`vercel.json` `crons`), calling
+   a dedicated `/api/cron/sourcing` route that runs one discovery pass and returns — cron
+   invocations on Vercel are still subject to a function's execution-time limit, so a single
+   sourcing run must complete (or checkpoint) within that window, which the existing budget
+   caps (`MAX_RESULTS_PER_RUN`, per-run API/model/token limits) already keep small.
+3. Point `DATABASE_FILE` at whatever #2 resolves to — a managed Postgres connection string
+   (requiring the `node:sqlite`-based repository layer to be ported to a Postgres client) or,
+   for the smaller-effort path, a persistent volume on a non-serverless compute tier that
+   Vercel does not itself provide (i.e., Vercel would then host only the frontend/functions,
+   with the database living elsewhere — worth naming explicitly rather than assuming one
+   provider must do both).
+4. Re-run the full §4 verification checklist against the adapted deployment, including the
+   redeploy-durability write test — a passing demo preview (§9) proves none of this, since it
+   has no backend or database to fail.
+
+None of the above was implemented or provisioned this session — it is an assessment, not a
+migration, and every step still depends on #1 (Entra) and #2 (database/hosting decision)
+being made by someone with that authority first.
+
+## 9. This session's protected demo preview — what it is and is not
+
+A separate, read-only **demo** build (`VITE_DEMO_MODE=true`) was deployed as a Vercel
+**Preview** deployment under the existing, already-authorized `vamos-ventures/deal-radar`
+project (`prj_z9zKeT1Eff2iRRs3pzddL3poc0kr`) — not production, and not a new project.
+
+**URL:** `https://deal-radar-fw7d1cd7z-vamos-ventures.vercel.app`
+**Deployment:** `dpl_5Jrf8nkHJJbt581Q5vA11XYbqi2Z` — `target: null` (Preview, not Production),
+`functions: none` (confirmed via the Vercel API — purely static, no serverless compute).
+
+It is:
+
+- **Fully static.** No Express backend, no database, no server secrets, and no outbound
+  network calls of any kind — every screen renders from bundled synthetic fixtures.
+- **Protected.** Vercel Authentication (Deployment Protection) was enabled this session,
+  scoped to Preview deployments only (Production is untouched). Verified with `curl`:
+  every path tested — `/`, `/index.html`, and a built JS asset under `/assets/` — returns
+  **302** to `vercel.com/sso-api`, never 200 with content, for an unauthenticated caller.
+- **Not a demonstration of hosted-pilot readiness.** It proves the frontend renders correctly
+  when hosted on Vercel; it proves nothing about the backend, the database, the scheduler, or
+  authentication, none of which exist in that build. Sections 1–7 above are unchanged by its
+  existence.

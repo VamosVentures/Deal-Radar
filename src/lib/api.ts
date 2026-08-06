@@ -130,17 +130,8 @@ export interface HubSpotSearchHit {
  * create duplicate CRM records or drafts.
  */
 
-export class ApiError extends Error {
-  status: number;
-  hint?: string;
-  issues?: string[];
-  constructor(status: number, body: { message?: string; hint?: string; issues?: string[] }) {
-    super(body.message ?? `Request failed (${status})`);
-    this.status = status;
-    this.hint = body.hint;
-    this.issues = body.issues;
-  }
-}
+export { ApiError } from './apiError';
+import { ApiError } from './apiError';
 
 async function call<T>(path: string, init?: RequestInit & { idempotent?: boolean }): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -159,7 +150,7 @@ async function call<T>(path: string, init?: RequestInit & { idempotent?: boolean
   return body as T;
 }
 
-export const api = {
+const liveApi = {
   status: () => call<FullStatus>('/api/integrations/status'),
 
   overview: {
@@ -514,6 +505,20 @@ export const api = {
       call<{ ok: boolean }>(`/api/duplicates/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolution, actor }) }),
   },
 };
+
+/** The shape both the live and demo API clients must implement. */
+export type Api = typeof liveApi;
+
+/**
+ * VITE_DEMO_MODE=true swaps every call for a fixture-backed demo client
+ * that never calls fetch() — see src/lib/demoMode.ts and
+ * src/lib/demoApi.ts. A build without the flag is byte-for-byte the
+ * original fetch-based client; nothing about production behavior
+ * changes when the flag is absent or false.
+ */
+import { DEMO_MODE } from './demoMode';
+import { demoApi } from './demoApi';
+export const api: Api = DEMO_MODE ? demoApi : liveApi;
 
 export interface PossibleDuplicateEntry {
   id: number;

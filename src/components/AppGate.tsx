@@ -1,5 +1,25 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type AuthStatus } from '../lib/api';
+import { DEMO_MODE, DEMO_BANNER_TEXT } from '../lib/demoMode';
+
+/**
+ * Persistent, unobtrusive demo banner — rendered in every AppGate state
+ * (checking / sign-in / authenticated) so it is visible regardless of
+ * where a screenshot is taken. Absent entirely from a normal build:
+ * DEMO_MODE is a build-time constant, so `npm run build` never ships
+ * this component's markup at all.
+ */
+function DemoBanner() {
+  if (!DEMO_MODE) return null;
+  return (
+    <div
+      role="status"
+      className="sticky top-0 z-50 w-full border-b border-marigold/60 bg-marigold px-3 py-1.5 text-center font-mono text-[11px] font-semibold uppercase tracking-wide text-ink"
+    >
+      {DEMO_BANNER_TEXT}
+    </div>
+  );
+}
 
 /**
  * Application-wide sign-in gate.
@@ -29,11 +49,11 @@ export function AppGate({ children }: { children: React.ReactNode }) {
   }, []);
   useEffect(load, [load]);
 
-  if (failed) return <Shell><BackendUnreachable onRetry={load} /></Shell>;
-  if (auth === null) return <Shell><p className="text-sm text-slate-mid">Checking sign-in…</p></Shell>;
-  if (!auth.authenticated) return <Shell><SignIn auth={auth} onSignedIn={load} /></Shell>;
+  if (failed) return <><DemoBanner /><Shell><BackendUnreachable onRetry={load} /></Shell></>;
+  if (auth === null) return <><DemoBanner /><Shell><p className="text-sm text-slate-mid">Checking sign-in…</p></Shell></>;
+  if (!auth.authenticated) return <><DemoBanner /><Shell><SignIn auth={auth} onSignedIn={load} /></Shell></>;
 
-  return <>{children}</>;
+  return <><DemoBanner />{children}</>;
 }
 
 /**
