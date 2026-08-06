@@ -4,6 +4,7 @@ import { fetchWithTimeout } from '../../lib/http';
 import { classifyFetchError, classifyHttpStatus } from '../errors';
 import { readJson, validateExternal, validateLeads } from '../validate';
 import type { AdapterOutcome, SourceAdapter } from '../types';
+import { queryTermsFor } from '../verticalQueries';
 
 /**
  * GitHub official REST API (search/repositories). Unauthenticated
@@ -36,7 +37,9 @@ export const githubAdapter: SourceAdapter = {
   sourceType: 'api',
 
   async run(q, budget): Promise<AdapterOutcome> {
-    const term = [q.terms[0], q.subcategory].filter(Boolean).join(' ') || q.vertical || 'startup';
+    const term = [q.terms[0], q.subcategory].filter(Boolean).join(' ')
+      || queryTermsFor(q.vertical, 'github')[0]
+      || q.vertical || 'startup';
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(term)}+created:%3E2025-01-01&sort=updated&per_page=${Math.min(budget.maxResults, 10)}`;
     let res: Response;
     try {

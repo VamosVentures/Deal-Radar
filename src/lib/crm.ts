@@ -2,6 +2,7 @@ import type { Company, Founder } from '../types';
 import { scoreCompany } from './scoring';
 import { verticalById } from '../data/taxonomy';
 import { flagLabel } from './scoring';
+import { HOT_THRESHOLD, TRACK_THRESHOLD } from '../../shared/scoringThresholds';
 import {
   cleanJobTitle,
   isSyncableContactName,
@@ -20,8 +21,8 @@ export function policyExceptionText(c: Company): string | null {
 }
 
 export function recommendationFor(score: number): string {
-  if (score >= 8) return 'Prioritize — strong thesis fit';
-  if (score >= 6.5) return 'Track actively';
+  if (score >= HOT_THRESHOLD) return 'Prioritize — strong thesis fit';
+  if (score >= TRACK_THRESHOLD) return 'Track actively';
   if (score >= 5) return 'Monitor';
   return 'Review — weak fit';
 }

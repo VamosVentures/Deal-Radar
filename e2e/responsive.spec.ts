@@ -12,7 +12,7 @@ test.describe('Responsive layout', () => {
       await page.setViewportSize(size);
       await page.goto('/companies');
       await expect(page.getByRole('link', { name: 'Overview' })).toBeVisible();
-      await expect(page.getByRole('link', { name: 'Companies' })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'All Deals' })).toBeVisible();
       await expect(page.getByRole('link', { name: 'Discovery' })).toBeVisible();
       await page.getByRole('link', { name: 'Discovery' }).click();
       await expect(page.getByRole('heading', { name: 'Deal Discovery' })).toBeVisible();

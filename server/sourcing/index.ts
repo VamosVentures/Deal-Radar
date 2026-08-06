@@ -1,8 +1,21 @@
 import type { DiscoveryQuery, DiscoverySourceId } from '../../shared/discovery';
 import { env } from '../env';
+import { withRetry } from '../lib/retry';
 import { leadsToRawCandidates } from './normalize';
 import { failedResult, liveResult, skippedResult, type SourceRunResult } from './runlog';
+import type { SourceFailureKind } from './errors';
 import type { SourceAdapter } from './types';
+
+/**
+ * Failure kinds worth one immediate retry: both are plausibly transient
+ * (a dropped connection, a slow response past our own timeout). Not
+ * retried: 'rate-limited' (retrying sooner works against the source's
+ * own backoff signal — the next scheduled run is the right retry),
+ * 'http-error'/'invalid-response' (the same malformed request/response
+ * would just fail the same way again), and 'missing-credentials'/
+ * 'not-configured' (no retry fixes a missing credential).
+ */
+const RETRIABLE_FAILURE_KINDS: SourceFailureKind[] = ['timeout', 'network'];
 import { githubAdapter } from './adapters/github';
 import { secAdapter } from './adapters/sec';
 import { sbirAdapter } from './adapters/sbir';
@@ -108,11 +121,17 @@ export async function runSource(sourceId: DiscoverySourceId, q: DiscoveryQuery, 
   }
 
   // Real elapsed time for source-quality analytics — never fabricated,
-  // and absent entirely (not zero) for a skip where nothing ran.
+  // and absent entirely (not zero) for a skip where nothing ran. Note
+  // this now spans any retries too: a retried call took genuinely
+  // longer, and reporting only the last attempt's duration would
+  // understate that.
   const startedAt = Date.now();
-  const outcome = await adapter
-    .run(q, { maxApiCalls: remainingApiCalls, maxResults: q.maxResults })
-    .catch((e: Error) => ({ ok: false as const, failure: 'network' as const, apiCalls: 1, detail: e.message }));
+  const outcome = await withRetry(
+    () => adapter
+      .run(q, { maxApiCalls: remainingApiCalls, maxResults: q.maxResults })
+      .catch((e: Error) => ({ ok: false as const, failure: 'network' as const, apiCalls: 1, detail: e.message })),
+    { maxAttempts: 3, isRetriable: (o) => !o.ok && RETRIABLE_FAILURE_KINDS.includes(o.failure) },
+  );
   const durationMs = Date.now() - startedAt;
 
   if (!outcome.ok) {

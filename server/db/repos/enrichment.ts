@@ -71,6 +71,8 @@ export interface UpsertCandidateInput {
   matchScore: number;
   confidence: number;
   status: FounderResolutionStatus;
+  /** The enrichment run that surfaced this candidate. Set only on first insert — see below. */
+  runId?: string;
 }
 
 /**
@@ -92,8 +94,8 @@ export function upsertFounderCandidate(input: UpsertCandidateInput): number {
     INSERT INTO founder_candidates (
       company_id, person_key, full_name, title, source_url, source_family, source_type,
       published_at, retrieved_at, supporting_text, match_signals, match_score, confidence,
-      status, first_seen_at, last_checked_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, first_seen_at, last_checked_at, discovered_run_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (company_id, person_key, source_url) DO UPDATE SET
       full_name = excluded.full_name,
       title = excluded.title,
@@ -111,7 +113,7 @@ export function upsertFounderCandidate(input: UpsertCandidateInput): number {
     input.companyId, input.personKey, input.fullName, input.title, input.sourceUrl,
     input.sourceFamily, input.sourceType, input.publishedAt, ts, input.supportingText,
     JSON.stringify(input.matchSignals), input.matchScore, input.confidence,
-    input.status, ts, ts,
+    input.status, ts, ts, input.runId ?? null,
   );
   const row = db.prepare('SELECT id FROM founder_candidates WHERE company_id = ? AND person_key = ? AND source_url = ?')
     .get(input.companyId, input.personKey, input.sourceUrl) as { id: number };

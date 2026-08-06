@@ -9,6 +9,7 @@ import { PortfolioPanel } from '../components/Portfolio';
 import { AdminLogin } from '../components/AdminLogin';
 import { StaleSettingsPanel } from '../components/StaleSettingsPanel';
 import { SourceAnalyticsPanel } from '../components/SourceAnalytics';
+import { SourceHealthPanel } from '../components/SourceHealth';
 import { DiversityAnalyticsPanel } from '../components/DiversityAnalytics';
 import { BackupPanel } from '../components/BackupPanel';
 import { useIntegrations } from '../store/integrations';
@@ -112,6 +113,7 @@ export function DataSources() {
 
           <SchedulePanel />
 
+          <SourceHealthPanel />
           <SourceAnalyticsPanel />
           <DiversityAnalyticsPanel />
 

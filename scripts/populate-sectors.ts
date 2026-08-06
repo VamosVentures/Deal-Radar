@@ -41,10 +41,7 @@ const SECTOR_TERMS: Record<VerticalId, string[]> = {
   fintech: ['fintech', 'payments', 'lending'],
   fow: ['future of work', 'workflow automation', 'hiring'],
   sustainability: ['climate tech', 'renewable energy', 'decarbonization'],
-  robotics: ['robotics', 'autonomous robots', 'warehouse automation'],
-  spacetech: ['space technology', 'satellite', 'earth observation'],
-  ai: ['ai infrastructure', 'large language model', 'machine learning platform'],
-  aoi: [], // catch-all: never sourced into directly
+  frontier: ['robotics', 'autonomous robots', 'satellite', 'earth observation'],
 };
 
 /** Credential-free adapters only. Product Hunt needs a token and is skipped. */
@@ -96,6 +93,9 @@ function baseQuery(terms: string[], windowDays: number, sources: DiscoveryQuery[
     mode: 'all',
     minEvidenceRecencyDays: null,
     staleAfterDays: 30,
+    preview: false,
+    enforceThesisFilter: false,
+    minQualityPriority: null,
   } as DiscoveryQuery;
 }
 
@@ -226,7 +226,7 @@ async function sourceSector(v: { id: VerticalId; name: string }): Promise<Sector
   };
 }
 
-const targets = VERTICALS.filter((v) => v.core); // the aoi catch-all is never sourced into
+const targets = VERTICALS; // all five approved verticals
 
 console.log(`Populating ${targets.length} sectors × ${PER_SECTOR} companies from live public sources`);
 console.log(`Sources: ${SOURCES.join(', ')}${DRY_RUN ? '  [DRY RUN — nothing will be imported]' : ''}\n`);

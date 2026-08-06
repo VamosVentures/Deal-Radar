@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { isLiveDeal, OPPORTUNITY_CLASSES, OPPORTUNITY_CLASS_LABELS, type OpportunityClass } from '../../shared/opportunity';
 import { OpportunityBadges, QualificationExplainer, EvidenceSummary, ReportingSources } from './OpportunityBadge';
 import type { ReactNode } from 'react';
-import type { Company } from '../types';
+import type { Company, FitScore } from '../types';
 import { scoreCompany } from '../lib/scoring';
+import { assessPromising } from '../lib/promisingQueue';
+import { assessQuality } from '../../shared/qualitySignals';
+import { HOT_THRESHOLD, TRACK_THRESHOLD } from '../../shared/scoringThresholds';
 import { downloadCsv } from '../lib/csvDownload';
 import { verticalById, VERTICALS } from '../data/taxonomy';
 import { ExceptionBadge, FounderLine, IdentityChips, ProvenanceTag, ScoreGauge, type ProvenanceKind } from './ui';
@@ -13,6 +16,8 @@ import { OutreachPanel } from './OutreachPanel';
 import { AiAnalysis } from './AiAnalysis';
 import { WebsiteConfirmationPanel } from './WebsiteConfirmation';
 import { CompanyNotes } from './CompanyNotes';
+import { TractionReview } from './TractionReview';
+import { PendingEvidencePanel } from './PendingEvidencePanel';
 import { confirmLeaveUnsavedNotes } from '../lib/unsavedNotes';
 import { useCompanies } from '../store/companies';
 import { btnGhost, btnPrimary } from './Modal';
@@ -48,8 +53,8 @@ function nextActionTag(
   // A provisional score says nothing about the company, so it can never
   // earn "Prioritize" or "Track". What it needs is data.
   if (fit.provisional) return { label: 'Needs data to score', cls: 'border-line bg-paper text-slate-mid' };
-  if (fit.score >= 8) return { label: 'Prioritize', cls: 'border-verde/30 bg-verde-soft text-verde' };
-  if (fit.score >= 6.5) return { label: 'Track', cls: 'border-line bg-paper text-ink' };
+  if (fit.score >= HOT_THRESHOLD) return { label: 'Prioritize', cls: 'border-verde/30 bg-verde-soft text-verde' };
+  if (fit.score >= TRACK_THRESHOLD) return { label: 'Track', cls: 'border-line bg-paper text-ink' };
   return { label: 'Monitor watchlist', cls: 'border-line bg-paper text-slate-mid' };
 }
 
@@ -63,17 +68,47 @@ function nextActionTag(
 export function CompanyTable({
   companies,
   showVertical = false,
-  initialVertical,
+  initialVerticals,
   initialOpenId,
 }: {
   companies: Company[];
   showVertical?: boolean;
-  initialVertical?: string;
+  /**
+   * Canonical vertical ids to preselect. Already normalized by the
+   * caller (see verticalsFromParam in src/pages/Companies.tsx) — a raw
+   * URL value must never reach this component, because a legacy string
+   * like 'ai' matches no company row and renders as an empty table with
+   * no filter chip lit.
+   */
+  initialVerticals?: string[];
   initialOpenId?: string;
 }) {
   const { meta, opportunities, qualifications, quarantine, enrichment, refresh: refreshCompanies } = useCompanies();
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
-  const [vertical, setVertical] = useState(initialVertical ?? 'all');
+  // Multi-select: an empty set means "all verticals" — the master
+  // All Deals view. A vertical page (or a sidebar link) arrives with
+  // exactly one preselected via initialVertical; a reviewer can then
+  // add or remove verticals freely from the same control.
+  const [verticals, setVerticals] = useState<Set<string>>(() => new Set(initialVerticals ?? []));
+  // initialVertical is only the value at first mount — without this
+  // effect, clicking a different vertical in the sidebar while already
+  // on /companies (same route, same component instance, no remount)
+  // updated the URL but left this filter showing the PREVIOUS vertical,
+  // a silently wrong "dead" filter state.
+  // Keyed on the JOINED value, not the array identity: a fresh array with
+  // the same contents arrives on every render, and depending on identity
+  // would reset a reviewer's added verticals on each one.
+  const initialVerticalKey = (initialVerticals ?? []).join(',');
+  useEffect(() => {
+    setVerticals(new Set(initialVerticalKey ? initialVerticalKey.split(',') : []));
+  }, [initialVerticalKey]);
+  const toggleVertical = (id: string) => {
+    setVerticals((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
   const [stage, setStage] = useState('all');
   const [state, setState] = useState('all');
   const [q, setQ] = useState('');
@@ -94,6 +129,14 @@ export function CompanyTable({
   const [missingCorroboration, setMissingCorroboration] = useState(false);
   const [humanReviewOnly, setHumanReviewOnly] = useState(false);
   const [assessedOnly, setAssessedOnly] = useState(false);
+  /**
+   * "Promising — Needs Diligence" — a saved view inside All Deals, not a
+   * new Overview card. See src/lib/promisingQueue.ts for the rule and
+   * why sparse evidence must not mean invisible.
+   */
+  const [promisingOnly, setPromisingOnly] = useState(false);
+  /** The broad queue. Promising is a strict subset of it. */
+  const [needsDiligenceOnly, setNeedsDiligenceOnly] = useState(false);
   const [publicWarnOnly, setPublicWarnOnly] = useState(false);
   const [fundWarnOnly, setFundWarnOnly] = useState(false);
   const [includeQuarantined, setIncludeQuarantined] = useState(false);
@@ -129,17 +172,82 @@ export function CompanyTable({
     [companies, quarantine],
   );
 
+  /**
+   * Build the Promising verdict for one row from the context the table
+   * already holds. Kept as a callback (not inlined) so the row renderer
+   * and the filter cannot disagree about who is in the queue.
+   *
+   * `qualityBand` is not available client-side for imported companies —
+   * it lives on the discovery candidate, which is a different record —
+   * so eligibility here rests on the preliminary score and the recorded
+   * accelerator. That is a narrower rule than the server-side one, and
+   * it is narrower in the safe direction: it can omit a promising
+   * company, never invent one.
+   */
+  const promisingVerdict = useCallback(
+    (c: Company, fit: FitScore) => {
+      /**
+       * Quality signals are computed from the company's OWN published
+       * text, using the same shared assessor the discovery pipeline
+       * runs on candidates. Passing an empty signal list here (the
+       * first version) meant no stored company could ever be
+       * "Promising", because the substantive-signal requirement could
+       * never be met — the queue would have been silently empty.
+       */
+      const quality = assessQuality({
+        pitch: c.oneLiner || 'Unknown',
+        subcategory: c.subcategory || 'Unknown',
+        accelerator: c.accelerator ?? 'Unknown',
+        publicFunding: c.raising ?? 'Unknown',
+        mostRecentRound: 'Unknown',
+        website: c.website ?? 'Unknown',
+        tractionSignals: c.traction?.note ? [c.traction.note] : [],
+        evidence: c.evidence.map((e) => ({
+          claim: e.claim, url: e.url, publishedAt: e.date ?? null,
+        })),
+      } as unknown as Parameters<typeof assessQuality>[0], new Date(), {
+        /**
+         * Founder biographies feed founder-market-fit, CITED ONLY.
+         *
+         * Without this the triage value was computed from the discovery
+         * snippet alone and never saw the research that came after it —
+         * a company with two researched founders looked identical to one
+         * with none. The first cited evidence URL on the record is used
+         * as the citation; a company with no cited source contributes no
+         * founder signal at all.
+         */
+        founderBios: c.founders
+          .filter((f) => !/unknown/i.test(f.name) && f.background && !/^unknown/i.test(f.background.trim()))
+          .map((f) => ({ text: `${f.name} — ${f.role}. ${f.background}`, sourceUrl: c.evidence[0]?.url })),
+      });
+
+      return assessPromising({
+        company: c,
+        fit,
+        reviewStatus: meta[c.id]?.reviewStatus,
+        confirmedDuplicate: duplicateCompanyIds.has(c.id),
+        inactive: !!quarantine[c.id],
+        qualityBand: quality.band,
+        qualityPriority: quality.priority,
+        qualitySignals: quality.signals,
+      });
+    },
+    [meta, duplicateCompanyIds, quarantine],
+  );
+
   const rows = useMemo(() => {
     const filtered = companies
       .map((c) => ({ c, fit: scoreCompany(c) }))
       .filter(({ c, fit }) => {
-        if (vertical !== 'all' && c.vertical !== vertical) return false;
+        if (verticals.size > 0 && !verticals.has(c.vertical)) return false;
         if (stage !== 'all' && c.stage !== stage) return false;
         if (state !== 'all' && c.state !== state) return false;
         if (possibleDuplicateOnly && !duplicateCompanyIds.has(c.id)) return false;
         if (missingInfoOnly && !hasMissingInfo(c)) return false;
         if (minEvidenceConfidence > 0 && fit.evidenceConfidence < minEvidenceConfidence) return false;
         if (assessedOnly && fit.provisional) return false;
+        if (needsDiligenceOnly && !promisingVerdict(c, fit).needsDiligence) return false;
+        if (promisingOnly && !promisingVerdict(c, fit).eligible) return false;
         if (notReviewedDays !== '') {
           const lastTouch = meta[c.id]?.lastRefreshed ?? meta[c.id]?.discoveredAt;
           const age = daysSince(lastTouch);
@@ -196,11 +304,12 @@ export function CompanyTable({
       Number(a.fit.provisional) - Number(b.fit.provisional)
       || b.fit.score - a.fit.score);
     return filtered;
-  }, [companies, vertical, stage, state, q, sortMode, possibleDuplicateOnly, missingInfoOnly,
+  }, [companies, verticals, stage, state, q, sortMode, possibleDuplicateOnly, missingInfoOnly,
       minEvidenceConfidence, notReviewedDays, duplicateCompanyIds, meta,
       opportunities, qualifications, quarantine, oppClass, primarySource, tierFilter,
       liveOnly, leadsOnly, verifiedAmountOnly, verifiedRoundOnly, missingCorroboration,
-      humanReviewOnly, publicWarnOnly, fundWarnOnly, includeQuarantined, evidenceSince, assessedOnly]);
+      humanReviewOnly, publicWarnOnly, fundWarnOnly, includeQuarantined, evidenceSince, assessedOnly,
+      promisingOnly, needsDiligenceOnly, promisingVerdict]);
 
   const select = 'rounded-[2px] border border-line bg-panel px-2 py-1.5 text-xs transition-colors focus:border-marigold';
   const allVisibleSelected = rows.length > 0 && rows.every(({ c }) => selected.has(c.id));
@@ -276,10 +385,31 @@ export function CompanyTable({
             aria-label="Search companies"
           />
           {showVertical && (
-            <select className={select} value={vertical} onChange={(e) => setVertical(e.target.value)} aria-label="Filter by vertical">
-              <option value="all">All verticals</option>
-              {VERTICALS.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-            </select>
+            <div className="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by vertical — select one or more">
+              <button
+                type="button"
+                onClick={() => setVerticals(new Set())}
+                aria-pressed={verticals.size === 0}
+                className={`rounded-[2px] border px-2 py-1.5 text-xs font-semibold transition-colors ${
+                  verticals.size === 0 ? 'border-marigold bg-marigold-soft text-marigold' : 'border-line bg-panel text-slate-mid hover:border-marigold hover:text-marigold'
+                }`}
+              >
+                All verticals
+              </button>
+              {VERTICALS.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => toggleVertical(v.id)}
+                  aria-pressed={verticals.has(v.id)}
+                  className={`rounded-[2px] border px-2 py-1.5 text-xs transition-colors ${
+                    verticals.has(v.id) ? 'border-marigold bg-marigold-soft font-semibold text-marigold' : 'border-line bg-panel text-slate-mid hover:border-marigold hover:text-marigold'
+                  }`}
+                >
+                  {v.name}
+                </button>
+              ))}
+            </div>
           )}
           <select className={select} value={stage} onChange={(e) => setStage(e.target.value)} aria-label="Filter by stage">
             <option value="all">All stages</option>
@@ -395,10 +525,34 @@ export function CompanyTable({
             </label>
             <label
               className="flex items-center gap-1.5"
-              title="Hide records where no company-descriptive component could be judged, so the fit score reflects only our own sourcing quality. Those scores are provisional and cannot be compared with assessed ones."
+              title="Hide provisional scores. A score is fully assessed only when thesis fit, stage, traction, founders and geography could ALL be judged, at least 60% of the model was assessable, and the record cites a source. Anything short of that is normalized over too little evidence to compare with an assessed score, and is excluded from High-Fit."
             >
               <input type="checkbox" checked={assessedOnly} onChange={(e) => setAssessedOnly(e.target.checked)} />
-              Scorable only (hide provisional)
+              Fully assessed only (hide provisional)
+            </label>
+            <label
+              className="flex items-center gap-1.5"
+              title="Every provisional record that is in-thesis, active, not a confirmed duplicate, and still missing a critical component. This is the broad work list — Promising is a strict subset of it."
+            >
+              <input
+                type="checkbox"
+                data-testid="needs-diligence-filter"
+                checked={needsDiligenceOnly}
+                onChange={(e) => setNeedsDiligenceOnly(e.target.checked)}
+              />
+              Needs Diligence
+            </label>
+            <label
+              className="flex items-center gap-1.5"
+              title="Provisional records that still look worth researching: they pass the thesis filter, are active and not confirmed duplicates, show quality-priority signals or already score at or above the Track threshold on what could be judged, and are missing at least one critical component that could change the score. This is a work list — it never counts toward High-Fit and never changes a score."
+            >
+              <input
+                type="checkbox"
+                data-testid="promising-filter"
+                checked={promisingOnly}
+                onChange={(e) => setPromisingOnly(e.target.checked)}
+              />
+              Promising — Needs Diligence
             </label>
             <label className="flex items-center gap-1.5" title="Issuer has an exchange ticker or files periodic reports.">
               <input type="checkbox" checked={publicWarnOnly} onChange={(e) => setPublicWarnOnly(e.target.checked)} />
@@ -752,8 +906,8 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
     fit.exceptions.length > 0 ? 'Route to partner review — a policy exception needs sign-off before anything else.'
     : m?.stale ? 'Stale — this record has gone unreviewed too long. Refresh it, or move it to Monitor / Passed / Research Needed.'
     : m?.reviewStatus === 'New' || m?.reviewStatus === 'Awaiting Review' ? 'Complete the first review: verify the website and pitch, classify the subcategory, then decide whether to track.'
-    : fit.score >= 8 ? 'Prioritize: assign an owner, approve outreach, and add to HubSpot.'
-    : fit.score >= 6.5 ? `Track actively and close the weakest evidence gap (${[...fit.components].sort((a, b) => a.points / a.max - b.points / b.max)[0].label.toLowerCase()}).`
+    : fit.score >= HOT_THRESHOLD ? 'Prioritize: assign an owner, approve outreach, and add to HubSpot.'
+    : fit.score >= TRACK_THRESHOLD ? `Track actively and close the weakest evidence gap (${[...fit.components].sort((a, b) => a.points / a.max - b.points / b.max)[0].label.toLowerCase()}).`
     : 'Monitor; revisit when traction or evidence improves.';
 
   const scoreTone = fit.score >= 7.5 ? 'border-l-verde' : fit.score >= 5.5 ? 'border-l-marigold' : 'border-l-slate-mid';
@@ -1129,7 +1283,18 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             deliberately AFTER the evidence section, so a note is written
             against the record rather than instead of it.
           */}
-          <MemoSection n="08" id={`${c.id}-notes`} title="Internal notes">
+          {/*
+            Traction review sits immediately before internal notes: it is
+            the one diligence step that changes a SCORING component, so it
+            belongs with the record rather than in the notes a reviewer
+            writes about it.
+          */}
+          <MemoSection n="08" id={`${c.id}-traction`} title="Traction review">
+            <PendingEvidencePanel companyId={c.id} />
+            <TractionReview companyId={c.id} onSaved={() => void refresh()} />
+          </MemoSection>
+
+          <MemoSection n="09" id={`${c.id}-notes`} title="Internal notes">
             <CompanyNotes companyId={c.id} />
           </MemoSection>
 
@@ -1137,7 +1302,7 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             <AiAnalysis c={c} />
           </div>
 
-          <MemoSection n="09" id={`${c.id}-provenance`} title="Review history & sync">
+          <MemoSection n="10" id={`${c.id}-provenance`} title="Review history & sync">
             <div className="grid gap-x-6 sm:grid-cols-2">
               <FactRow label="Discovered" value={m?.discoveredAt ? `${m.discoveredAt}${m.discoverySource ? ` via ${m.discoverySource}` : ''}` : null} />
               <FactRow label="Last refreshed" value={c.lastRefreshed ?? m?.lastRefreshed ?? null} />

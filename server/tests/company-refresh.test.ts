@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { store } from '../lib/store';
+import { getDb } from '../db/client';
 import { __setSourceRunnerForTests } from '../services/sources';
 import { refreshCompanyResearch } from '../services/companyRefresh';
 import { saveCompany, applyFieldUpdate, getCompany } from '../db/repos/companies';
@@ -60,6 +61,17 @@ describe('refresh live research', () => {
 
     const stored = latestScore('refresh-co-1');
     expect(stored?.score).toBe(result.newScore.score);
+
+    // "Refresh live research" re-queries live sources and merges what it
+    // finds — real work, but not itself analyst judgment about the
+    // company (see server/db/repos/operations.ts recordReviewDecision's
+    // countsAsCompanyReview). Confirmed end-to-end here, not just at the
+    // recordReviewDecision unit level: running the full service must not
+    // stamp last_reviewed_at. Queried directly via SQL since
+    // last_reviewed_at is an internal KPI field, not part of the
+    // ImportedCompany shape getCompany() returns.
+    const raw = getDb().prepare('SELECT last_reviewed_at FROM companies WHERE id = ?').get('refresh-co-1') as { last_reviewed_at: string | null };
+    expect(raw.last_reviewed_at).toBeNull();
   });
 
   it('reports no changes when the source confirms exactly what is already on record', async () => {

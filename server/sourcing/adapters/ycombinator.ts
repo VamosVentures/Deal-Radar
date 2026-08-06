@@ -3,6 +3,8 @@ import { fetchWithTimeout } from '../../lib/http';
 import { classifyFetchError, classifyHttpStatus } from '../errors';
 import { readJson, validateExternal, validateLeads } from '../validate';
 import { classifyFromTaxonomy } from '../classify';
+import { resolveQueryTerm } from '../verticalQueries';
+import { resolveCityState } from '../../enrichment/companyFacts';
 import type { AdapterOutcome, SourceAdapter } from '../types';
 
 /**
@@ -59,13 +61,32 @@ export function batchToApproxDate(batch: string | null | undefined): string | nu
   return `${year}-${month}-01`;
 }
 
-/** "San Francisco, CA, USA" → { city, state }. Absent parts stay absent. */
+/**
+ * "San Francisco, CA, USA" → { city, state }, via the ONE shared
+ * resolver the rest of the app already uses.
+ *
+ * This adapter previously had its own parser that took `parts[0]` as the
+ * city and a state only when some comma-part was two uppercase letters.
+ * The YC directory returns a bare city for most of its portfolio
+ * (`["Los Angeles"]`, `["San Francisco"]`, `["New York City"]`), so that
+ * parser produced a city with NO state for almost every YC company —
+ * and geography is scored on the STATE. The visible result was a record
+ * displaying "Los Angeles" while its geography component read
+ * "not assessable", which looks like a contradiction and is really two
+ * different location parsers disagreeing.
+ *
+ * `resolveCityState` is the curated, already-tested resolver
+ * (server/enrichment/companyFacts.ts) the stored-company enrichment path
+ * uses. It maps a short list of unambiguous US cities to their state and
+ * returns a NULL state for anything else — a London company keeps its
+ * city and gets no invented state. Using it here removes the duplicate
+ * parser rather than adding a third.
+ */
 function splitLocation(loc?: string | null): { city?: string; state?: string } {
   if (!loc) return {};
-  const parts = loc.split(',').map((p) => p.trim()).filter(Boolean);
-  const city = parts[0] || undefined;
-  const state = parts.find((p) => /^[A-Z]{2}$/.test(p));
-  return { city, state };
+  const resolved = resolveCityState(loc);
+  if (!resolved) return {};
+  return { city: resolved.city, state: resolved.state ?? undefined };
 }
 
 export const ycAdapter: SourceAdapter = {
@@ -74,7 +95,10 @@ export const ycAdapter: SourceAdapter = {
   sourceType: 'directory',
 
   async run(q, budget): Promise<AdapterOutcome> {
-    const term = q.terms[0] ?? q.subcategory ?? q.vertical ?? 'startup';
+    // An explicit user term still wins; otherwise the vertical/source
+    // strategy supplies a precise product-and-evidence phrase instead of
+    // the bare sector word this used to send (see verticalQueries.ts).
+    const term = resolveQueryTerm(q.terms, q.vertical, 'yc', q.subcategory ?? q.vertical ?? 'startup');
     const url = `https://api.ycombinator.com/v0.1/companies?q=${encodeURIComponent(term)}`;
     let res: Response;
     try {
@@ -100,7 +124,33 @@ export const ycAdapter: SourceAdapter = {
     const active = parsed.data.companies.filter((r) => (r.status ?? 'Active') !== 'Inactive');
     const inactiveDropped = parsed.data.companies.length - active.length;
 
-    const rawLeads = active.slice(0, budget.maxResults).map((r) => {
+    /**
+     * Batch-recency gate.
+     *
+     * The YC directory is a permanent alumni register, not a feed of new
+     * companies, and nothing here previously said so. A direct audit of
+     * this database found 70 of 111 stored YC records came from batches
+     * S09–W23 — Brex (W17), Deel (W19), HealthSherpa and Newfront (W15)
+     * are all sitting in the pipeline labelled "Early-stage — round not
+     * publicly disclosed", scoring in the top band. They are real
+     * companies and the directory is telling the truth about them; they
+     * are simply a decade past the stage this firm leads.
+     *
+     * `dateFrom` is the query's existing "only things at least this
+     * recent" control, and batchToApproxDate already turns a batch code
+     * into a comparable date, so this needs no new knob — it just
+     * connects two things that were never wired together. A company
+     * whose batch cannot be parsed is KEPT, because an unreadable batch
+     * code is a gap in the listing, not evidence of age.
+     */
+    const withinBatchWindow = active.filter((r) => {
+      if (!q.dateFrom) return true;
+      const approx = batchToApproxDate(r.batch);
+      return approx === null || approx >= q.dateFrom;
+    });
+    const staleBatchDropped = active.length - withinBatchWindow.length;
+
+    const rawLeads = withinBatchWindow.slice(0, budget.maxResults).map((r) => {
       const labels = [...(r.industries ?? []), ...(r.tags ?? [])];
       // YC's own category labels are structured evidence and beat
       // guessing from the name. Only a confident mapping is used.
@@ -149,6 +199,7 @@ export const ycAdapter: SourceAdapter = {
       detail: `${valid.length} active public YC directory entr${valid.length === 1 ? 'y' : 'ies'} for "${term}"`
         + ` (${classified} sector-classified from YC's own categories`
         + `${inactiveDropped > 0 ? `; ${inactiveDropped} inactive dropped` : ''}`
+        + `${staleBatchDropped > 0 ? `; ${staleBatchDropped} dropped as alumni from batches earlier than ${q.dateFrom}` : ''}`
         + `${rejected > 0 ? `; ${rejected} invalid rejected` : ''}).`,
     };
   },

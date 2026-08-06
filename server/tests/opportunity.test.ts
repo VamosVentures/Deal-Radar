@@ -386,7 +386,7 @@ describe('opportunity persistence', () => {
     resetDbForTests();
     saveCompany({
       id: 'co-1', name: 'AMP Robotics Corp', oneLiner: 'Recycling robotics.',
-      vertical: 'robotics', subcategory: 'Industrial & warehouse automation', stage: 'Unknown',
+      vertical: 'frontier', subcategory: 'Industrial & warehouse automation', stage: 'Unknown',
       city: 'Louisville', state: 'CO', foundedYear: 2015, teamSize: 5,
       traction: { level: 0, note: 'Unknown' },
       founders: [{ name: 'Unknown founder', role: 'Unknown', background: 'Unknown' }],

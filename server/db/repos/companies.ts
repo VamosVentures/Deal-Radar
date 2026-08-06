@@ -142,6 +142,8 @@ export interface SaveOptions {
   reviewStatus?: string;
   discoverySource?: string;
   discoveredAt?: string;
+  /** The sourcing run whose candidate became this company. Set only at creation, like discoveredAt. */
+  discoveryRunId?: string;
 }
 
 export function getCompany(id: string): ImportedCompany | null {
@@ -221,7 +223,61 @@ export function companyMetaView(): Record<string, CompanyMetaEntry> {
  * value; everything else is written and stamped. Founders are replaced
  * only when the incoming record provides them; evidence is append-only.
  */
+/**
+ * Persist a company and everything that belongs to it, ATOMICALLY.
+ *
+ * The write is not one statement — it is the company row, a provenance
+ * row per field, a founders DELETE-then-INSERT, an evidence append and an
+ * external-id insert. Without a transaction, a failure partway through
+ * left a company with provenance for some fields and not others, or —
+ * worse, on the update path — with its founders DELETED and the
+ * replacements never inserted, because `replaceFounders` destroys before
+ * it writes.
+ *
+ * `importCandidates` catches a per-candidate throw and reports it as
+ * `failed` so one bad candidate cannot discard a whole batch, which is
+ * correct; but it meant a "failed" candidate could still have left half a
+ * company behind. Wrapping here makes that report true: a failed import
+ * leaves nothing.
+ *
+ * Nested-safe: SQLite has no nested transactions, so if a caller already
+ * opened one this participates in it rather than issuing a second BEGIN
+ * (which would throw) — the outer boundary still governs rollback.
+ */
+function inTransaction<T>(fn: () => T): T {
+  const db = getDb();
+  /**
+   * Take the boundary by TRYING to open it.
+   *
+   * node:sqlite exposes no autocommit flag, and a redundant BEGIN throws
+   * when a transaction is already open — so the attempt is the test. If it
+   * throws, an outer transaction owns the boundary and this call simply
+   * participates in it; the outer COMMIT/ROLLBACK still governs. Probing
+   * this way beats tracking nesting depth in module state, which drifts
+   * the moment any other code path issues its own BEGIN.
+   */
+  let owns = true;
+  try {
+    db.exec('BEGIN');
+  } catch {
+    owns = false;
+  }
+  if (!owns) return fn();
+  try {
+    const out = fn();
+    db.exec('COMMIT');
+    return out;
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+}
+
 export function saveCompany(record: ImportedCompany, opts: SaveOptions): { created: boolean } {
+  return inTransaction(() => saveCompanyUnsafe(record, opts));
+}
+
+function saveCompanyUnsafe(record: ImportedCompany, opts: SaveOptions): { created: boolean } {
   const db = getDb();
   const existing = db.prepare('SELECT id FROM companies WHERE id = ?').get(record.id) as { id: string } | undefined;
   const domain = normalizeDomainKey(record.website ?? null);
@@ -231,14 +287,14 @@ export function saveCompany(record: ImportedCompany, opts: SaveOptions): { creat
     db.prepare(`
       INSERT INTO companies (id, name, normalized_name, domain, website, one_liner, vertical, subcategory, stage,
         city, state, founded_year, team_size, traction_level, traction_note, flags, status,
-        review_status, discovery_source, discovered_at, raising, accelerator, last_funding_date, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)
+        review_status, discovery_source, discovered_at, discovery_run_id, raising, accelerator, last_funding_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id, record.name, normalizeCompanyKey(record.name), domain, record.website ?? null,
       record.oneLiner, record.vertical, record.subcategory, record.stage, record.city, record.state,
       record.foundedYear, record.teamSize, record.traction.level, record.traction.note,
       JSON.stringify(record.flags), opts.reviewStatus ?? null, opts.discoverySource ?? null,
-      opts.discoveredAt ?? null, record.raising ?? null, record.accelerator ?? null,
+      opts.discoveredAt ?? null, opts.discoveryRunId ?? null, record.raising ?? null, record.accelerator ?? null,
       record.lastFundingDate ?? null, ts, ts,
     );
     for (const field of Object.keys(FIELD_COLUMNS)) writeProvenance(record.id, field, opts.origin, opts.source);
@@ -316,18 +372,75 @@ export function setResolvedFounder(
   companyId: string,
   founder: { name: string; role: string; background: string },
 ): boolean {
+  return setResolvedFounders(companyId, [founder]);
+}
+
+/**
+ * Replace the "Unknown founder" placeholder with EVERY founder research
+ * verified — not just the first one.
+ *
+ * The bug this fixes was visible the moment the four pilot companies were
+ * materialized: `founder_candidates` held all of them with status
+ * `verified-founder` (Manifold 2, Grade 2, Unifold 3, Scheduling Wizard
+ * 3), and the `founders` table — the one the UI, the scorer, the HubSpot
+ * contact builder and the outreach drafter all read — held exactly one
+ * each. A three-founder company was displayed as a one-founder company,
+ * and the co-founders were sitting in the database the whole time.
+ *
+ * The single-founder shape came from `deriveFounderStatus` resolving one
+ * PRIMARY founder, which is a different question ("who is the contact?")
+ * from "who founded this company?". Both answers are wanted; only one was
+ * being stored.
+ *
+ * The placeholder guard is unchanged and still load-bearing: if a real
+ * person is already recorded — by a human, an import, or an earlier run —
+ * nothing is deleted and this returns false. So an analyst's correction
+ * can never be overwritten by a later automated pass, and the DELETE only
+ * ever removes placeholder rows.
+ */
+export function setResolvedFounders(
+  companyId: string,
+  founders: { name: string; role: string; background: string }[],
+): boolean {
+  if (founders.length === 0) return false;
   const db = getDb();
   const rows = db.prepare('SELECT id, name FROM founders WHERE company_id = ? ORDER BY position')
     .all(companyId) as { id: number; name: string }[];
   const isPlaceholder = (n: string) => !n?.trim() || /\bunknown\b/i.test(n);
   const realOnes = rows.filter((r) => !isPlaceholder(r.name));
-  // Somebody real is already recorded, including possibly this person.
+  // Somebody real is already recorded, including possibly these people.
   if (realOnes.length > 0) return false;
 
-  for (const r of rows) db.prepare('DELETE FROM founders WHERE id = ?').run(r.id);
-  db.prepare('INSERT INTO founders (company_id, position, name, role, background) VALUES (?, 0, ?, ?, ?)')
-    .run(companyId, founder.name, founder.role, founder.background);
-  db.prepare('UPDATE companies SET updated_at = ? WHERE id = ?').run(now(), companyId);
+  // De-duplicate on the normalized name so a person named by two sources
+  // is stored once. YC renders each founder twice (desktop + mobile) and
+  // the parser already collapses that, but this path also receives
+  // candidates merged from several source families.
+  const seen = new Set<string>();
+  const unique = founders.filter((f) => {
+    const k = f.name.toLowerCase().replace(/[^\p{L}\s]/gu, '').replace(/\s+/g, ' ').trim();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  if (unique.length === 0) return false;
+
+  /**
+   * One transaction. A DELETE followed by N INSERTs that fails partway
+   * through would leave a company with FEWER founders than it started
+   * with — destroying rows to add rows is only safe if the pair is
+   * atomic.
+   */
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) db.prepare('DELETE FROM founders WHERE id = ?').run(r.id);
+    const insert = db.prepare('INSERT INTO founders (company_id, position, name, role, background) VALUES (?, ?, ?, ?, ?)');
+    unique.forEach((f, i) => insert.run(companyId, i, f.name, f.role, f.background));
+    db.prepare('UPDATE companies SET updated_at = ? WHERE id = ?').run(now(), companyId);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
   return true;
 }
 

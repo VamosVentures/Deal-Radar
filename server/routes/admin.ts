@@ -12,6 +12,7 @@ import { hubspotServiceIfAvailable } from '../services/hubspot';
 import { outlookService } from '../services/outlook';
 import { verifyAiConnection } from '../services/analysis';
 import { computeSourceAnalytics } from '../services/sourceAnalytics';
+import { computeSourceHealth } from '../services/sourceHealth';
 import { buildShortlists, DEFAULT_PER_SECTOR, diversityAnalytics } from '../services/shortlist';
 import { CORE_VERTICAL_IDS } from '../../src/data/taxonomy';
 import { backupSettingsSchema, createBackup, getBackupMetadata, getBackupPath, getBackupSettings, listBackups, setBackupSettings } from '../services/backup';
@@ -189,6 +190,17 @@ adminRouter.put('/stale-settings', wrap(async (req, res) => {
  */
 adminRouter.get('/source-analytics', wrap(async (_req, res) => {
   res.json({ sources: computeSourceAnalytics() });
+}));
+
+/**
+ * Combined source-health view: getSourceMeta()'s static config state +
+ * computeSourceAnalytics()'s real run history, in one payload instead
+ * of two calls the UI previously had to reconcile itself. Never
+ * exposes a token/credential or a raw stack trace — see
+ * server/services/sourceHealth.ts.
+ */
+adminRouter.get('/source-health', wrap(async (_req, res) => {
+  res.json({ sources: computeSourceHealth() });
 }));
 
 /**

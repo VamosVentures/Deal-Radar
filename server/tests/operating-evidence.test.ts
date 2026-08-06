@@ -444,7 +444,7 @@ describe('what demotion does and does not disturb', () => {
       // Nothing the model can assess ABOUT THE COMPANY: no taxonomy match,
       // no stage, no traction, no founder, no jurisdiction, no round. This
       // is the shape of the 92 provisional records.
-      vertical: 'robotics', subcategory: 'Unknown', stage: 'Unknown',
+      vertical: 'frontier', subcategory: 'Unknown', stage: 'Unknown',
       city: 'Unknown', state: '??', foundedYear: 2024, teamSize: 4,
       traction: { level: 0, note: 'Unknown' },
       founders: [{ name: 'Unknown founder', role: 'Unknown', background: 'Unknown' }],
@@ -492,7 +492,7 @@ describe('what demotion does and does not disturb', () => {
       cand('Bare Domain', { operatingEvidence: 'identity-only' }),
       cand('Parked', { operatingEvidence: 'parked' }),
     ];
-    const result = selectSectorShortlist('robotics', pool);
+    const result = selectSectorShortlist('frontier', pool);
 
     expect(result.selected.map((s) => s.name)).toEqual(['Real Site']);
     expect(result.heldBack).toHaveLength(2);

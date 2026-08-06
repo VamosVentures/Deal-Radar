@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useCompanies } from '../store/companies';
 import { scoreCompany } from '../lib/scoring';
 import { VERTICALS } from '../data/taxonomy';
+import { HOT_THRESHOLD } from '../../shared/scoringThresholds';
 import { ExceptionBadge, IdentityChips, ScoreGauge } from './ui';
 
 /**
@@ -56,9 +57,23 @@ export function Ranking() {
         || b.fit.score - a.fit.score);
   }, [companies, meta, vertical, stage, state, q, quarantine, showDisqualified]);
 
+  /**
+   * "High-Fit" here must mean what it means on the KPI cards.
+   *
+   * This filter was a bare `>= 8` with no provisional check, while
+   * server/services/executiveKpis.ts requires `!provisional && score >=
+   * HOT_THRESHOLD`. Both render on the Overview, so a provisional 8.2
+   * appeared in this list and was simultaneously excluded from the
+   * High-Fit card — two numbers disagreeing on one screen, which reads as
+   * a bug in the data rather than in two definitions.
+   *
+   * shared/scoringThresholds.ts exists because the threshold was
+   * "previously duplicated as a bare 8/6.5 literal in four separate
+   * files"; this was the literal that survived the consolidation.
+   */
   const limited =
     show === 'top10' ? filtered.slice(0, 10)
-    : show === 'highFit' ? filtered.filter((x) => x.fit.score >= 8)
+    : show === 'highFit' ? filtered.filter((x) => !x.fit.provisional && x.fit.score >= HOT_THRESHOLD)
     : filtered;
 
   const sel = 'rounded-[2px] border border-line bg-panel px-2 py-1 text-xs transition-colors focus:border-marigold';
@@ -68,7 +83,7 @@ export function Ranking() {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">Vamos Fit ranking</h2>
         <div className="ml-auto flex flex-wrap gap-1 border border-line bg-panel p-0.5">
-          {([['top10', 'Top 10'], ['highFit', 'Scored 8.0 or higher'], ['all', 'All']] as const).map(([id, label]) => (
+          {([['top10', 'Top 10'], ['highFit', `High-Fit (assessed, ${HOT_THRESHOLD.toFixed(1)}+)`], ['all', 'All']] as const).map(([id, label]) => (
             <button key={id} onClick={() => setShow(id)} className={`rounded-[1px] px-2 py-1 text-xs transition-colors ${show === id ? 'bg-verde-soft font-semibold text-verde' : 'text-slate-mid hover:text-ink'}`}>{label}</button>
           ))}
         </div>

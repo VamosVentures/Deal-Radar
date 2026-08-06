@@ -174,6 +174,11 @@ export async function refreshCompanyResearch(companyId: string, actor: string): 
   recordReviewDecision({
     subjectType: 'company', subjectId: companyId, decision: 'refresh-research', actor,
     reason: `${newEvidence.length} new evidence item(s), ${updatedFields.length} field(s) updated, ${conflictingFields.length} conflict(s), score ${oldFit.score.toFixed(1)} → ${newFit.score.toFixed(1)}`,
+    // "Refresh live research" re-queries live sources and merges whatever
+    // is found — real, human-triggered work, but not itself an analyst
+    // JUDGMENT about the company (no disposition changed, no note was
+    // written). It must not, by itself, count as a company review.
+    countsAsCompanyReview: false,
   });
   audit({
     provider: 'system', mode: 'local', action: 'company-refresh-research', subject: companyId, outcome: 'ok',

@@ -34,8 +34,12 @@ test.describe('Settings', () => {
     await openSettings(page);
     // "Accelerator & fellowship sites" has no adapter — its source-quality
     // row must read Planned, and its schedule checkbox must be disabled
-    // and unchecked, never selectable as if it were live.
-    const row = page.getByRole('row', { name: /Accelerator & fellowship sites/ });
+    // and unchecked, never selectable as if it were live. Scoped to the
+    // "Source quality" section specifically: the newer "Source health"
+    // section also lists every source, by a different vocabulary
+    // ("Disabled" there, "Planned" here) — both correct, in two places.
+    const sourceQualitySection = page.locator('section', { hasText: 'Source quality' });
+    const row = sourceQualitySection.getByRole('row', { name: /Accelerator & fellowship sites/ });
     await expect(row).toContainText('Planned');
     await expect(page.getByRole('checkbox', { name: 'Accelerator & fellowship sites' })).toBeDisabled();
     await expect(page.getByRole('checkbox', { name: 'Accelerator & fellowship sites' })).not.toBeChecked();

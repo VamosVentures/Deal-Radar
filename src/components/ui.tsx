@@ -233,3 +233,20 @@ export function SourceStateBadge({ state }: { state: SourceState }) {
   const s = SOURCE_STATE[state];
   return <span className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide ${s.cls}`}>{s.label}</span>;
 }
+
+/** Combined health status (config + real run history) shown on the source-health view. */
+export type SourceHealthStatus = 'disabled' | 'blocked' | 'healthy' | 'degraded' | 'failed' | 'enabled';
+
+const SOURCE_HEALTH: Record<SourceHealthStatus, { label: string; cls: string }> = {
+  healthy: { label: 'Healthy', cls: 'bg-verde-soft text-verde' },
+  enabled: { label: 'Enabled — not yet run', cls: 'bg-line text-slate-mid' },
+  degraded: { label: 'Degraded', cls: 'bg-marigold-soft text-marigold' },
+  failed: { label: 'Failed', cls: 'bg-alerta-soft text-alerta' },
+  blocked: { label: 'Blocked', cls: 'bg-marigold-soft text-marigold' },
+  disabled: { label: 'Disabled', cls: 'bg-line text-slate-mid' },
+};
+
+export function SourceHealthBadge({ health }: { health: SourceHealthStatus }) {
+  const s = SOURCE_HEALTH[health];
+  return <span className={`rounded-[2px] px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide ${s.cls}`}>{s.label}</span>;
+}

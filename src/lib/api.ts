@@ -1,3 +1,23 @@
+import type { TractionState } from '../../shared/traction';
+
+/** One extractor finding awaiting an accept / edit / reject decision. */
+export interface PendingEvidenceItem {
+  id: number;
+  kind: 'traction' | 'stage';
+  quote: string;
+  sourceUrl: string;
+  section: string;
+  aboutThisCompany: boolean;
+  provenance: 'company-claimed' | 'independently-confirmed';
+  suggestedState: string | null;
+  suggestionBasis: string | null;
+  /** An analyst's corrected excerpt. `quote` always keeps what the source published. */
+  editedQuote: string | null;
+  accessedAt: string;
+  status: 'pending' | 'accepted' | 'rejected' | 'edited';
+  decidedBy: string | null;
+  decisionNote: string | null;
+}
 import type {
   CompanyStatus,
   CompanySyncRequest,
@@ -24,6 +44,7 @@ import type { CompanyNote } from '../../shared/notes';
 import type {
   CompanyEnrichment, FieldCorrection, RadarEntry, RadarFilter,
 } from '../../shared/enrichment';
+import type { CumulativePeriod, CumulativePeriodResult, ExecutiveKpis } from '../../shared/executiveKpis';
 
 export type UiStatus =
   | 'Connected' | 'Not connected' | 'Disconnected' | 'Configuration required' | 'Expired' | 'Error'
@@ -140,6 +161,12 @@ async function call<T>(path: string, init?: RequestInit & { idempotent?: boolean
 
 export const api = {
   status: () => call<FullStatus>('/api/integrations/status'),
+
+  overview: {
+    kpis: () => call<ExecutiveKpis>('/api/overview/kpis'),
+    cumulativePeriod: (entity: 'companies' | 'founders', period: CumulativePeriod) =>
+      call<CumulativePeriodResult>(`/api/overview/kpis/cumulative?entity=${entity}&period=${period}`),
+  },
 
   auth: {
     status: () => call<AuthStatus>('/api/auth/status'),
@@ -363,6 +390,24 @@ export const api = {
         body: JSON.stringify({ actor }),
       }),
     /**
+     * Analyst traction review. The POST is rejected with 422 and a
+     * `messages` array when a scoring state arrives with no source URL
+     * and no substantive note — see shared/traction.ts. The caller shows
+     * those reasons rather than retrying.
+     */
+    pendingEvidence: (id: string) =>
+      call<{ companyId: string; items: PendingEvidenceItem[] }>(`/api/companies/${id}/pending-evidence`),
+    decidePendingEvidence: (pendingId: number, body: { status: 'accepted' | 'rejected' | 'edited'; actor: string; note?: string | null; editedQuote?: string | null }) =>
+      call<{ ok: true }>(`/api/pending-evidence/${pendingId}/decide`, { method: 'POST', body: JSON.stringify(body) }),
+    tractionReview: (id: string) =>
+      call<{ companyId: string; state: TractionState; history: unknown[] }>(`/api/companies/${id}/traction`),
+    saveTractionReview: (id: string, body: Record<string, unknown>) =>
+      call<{
+        ok: true;
+        scoreRowAppended: boolean;
+        score: { before: number | null; after: number; provisionalBefore: boolean | null; provisionalAfter: boolean } | null;
+      }>(`/api/companies/${id}/traction`, { method: 'POST', body: JSON.stringify(body) }),
+    /**
      * Manual website confirmation. Two calls on purpose: `preview`
      * writes nothing and returns the before/after, `confirm` refuses
      * without an explicit `confirmed: true`.
@@ -412,6 +457,7 @@ export const api = {
     diversityAnalytics: () => call<DiversityAnalytics>('/api/admin/diversity-analytics'),
     shortlists: () => call<ShortlistsResponse>('/api/admin/shortlists'),
     sourceAnalytics: () => call<{ sources: SourceAnalytics[] }>('/api/admin/source-analytics'),
+    sourceHealth: () => call<{ sources: SourceHealth[] }>('/api/admin/source-health'),
     backups: {
       list: () => call<{ backups: BackupMetadata[]; settings: { maxBackups: number; maxBackupAgeDays: number } }>('/api/admin/backups'),
       create: (actor: string) => call<BackupMetadata>('/api/admin/backups', { method: 'POST', body: JSON.stringify({ actor }) }),
@@ -591,6 +637,19 @@ export interface SourceAnalytics {
   avgFitScoreOfImported: number | null;
   mostRecentSuccessfulRunAt: string | null;
   mostRecentFailedRunAt: string | null;
+}
+
+export interface SourceHealth {
+  sourceId: string;
+  name: string;
+  health: 'disabled' | 'blocked' | 'healthy' | 'degraded' | 'failed' | 'enabled';
+  authOrConfigMissing: boolean;
+  lastAttemptedSyncAt: string | null;
+  lastSuccessfulSyncAt: string | null;
+  recordsInLatestRun: number | null;
+  recentErrorSummary: string | null;
+  failureRate: number | null;
+  companiesImported: number;
 }
 
 /** Source-diversity analytics, computed server-side from persisted evidence only. */

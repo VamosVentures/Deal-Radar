@@ -8,7 +8,7 @@ test.use({ storageState: { cookies: [], origins: [] } });
 test.describe('Authentication', () => {
   test('the WHOLE application is gated when unauthenticated, not just Settings', async ({ page }) => {
     // Every route must land on the sign-in screen. Overview and
-    // Companies are the important ones: they used to render every
+    // All Deals are the important ones: they used to render every
     // persisted company to an anonymous visitor.
     for (const route of ['/', '/companies', '/discovery', '/stealth', '/sources']) {
       await page.goto(route);
@@ -16,7 +16,7 @@ test.describe('Authentication', () => {
       await expect(page.getByLabel('Password')).toBeVisible();
       // No application content leaks behind the gate.
       await expect(page.getByText('System status')).not.toBeVisible();
-      await expect(page.getByRole('link', { name: 'Companies' })).not.toBeVisible();
+      await expect(page.getByRole('link', { name: 'All Deals' })).not.toBeVisible();
     }
   });
 

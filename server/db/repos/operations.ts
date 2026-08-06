@@ -66,15 +66,44 @@ export function updateRunCounts(runId: string, counts: { imported: number; updat
 
 // ── Review decisions ─────────────────────────────────────────────
 
+/**
+ * The single place a company-level review timestamp gets stamped
+ * (companies.last_reviewed_at).
+ *
+ * Every call of this function is reached only via an interactive
+ * analyst-route action (never the automated discovery or enrichment
+ * pipelines, which only ever call this with subjectType 'candidate') —
+ * but not every interactive action represents actual analyst JUDGMENT
+ * about the company, so subjectType 'company' alone is not sufficient.
+ * `countsAsCompanyReview` (default true) is the explicit opt-out for
+ * the one exception: "Refresh live research" re-queries live sources
+ * and merges whatever it finds — real work was done, but no analyst
+ * judgment was exercised, so a call for that action passes `false`.
+ * Everything else that reaches this function with subjectType='company'
+ * — a status/disposition change, "Mark reviewed", a note, or a
+ * founder-candidate confirm/reject recorded against its company — does
+ * represent a human decision about THIS company and keeps the default.
+ *
+ * Because actor is an unauthenticated free string in this build (no
+ * per-user accounts), this records that a company-level review ACTION
+ * happened, attributed to whatever actor string the caller supplied —
+ * not a cryptographically verified human identity.
+ */
 export function recordReviewDecision(args: {
   subjectType: 'candidate' | 'company' | 'possible-duplicate';
   subjectId: string;
   decision: string;
   actor: string;
   reason?: string;
+  countsAsCompanyReview?: boolean;
 }): void {
-  getDb().prepare('INSERT INTO review_decisions (subject_type, subject_id, decision, actor, reason, at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(args.subjectType, args.subjectId, args.decision, args.actor, args.reason ?? '', now());
+  const at = now();
+  const db = getDb();
+  db.prepare('INSERT INTO review_decisions (subject_type, subject_id, decision, actor, reason, at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(args.subjectType, args.subjectId, args.decision, args.actor, args.reason ?? '', at);
+  if (args.subjectType === 'company' && args.countsAsCompanyReview !== false) {
+    db.prepare("UPDATE companies SET last_reviewed_at = ? WHERE id = ? AND status = 'active'").run(at, args.subjectId);
+  }
 }
 
 export function listReviewDecisions(subjectId?: string): { subjectType: string; subjectId: string; decision: string; actor: string; reason: string; at: string }[] {
@@ -102,15 +131,19 @@ export function saveScore(
     version: string;
     evidenceConfidence: number;
     explanation: string;
+    provisional?: boolean;
+    completeness?: number;
+    assessablePoints?: number;
   },
   supportingEvidenceUrls: string[] = [],
 ): void {
   getDb().prepare(`
-    INSERT INTO scoring_results (company_id, score, total_points, components, exceptions, version, evidence_confidence, explanation, supporting_evidence, computed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scoring_results (company_id, score, total_points, components, exceptions, version, evidence_confidence, explanation, supporting_evidence, computed_at, provisional, completeness, assessable_points)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     companyId, fit.score, fit.totalPoints, JSON.stringify(fit.components), JSON.stringify(fit.exceptions),
     fit.version, fit.evidenceConfidence, fit.explanation, JSON.stringify(supportingEvidenceUrls), now(),
+    fit.provisional ? 1 : 0, fit.completeness ?? null, fit.assessablePoints ?? null,
   );
 }
 
@@ -123,9 +156,12 @@ export function latestScore(companyId: string): {
   explanation: string;
   supportingEvidence: string[];
   computedAt: string;
+  provisional: boolean;
+  completeness: number | null;
+  assessablePoints: number | null;
 } | null {
-  const row = getDb().prepare('SELECT score, total_points, components, version, evidence_confidence, explanation, supporting_evidence, computed_at FROM scoring_results WHERE company_id = ? ORDER BY id DESC LIMIT 1')
-    .get(companyId) as { score: number; total_points: number; components: string; version: string; evidence_confidence: number | null; explanation: string; supporting_evidence: string; computed_at: string } | undefined;
+  const row = getDb().prepare('SELECT score, total_points, components, version, evidence_confidence, explanation, supporting_evidence, computed_at, provisional, completeness, assessable_points FROM scoring_results WHERE company_id = ? ORDER BY id DESC LIMIT 1')
+    .get(companyId) as { score: number; total_points: number; components: string; version: string; evidence_confidence: number | null; explanation: string; supporting_evidence: string; computed_at: string; provisional: number; completeness: number | null; assessable_points: number | null } | undefined;
   if (!row) return null;
   return {
     score: row.score,
@@ -136,7 +172,20 @@ export function latestScore(companyId: string): {
     explanation: row.explanation,
     supportingEvidence: z.array(z.string()).catch([]).parse(JSON.parse(row.supporting_evidence)),
     computedAt: row.computed_at,
+    provisional: row.provisional === 1,
+    completeness: row.completeness,
+    assessablePoints: row.assessable_points,
   };
+}
+
+/** Latest score for every company, in one query — avoids N+1 per-company lookups for aggregate KPIs. */
+export function latestScoresForAllCompanies(): Map<string, { score: number; provisional: boolean }> {
+  const rows = getDb().prepare(`
+    SELECT sr.company_id, sr.score, sr.provisional
+    FROM scoring_results sr
+    WHERE sr.id = (SELECT MAX(id) FROM scoring_results WHERE company_id = sr.company_id)
+  `).all() as { company_id: string; score: number; provisional: number }[];
+  return new Map(rows.map((r) => [r.company_id, { score: r.score, provisional: r.provisional === 1 }]));
 }
 
 // ── HubSpot sync history ─────────────────────────────────────────

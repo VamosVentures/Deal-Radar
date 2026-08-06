@@ -16,7 +16,7 @@ function ev(
 ): CandidateEvidence {
   return {
     claim, source, url, dateAccessed: today(), publishedAt,
-    verificationStatus: 'Not verified', confidence, notes,
+    verificationStatus: 'Not verified', confidence, notes, assertionType: 'fact',
   };
 }
 

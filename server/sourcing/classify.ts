@@ -29,13 +29,14 @@ interface SectorRule {
 
 const RULES: SectorRule[] = [
   {
-    id: 'robotics',
-    strong: [/\brobot(ic|ics|s)?\b/i, /\bhumanoid\b/i, /\bcobot\b/i, /\bautonomous\s+(vehicle|mobile\s+robot|drone)/i, /\bwarehouse\s+automation\b/i, /\bteleoperat/i],
-    weak: [/\bactuator/i, /\bmanipulat(or|ion)\b/i, /\bgripper/i, /\bdrone\b/i, /\bLiDAR\b/i, /\bmotion\s+planning\b/i, /\bfleet\s+of\s+machines\b/i],
-  },
-  {
-    id: 'spacetech',
+    // Frontier = Robotics + Space Tech, combined into one hard-tech
+    // sector (src/data/taxonomy.ts). Kept as a single rule object (not
+    // two rules both tagged 'frontier') because classifyCandidate below
+    // assumes one scored entry per vertical id — two objects sharing an
+    // id would silently corrupt its "top vs runner-up" separation math.
+    id: 'frontier',
     strong: [
+      /\brobot(ic|ics|s)?\b/i, /\bhumanoid\b/i, /\bcobot\b/i, /\bautonomous\s+(vehicle|mobile\s+robot|drone)/i, /\bwarehouse\s+automation\b/i, /\bteleoperat/i,
       /\bspace\s?(tech|craft|flight)\b/i, /\bsatellite/i, /\borbit(al)?\b/i, /\blaunch\s+vehicle\b/i,
       /\bearth\s+observation\b/i, /\bin-?space\b/i, /\bconstellation\s+of\s+satellites\b/i,
       // Product nouns, not the word "space". A rocket engine, a
@@ -45,7 +46,10 @@ const RULES: SectorRule[] = [
       /\bspaceport\b/i, /\blunar\b/i, /\bre-?entry\s+vehicle\b/i, /\bspace\s+station\b/i,
       /\bdeep\s+space\b/i,
     ],
-    weak: [/\baerospace\b/i, /\bgeospatial\b/i, /\bremote\s+sensing\b/i, /\bground\s+station\b/i, /\bpayload\b/i, /\bLEO\b/, /\bpropulsion\b/i],
+    weak: [
+      /\bactuator/i, /\bmanipulat(or|ion)\b/i, /\bgripper/i, /\bdrone\b/i, /\bLiDAR\b/i, /\bmotion\s+planning\b/i, /\bfleet\s+of\s+machines\b/i,
+      /\baerospace\b/i, /\bgeospatial\b/i, /\bremote\s+sensing\b/i, /\bground\s+station\b/i, /\bpayload\b/i, /\bLEO\b/, /\bpropulsion\b/i,
+    ],
   },
   {
     id: 'health',
@@ -63,6 +67,16 @@ const RULES: SectorRule[] = [
     weak: [/\benergy\b/i, /\bemission/i, /\bsustainab/i, /\bbattery\b/i, /\brecycl/i, /\bnuclear\b/i],
   },
   {
+    // Future of Work also absorbs the old standalone 'ai' rule: General
+    // AI was retired as a market of its own (AI is a technology, not a
+    // market — src/data/taxonomy.ts), and genuinely horizontal AI
+    // infrastructure/tooling defaults to Future of Work per that
+    // decision. A domain-specific AI company (health diagnostics,
+    // fintech underwriting, climate modeling, robotics/space AI) still
+    // classifies into ITS domain rule instead, because that rule's own
+    // strong keywords outscore these generic AI-infra ones. Merged into
+    // one rule object (not left as a second 'fow'-tagged object) for the
+    // same reason Frontier is one object above.
     id: 'fow',
     strong: [
       /\bfuture\s+of\s+work\b/i, /\bcopilot\b/i, /\bworkflow\s+automation\b/i, /\bhiring\b/i, /\brecruit/i,
@@ -73,12 +87,6 @@ const RULES: SectorRule[] = [
       /\bupskill/i, /\breskill/i, /\bperformance\s+(?:review|management)\s+(?:software|platform|tool)\b/i,
       /\btalent\s+(?:marketplace|acquisition|platform)\b/i, /\bstaffing\s+(?:platform|marketplace|agency\s+software)\b/i,
       /\blearning\s+management\b/i, /\bdeskless\s+worker/i, /\bwage\s+access\b/i, /\btime\s+(?:and\s+attendance|tracking\s+software)\b/i,
-    ],
-    weak: [/\bcollaborat/i, /\bteam(s)?\s+(tool|platform)\b/i, /\bknowledge\s+(base|work)\b/i, /\bscheduling\b/i, /\bfreelanc/i, /\bcontractor/i, /\bonboarding\b/i, /\bemployer\b/i],
-  },
-  {
-    id: 'ai',
-    strong: [
       /\bfoundation\s+model/i, /\bLLM(s)?\b/, /\blarge\s+language\s+model/i,
       /\binference\s+(engine|infrastructure|serving)\b/i, /\bvector\s+(database|search)\b/i,
       /\bfine-?tun/i, /\bRAG\b/, /\bAI\s+(infrastructure|tooling|observability|evaluation|safety)\b/i,
@@ -89,7 +97,10 @@ const RULES: SectorRule[] = [
       /\bagentic\s+(?:infrastructure|runtime|platform)\b/i, /\bmodel\s+(?:serving|weights|training)\b/i,
       /\bAI-generated\s+content\s+detection\b/i, /\bAI\s+coding\s+(?:assistant|agent|tool)\b/i,
     ],
-    weak: [/\bAI\b/, /\bartificial\s+intelligence\b/i, /\bneural\s+net/i, /\bmodel\s+training\b/i, /\bGPU\b/, /\bagent(ic|s)?\b/i, /\bdeep\s+learning\b/i],
+    weak: [
+      /\bcollaborat/i, /\bteam(s)?\s+(tool|platform)\b/i, /\bknowledge\s+(base|work)\b/i, /\bscheduling\b/i, /\bfreelanc/i, /\bcontractor/i, /\bonboarding\b/i, /\bemployer\b/i,
+      /\bAI\b/, /\bartificial\s+intelligence\b/i, /\bneural\s+net/i, /\bmodel\s+training\b/i, /\bGPU\b/, /\bagent(ic|s)?\b/i, /\bdeep\s+learning\b/i,
+    ],
   },
 ];
 
@@ -375,13 +386,15 @@ export function matchesSector(
  * terms therefore outscore the generic ones.
  */
 const YC_TAXONOMY: { pattern: RegExp; vertical: VerticalId; weight: number }[] = [
-  // Space — deliberately heavy, since space companies frequently also
-  // tag Robotics/Hard Tech and would otherwise be misfiled.
-  { pattern: /^(?:aviation and space|space exploration|commercial space launch|satellite|aerospace)$/i, vertical: 'spacetech', weight: 5 },
-  { pattern: /\b(?:space|orbital|satellite|launch)\b/i, vertical: 'spacetech', weight: 3 },
+  // Space and Robotics both map onto 'frontier' now (src/data/taxonomy.ts)
+  // — still worth scoring heavily and separately from each other, since
+  // a company can carry only one of the two tag families, but both
+  // accumulate under the same vertical id in classifyFromTaxonomy's map.
+  { pattern: /^(?:aviation and space|space exploration|commercial space launch|satellite|aerospace)$/i, vertical: 'frontier', weight: 5 },
+  { pattern: /\b(?:space|orbital|satellite|launch)\b/i, vertical: 'frontier', weight: 3 },
 
-  { pattern: /^(?:robotics|drones|autonomous vehicles?)$/i, vertical: 'robotics', weight: 4 },
-  { pattern: /\brobot/i, vertical: 'robotics', weight: 3 },
+  { pattern: /^(?:robotics|drones|autonomous vehicles?)$/i, vertical: 'frontier', weight: 4 },
+  { pattern: /\brobot/i, vertical: 'frontier', weight: 3 },
 
   { pattern: /^(?:healthcare|health tech|healthcare it|diagnostics|therapeutics|medical devices?|digital health|bio|biotech|consumer health services|drug discovery|healthcare services)$/i, vertical: 'health', weight: 5 },
   { pattern: /\b(?:health|medical|clinical|patient|bio)\b/i, vertical: 'health', weight: 2 },
@@ -395,11 +408,12 @@ const YC_TAXONOMY: { pattern: RegExp; vertical: VerticalId; weight: number }[] =
   { pattern: /^(?:recruiting|recruiting and talent|hr tech|human resources|productivity|collaboration|future of work|workflow automation|hiring)$/i, vertical: 'fow', weight: 5 },
   { pattern: /\b(?:recruit|hiring|hr\b|workforce|productivity|collaboration)\b/i, vertical: 'fow', weight: 2 },
 
-  // General AI is last and needs a SPECIFIC tag: almost every YC company
-  // now tags "AI", so a bare AI tag is not evidence of an AI-infrastructure
-  // company. Only infra/tooling-shaped tags count.
-  { pattern: /^(?:ai\/ml|machine learning|generative ai|ai infrastructure|mlops|infrastructure|developer tools)$/i, vertical: 'ai', weight: 4 },
-  { pattern: /\b(?:llm|foundation model|inference|vector database)\b/i, vertical: 'ai', weight: 4 },
+  // Horizontal AI-infra tags map onto 'fow' (General AI's retirement —
+  // see src/data/taxonomy.ts). Last and needs a SPECIFIC tag: almost
+  // every YC company now tags "AI", so a bare AI tag is not evidence of
+  // an AI-infrastructure company. Only infra/tooling-shaped tags count.
+  { pattern: /^(?:ai\/ml|machine learning|generative ai|ai infrastructure|mlops|infrastructure|developer tools)$/i, vertical: 'fow', weight: 4 },
+  { pattern: /\b(?:llm|foundation model|inference|vector database)\b/i, vertical: 'fow', weight: 4 },
 ];
 
 export interface TaxonomyMatch {

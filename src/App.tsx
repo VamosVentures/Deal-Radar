@@ -1,9 +1,11 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { IntegrationsProvider, useIntegrations } from './store/integrations';
 import { CompaniesProvider } from './store/companies';
 import { AppGate } from './components/AppGate';
+import { VerticalDrawer } from './components/VerticalDrawer';
+import { CORE_VERTICAL_IDS, verticalById } from './data/taxonomy';
 
 // Route-level code splitting: each page (and its dependencies, e.g.
 // Overview's Recharts import) becomes its own chunk fetched on
@@ -49,6 +51,14 @@ const ICON = {
       <path d="M10 2.3v2.3M10 15.4v2.3M17.7 10h-2.3M4.6 10H2.3M15.4 4.6l-1.6 1.6M6.2 13.8l-1.6 1.6M15.4 15.4l-1.6-1.6M6.2 6.2 4.6 4.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   ),
+  vertical: (cls: string) => (
+    <svg className={cls} viewBox="0 0 20 20" fill="none" aria-hidden>
+      <rect x="2.5" y="2.5" width="6" height="6" rx="0.6" stroke="currentColor" strokeWidth="1.3" />
+      <rect x="11.5" y="2.5" width="6" height="6" rx="0.6" stroke="currentColor" strokeWidth="1.3" />
+      <rect x="2.5" y="11.5" width="6" height="6" rx="0.6" stroke="currentColor" strokeWidth="1.3" />
+      <rect x="11.5" y="11.5" width="6" height="6" rx="0.6" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  ),
 };
 
 /**
@@ -63,7 +73,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     label: 'Portfolio',
     items: [
       { to: '/', label: 'Overview', icon: ICON.overview },
-      { to: '/companies', label: 'Companies', icon: ICON.companies },
+      { to: '/companies', label: 'All Deals', icon: ICON.companies },
     ],
   },
   {
@@ -78,6 +88,20 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [{ to: '/sources', label: 'Settings', hint: 'admin only', icon: ICON.settings }],
   },
 ];
+
+/**
+ * The 5 approved investment verticals, in the order Marcos specified.
+ * Read straight from src/data/taxonomy.ts (the one canonical taxonomy —
+ * see its header comment) rather than a second hand-copied list, so
+ * there is exactly one place that ever needs updating if a vertical is
+ * added.
+ *
+ * Rendered separately from NAV_GROUPS (not as a 6th/7th/... flat item in
+ * it) because it needs different mobile behavior: this many extra items
+ * in the mobile bottom tab bar would overflow it, so mobile collapses
+ * this into a single "Verticals" tab that opens VerticalDrawer instead.
+ */
+const VERTICAL_NAV_ITEMS = CORE_VERTICAL_IDS.map((id) => verticalById(id));
 const NAV_FLAT = NAV_GROUPS.flatMap((g) => g.items);
 
 function sectionLabelFor(pathname: string): string {
@@ -111,9 +135,83 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function NavGroupBlock({ group }: { group: { label: string; items: NavItem[] } }) {
+  return (
+    <div className="contents lg:block">
+      <div className="hidden px-2.5 pb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-white/30 lg:block">
+        {group.label}
+      </div>
+      <div className="contents lg:flex lg:flex-col lg:gap-0.5">
+        {group.items.map((n) => (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            end={n.to === '/'}
+            className={({ isActive }) =>
+              `group relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-[2px] py-1.5 text-[10px] transition-colors lg:flex-none lg:flex-row lg:items-center lg:gap-2.5 lg:py-1.5 lg:pl-3 lg:pr-2.5 lg:text-[13px] ${
+                isActive
+                  ? 'bg-white/[0.06] font-semibold text-marigold lg:text-white'
+                  : 'text-white/55 hover:text-white lg:text-white/65'
+              }`
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <span
+                  className={`absolute inset-x-2 -top-[3px] h-[2px] rounded-full bg-marigold transition-opacity lg:inset-y-1 lg:inset-x-auto lg:left-0 lg:top-auto lg:w-[2px] lg:h-auto ${isActive ? 'opacity-100' : 'opacity-0'}`}
+                  aria-hidden
+                />
+                {n.icon('h-[18px] w-[18px] lg:h-4 lg:w-4')}
+                <span className="lg:whitespace-nowrap">{n.label}</span>
+                {n.hint && <span className="hidden font-mono text-[9px] uppercase text-white/35 lg:ml-auto lg:inline">{n.hint}</span>}
+              </>
+            )}
+          </NavLink>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Desktop-only full list; mobile gets a single tab (rendered by the caller) that opens VerticalDrawer instead. */
+function VerticalsNavGroup() {
+  const location = useLocation();
+  const activeVertical = location.pathname === '/companies' ? new URLSearchParams(location.search).get('vertical') : null;
+  return (
+    <div className="hidden lg:block">
+      <div className="px-2.5 pb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-white/30">Verticals</div>
+      <div className="flex flex-col gap-0.5">
+        {VERTICAL_NAV_ITEMS.map((v) => {
+          const isActive = activeVertical === v.id;
+          return (
+            <Link
+              key={v.id}
+              to={`/companies?vertical=${v.id}`}
+              className={`group relative flex items-center gap-2.5 rounded-[2px] py-1.5 pl-3 pr-2.5 text-[13px] transition-colors ${
+                isActive ? 'bg-white/[0.06] font-semibold text-white' : 'text-white/65 hover:text-white'
+              }`}
+            >
+              <span
+                className={`absolute inset-y-1 left-0 w-[2px] rounded-full bg-marigold transition-opacity ${isActive ? 'opacity-100' : 'opacity-0'}`}
+                aria-hidden
+              />
+              {ICON.vertical('h-4 w-4')}
+              <span className="whitespace-nowrap">{v.name}</span>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function Sidebar() {
   const { status, backendUp } = useIntegrations();
+  const [verticalsOpen, setVerticalsOpen] = useState(false);
+  const location = useLocation();
+  const verticalsTabActive = location.pathname === '/companies' && new URLSearchParams(location.search).has('vertical');
   const modeLabel = backendUp === false ? 'API offline' : status?.mode === 'live' ? 'Integrations configured' : 'No integrations connected';
+  const [portfolioGroup, ...restGroups] = NAV_GROUPS;
   return (
     <aside className="relative flex w-full shrink-0 flex-col bg-ink text-white lg:sticky lg:top-0 lg:h-screen lg:w-60 lg:overflow-y-auto">
       <div className="flex items-center justify-between px-4 py-3 lg:block lg:px-5 lg:py-5">
@@ -124,42 +222,32 @@ function Sidebar() {
         aria-label="Main"
         className="fixed inset-x-0 bottom-0 z-30 flex items-stretch justify-around gap-0.5 border-t border-white/10 bg-ink px-1 py-1 lg:static lg:z-auto lg:flex-1 lg:flex-col lg:items-stretch lg:justify-start lg:gap-3.5 lg:border-0 lg:bg-transparent lg:px-3 lg:py-0"
       >
-        {NAV_GROUPS.map((group) => (
-          <div key={group.label} className="contents lg:block">
-            <div className="hidden px-2.5 pb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-white/30 lg:block">
-              {group.label}
-            </div>
-            <div className="contents lg:flex lg:flex-col lg:gap-0.5">
-              {group.items.map((n) => (
-                <NavLink
-                  key={n.to}
-                  to={n.to}
-                  end={n.to === '/'}
-                  className={({ isActive }) =>
-                    `group relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-[2px] py-1.5 text-[10px] transition-colors lg:flex-none lg:flex-row lg:items-center lg:gap-2.5 lg:py-1.5 lg:pl-3 lg:pr-2.5 lg:text-[13px] ${
-                      isActive
-                        ? 'bg-white/[0.06] font-semibold text-marigold lg:text-white'
-                        : 'text-white/55 hover:text-white lg:text-white/65'
-                    }`
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      <span
-                        className={`absolute inset-x-2 -top-[3px] h-[2px] rounded-full bg-marigold transition-opacity lg:inset-y-1 lg:inset-x-auto lg:left-0 lg:top-auto lg:w-[2px] lg:h-auto ${isActive ? 'opacity-100' : 'opacity-0'}`}
-                        aria-hidden
-                      />
-                      {n.icon('h-[18px] w-[18px] lg:h-4 lg:w-4')}
-                      <span className="lg:whitespace-nowrap">{n.label}</span>
-                      {n.hint && <span className="hidden font-mono text-[9px] uppercase text-white/35 lg:ml-auto lg:inline">{n.hint}</span>}
-                    </>
-                  )}
-                </NavLink>
-              ))}
-            </div>
-          </div>
-        ))}
+        <NavGroupBlock group={portfolioGroup} />
+
+        {/* Mobile: one "Verticals" tab opening VerticalDrawer, so 7 links don't overflow the bottom bar. */}
+        <button
+          type="button"
+          onClick={() => setVerticalsOpen(true)}
+          aria-haspopup="dialog"
+          aria-expanded={verticalsOpen}
+          className={`group relative flex flex-1 flex-col items-center justify-center gap-0.5 rounded-[2px] py-1.5 text-[10px] transition-colors lg:hidden ${
+            verticalsTabActive ? 'bg-white/[0.06] font-semibold text-marigold' : 'text-white/55 hover:text-white'
+          }`}
+        >
+          <span
+            className={`absolute inset-x-2 -top-[3px] h-[2px] rounded-full bg-marigold transition-opacity ${verticalsTabActive ? 'opacity-100' : 'opacity-0'}`}
+            aria-hidden
+          />
+          {ICON.vertical('h-[18px] w-[18px]')}
+          <span>Verticals</span>
+        </button>
+        {/* Desktop: the full 7-item group, in its own labelled section. */}
+        <VerticalsNavGroup />
+
+        {restGroups.map((group) => <NavGroupBlock key={group.label} group={group} />)}
       </nav>
+
+      {verticalsOpen && <VerticalDrawer onClose={() => setVerticalsOpen(false)} />}
 
       <div className="hidden px-5 pb-5 font-mono text-[10px] leading-relaxed text-white/45 lg:block">
         <span className={backendUp === false ? 'text-alerta' : status?.mode === 'live' ? 'text-verde' : 'text-marigold'}>● {modeLabel}</span>
@@ -212,12 +300,25 @@ function TopBar() {
   );
 }
 
-/** Old per-vertical routes → the Companies page, pre-filtered. */
+/** Per-vertical routes → the All Deals page (/companies), pre-filtered. */
 function VerticalRedirect({ vertical }: { vertical: string }) {
   const { search } = useLocation();
   const params = new URLSearchParams(search);
   params.set('vertical', vertical);
   return <Navigate to={`/companies?${params.toString()}`} replace />;
+}
+
+/**
+ * Old bookmarks to a now-retired vertical → All Deals, UNFILTERED.
+ * Robotics/Space Tech/AI links redirect through VerticalRedirect onto
+ * their new home (Frontier / Future of Work respectively) below; this
+ * one is for the legacy `aoi` catch-all specifically, which was never
+ * one of the five approved verticals and has no equivalent to filter by
+ * — filtering to a vertical id that no longer exists would just show an
+ * empty table, which reads as a bug rather than a deliberate redirect.
+ */
+function PlainCompaniesRedirect() {
+  return <Navigate to="/companies" replace />;
 }
 
 export default function App() {
@@ -239,10 +340,24 @@ export default function App() {
                   <Route path="/fintech" element={<VerticalRedirect vertical="fintech" />} />
                   <Route path="/future-of-work" element={<VerticalRedirect vertical="fow" />} />
                   <Route path="/sustainability" element={<VerticalRedirect vertical="sustainability" />} />
-                  <Route path="/robotics" element={<VerticalRedirect vertical="robotics" />} />
-                  <Route path="/space-tech" element={<VerticalRedirect vertical="spacetech" />} />
-                  <Route path="/ai" element={<VerticalRedirect vertical="ai" />} />
-                  <Route path="/areas-of-interest" element={<VerticalRedirect vertical="aoi" />} />
+                  <Route path="/frontier" element={<VerticalRedirect vertical="frontier" />} />
+                  {/*
+                    Legacy bookmarks: Robotics and Space Tech were combined into Frontier; AI was
+                    retired as a standalone vertical (default: Future of Work).
+
+                    Every spelling in LEGACY_VERTICAL_ALIASES (src/data/taxonomy.ts) is routed, not
+                    just the hyphenated one. '/spacetech' was missing while `spacetech` is the
+                    canonical historical value — it is the first entry in migration 15's own
+                    `IN (...)` list — so the one spelling most likely to be bookmarked fell through
+                    to the catch-all and silently rendered the Overview under a '/spacetech' URL.
+                  */}
+                  <Route path="/robotics" element={<VerticalRedirect vertical="frontier" />} />
+                  <Route path="/spacetech" element={<VerticalRedirect vertical="frontier" />} />
+                  <Route path="/space-tech" element={<VerticalRedirect vertical="frontier" />} />
+                  <Route path="/space_tech" element={<VerticalRedirect vertical="frontier" />} />
+                  <Route path="/ai" element={<VerticalRedirect vertical="fow" />} />
+                  {/* Legacy 'aoi' catch-all: never one of the five approved verticals — sends to the unfiltered master view instead of a dead filter. */}
+                  <Route path="/areas-of-interest" element={<PlainCompaniesRedirect />} />
                   <Route path="/stealth" element={<StealthRadar />} />
                   <Route path="/discovery" element={<Discovery />} />
                   <Route path="/pipeline" element={<Navigate to="/companies" replace />} />

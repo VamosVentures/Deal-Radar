@@ -83,7 +83,10 @@ function SignalCard({ s, onChanged, onOutreach }: { s: StealthSignal; onChanged:
       id: `stealth-${s.id}`,
       name: `${s.founderName} (stealth — unnamed)`,
       oneLiner: s.possibleTheme !== 'Unknown' ? `Possibly building in ${s.possibleTheme} (hypothesis — unverified)` : 'Possible new company — unverified signal',
-      vertical: (s.possibleVertical === 'Unknown' ? 'aoi' : s.possibleVertical) as VerticalId,
+      // No catch-all vertical exists anymore (aoi was retired) — an
+      // unknown possible vertical falls back to Future of Work, same as
+      // any other genuinely unclassifiable signal defaults there.
+      vertical: (s.possibleVertical === 'Unknown' ? 'fow' : s.possibleVertical) as VerticalId,
       subcategory: 'Stealth — unclassified',
       stage: 'Stealth',
       city: 'Unknown', state: '??', foundedYear: new Date().getFullYear(), teamSize: 1,

@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { E2E_BACKEND_PORT } from './env';
 
-test.describe('Companies and review queue', () => {
+test.describe('All Deals (companies review queue)', () => {
   test('loads with the seeded companies and no demo/sample data', async ({ page }) => {
     await page.goto('/companies');
-    await expect(page.getByRole('heading', { name: 'Companies' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'All Deals' })).toBeVisible();
     await expect(page.getByText('E2E Health Fixture Co')).toBeVisible();
     await expect(page.getByText('E2E FinTech Fixture Co')).toBeVisible();
     // None of the fictional bundled-sample names from earlier phases should ever appear.
@@ -21,10 +21,12 @@ test.describe('Companies and review queue', () => {
 
   test('vertical, stage, and state filters narrow the list', async ({ page }) => {
     await page.goto('/companies');
-    await page.getByLabel('Filter by vertical').selectOption('fintech');
+    // The vertical filter is multi-select (toggle chips), not a <select>
+    // — pick one and confirm it narrows, then re-select "All verticals".
+    await page.getByRole('group', { name: 'Filter by vertical — select one or more' }).getByRole('button', { name: 'FinTech' }).click();
     await expect(page.getByText('E2E FinTech Fixture Co')).toBeVisible();
     await expect(page.getByText('E2E Health Fixture Co')).not.toBeVisible();
-    await page.getByLabel('Filter by vertical').selectOption('all');
+    await page.getByRole('group', { name: 'Filter by vertical — select one or more' }).getByRole('button', { name: 'All verticals' }).click();
 
     await page.getByLabel('Filter by stage').selectOption('Pre-seed');
     await expect(page.getByText('E2E FinTech Fixture Co')).toBeVisible();

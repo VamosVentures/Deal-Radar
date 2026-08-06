@@ -15,6 +15,8 @@ import { allCompanyEnrichment } from '../services/enrichmentView';
 import {
   confirmWebsite, previewWebsiteConfirmation, websiteConfirmationSchema,
 } from '../services/websiteConfirmation';
+import { applyTractionReview, currentTractionState, tractionHistory } from '../services/tractionReview';
+import { decidePendingEvidence, listPendingEvidence } from '../services/pendingEvidence';
 
 export const importsRouter = Router();
 
@@ -155,6 +157,87 @@ importsRouter.post('/companies/:id/refresh', wrap(async (req, res) => {
   recordReviewDecision({ subjectType: 'company', subjectId: id, decision: 'refreshed', actor });
   audit({ provider: 'system', mode: 'local', action: 'company-refresh', subject: id, outcome: 'ok', detail: `Marked reviewed/refreshed by ${actor} on ${today}` });
   res.json({ ok: true, lastRefreshed: today });
+}));
+
+/**
+ * Analyst traction review.
+ *
+ * GET returns the current state and the full append-only history, so a
+ * reviewer can see how a rating was reached and what it replaced.
+ *
+ * POST records a new review. It is REJECTED (422, with reasons) rather
+ * than downgraded when a scoring state arrives without a source URL or a
+ * substantive note — an opinion must not silently become points. See
+ * shared/traction.ts and server/services/tractionReview.ts.
+ *
+ * No outbound request is made, so this needs no rate limit: it records
+ * a judgement a person has already formed.
+ */
+/**
+ * Pending evidence an extractor found and a person must rule on.
+ *
+ * Accepting a CLAIM is not the same as rating traction: this endpoint
+ * records the decision and writes no score. The analyst still submits
+ * the traction review separately, which carries its own validation and
+ * appends its own scoring row.
+ */
+importsRouter.get('/companies/:id/pending-evidence', wrap(async (req, res) => {
+  const id = req.params.id as string;
+  if (!getCompany(id)) {
+    res.status(404).json({ error: 'not_found', message: 'Company not found.' });
+    return;
+  }
+  res.json({ companyId: id, items: listPendingEvidence(id) });
+}));
+
+importsRouter.post('/pending-evidence/:pendingId/decide', wrap(async (req, res) => {
+  const parsed = z.object({
+    status: z.enum(['accepted', 'rejected', 'edited']),
+    actor: z.string().min(1).default('team'),
+    note: z.string().max(2000).nullable().default(null),
+    /** The corrected excerpt for an 'edited' decision. Never replaces the published quote. */
+    editedQuote: z.string().min(1).max(2000).nullable().default(null),
+  }).safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(422).json({ error: 'invalid_decision', messages: parsed.error.issues.map((i) => i.message) });
+    return;
+  }
+  const result = decidePendingEvidence({ id: Number(req.params.pendingId), ...parsed.data });
+  if (!result.ok) {
+    /**
+     * 409, not 404, when the item exists but is already decided.
+     * Reporting "not found" for a row that is right there sends a
+     * reviewer looking for a missing record instead of telling them a
+     * colleague already ruled on it.
+     */
+    const alreadyDecided = /already/.test(result.error ?? '');
+    const invalidEdit = /corrected excerpt/.test(result.error ?? '');
+    res.status(alreadyDecided ? 409 : invalidEdit ? 422 : 404).json({
+      error: alreadyDecided ? 'already_decided' : invalidEdit ? 'invalid_decision' : 'not_found',
+      message: result.error,
+    });
+    return;
+  }
+  res.json({ ok: true });
+}));
+
+importsRouter.get('/companies/:id/traction', wrap(async (req, res) => {
+  const id = req.params.id as string;
+  if (!getCompany(id)) {
+    res.status(404).json({ error: 'not_found', message: 'Company not found.' });
+    return;
+  }
+  res.json({ companyId: id, state: currentTractionState(id), history: tractionHistory(id) });
+}));
+
+importsRouter.post('/companies/:id/traction', wrap(async (req, res) => {
+  const id = req.params.id as string;
+  const result = applyTractionReview({ ...(req.body ?? {}), companyId: id });
+  if (!result.ok) {
+    res.status(422).json({ error: 'invalid_traction_review', messages: result.errors });
+    return;
+  }
+  res.json(result);
 }));
 
 /**

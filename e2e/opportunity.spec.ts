@@ -15,7 +15,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Opportunity classification in the UI', () => {
   test('every company row carries an opportunity classification badge', async ({ page }) => {
     await page.goto('/companies');
-    await expect(page.getByRole('heading', { name: 'Companies' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'All Deals' })).toBeVisible();
 
     // Seeded companies have no deal evidence, so they must read as leads —
     // never as deals by omission.

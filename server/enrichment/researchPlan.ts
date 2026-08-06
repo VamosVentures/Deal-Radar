@@ -40,6 +40,16 @@ export interface PlannedFetch {
   sourceType: string;
   /** Published/filed date when the originating record carries one. */
   publishedAt: string | null;
+  /**
+   * True when this URL was CONSTRUCTED by convention rather than read
+   * off a record — the `/about`, `/team`, `/our-team` sweep of a
+   * company's own domain. Most of those paths do not exist on any given
+   * site, so spending the request budget on them before a KNOWN URL (an
+   * accelerator profile, a filing, an announcement we already cite) is
+   * backwards. The executor runs every known URL first; see
+   * splitKnownFirst below.
+   */
+  guessed: boolean;
 }
 
 export interface FamilyPlan {
@@ -115,11 +125,13 @@ export function buildResearchPlan(c: PlanCompany, opts: { maxTeamPages?: number 
   //    the team in the footer), then the conventional team paths.
   const root = companyRoot(c.website);
   if (root) {
-    add('company-site', { family: 'company-site', url: root, sourceType: 'Company home page', publishedAt: null });
+    add('company-site', { family: 'company-site', url: root, sourceType: 'Company home page', publishedAt: null, guessed: false });
     for (const p of TEAM_PAGE_PATHS.slice(0, maxTeamPages)) {
       add('company-site', {
         family: 'company-site', url: `${root}${p}`,
         sourceType: `Company ${p.replace(/^\//, '')} page`, publishedAt: null,
+        // Conventional path, not a URL any record gave us.
+        guessed: true,
       });
     }
   }
@@ -130,7 +142,7 @@ export function buildResearchPlan(c: PlanCompany, opts: { maxTeamPages?: number 
     if (doc) {
       add('sec-form-d', {
         family: 'sec-form-d', url: doc,
-        sourceType: 'SEC Form D related persons', publishedAt: e.date || null,
+        sourceType: 'SEC Form D related persons', publishedAt: e.date || null, guessed: false ,
       });
     }
   }
@@ -140,7 +152,7 @@ export function buildResearchPlan(c: PlanCompany, opts: { maxTeamPages?: number 
     if (isAcceleratorUrl(e.url)) {
       add('accelerator', {
         family: 'accelerator', url: e.url,
-        sourceType: e.source || 'Accelerator directory profile', publishedAt: e.date || null,
+        sourceType: e.source || 'Accelerator directory profile', publishedAt: e.date || null, guessed: false ,
       });
     }
   }
@@ -150,7 +162,7 @@ export function buildResearchPlan(c: PlanCompany, opts: { maxTeamPages?: number 
     if (d.sourceId === 'investor-news') {
       add('investor-portfolio', {
         family: 'investor-portfolio', url: d.url,
-        sourceType: d.sourceName || 'Investor announcement', publishedAt: d.publishedAt,
+        sourceType: d.sourceName || 'Investor announcement', publishedAt: d.publishedAt, guessed: false ,
       });
     }
   }
@@ -161,7 +173,7 @@ export function buildResearchPlan(c: PlanCompany, opts: { maxTeamPages?: number 
     if (isOnCompanyDomain(e.url, c.website) && !plans.get('company-site')!.fetches.some((f) => f.url === e.url)) {
       add('founder-announcement', {
         family: 'founder-announcement', url: e.url,
-        sourceType: e.source || 'Company announcement', publishedAt: e.date || null,
+        sourceType: e.source || 'Company announcement', publishedAt: e.date || null, guessed: false ,
       });
     }
   }
@@ -171,7 +183,7 @@ export function buildResearchPlan(c: PlanCompany, opts: { maxTeamPages?: number 
     if (d.sourceId === 'funding-news') {
       add('funding-press', {
         family: 'funding-press', url: d.url,
-        sourceType: d.sourceName || 'Funding press', publishedAt: d.publishedAt,
+        sourceType: d.sourceName || 'Funding press', publishedAt: d.publishedAt, guessed: false ,
       });
     }
   }
@@ -196,4 +208,36 @@ export function buildResearchPlan(c: PlanCompany, opts: { maxTeamPages?: number 
   }
 
   return SOURCE_FAMILIES.map((f) => plans.get(f)!);
+}
+
+/**
+ * Split a plan set into a KNOWN-URL pass and a GUESSED-PATH pass.
+ *
+ * The executor runs pass 1 in full before pass 2, so an accelerator
+ * profile, a filing or a cited announcement is always fetched before the
+ * `/about`, `/team`, `/our-team` sweep of a company's own domain.
+ *
+ * This matters because the request budget is finite and the guessed
+ * paths mostly 404. In a live run the company-site family burned five
+ * requests on a domain that answered one of them, and later companies in
+ * the batch reported "0/9 source families answered" — which reads as a
+ * finding about the COMPANY when it was a finding about our own budget.
+ * Known URLs are also strictly better evidence: somebody recorded them.
+ *
+ * A family with no known fetches still appears in pass 1 carrying its
+ * `unavailableReason`, so "we had no URL for this family" is reported
+ * exactly once rather than twice.
+ */
+export function splitKnownFirst(plans: FamilyPlan[]): { known: FamilyPlan[]; guessed: FamilyPlan[] } {
+  const known: FamilyPlan[] = [];
+  const guessed: FamilyPlan[] = [];
+  for (const plan of plans) {
+    const knownFetches = plan.fetches.filter((f) => !f.guessed);
+    const guessedFetches = plan.fetches.filter((f) => f.guessed);
+    known.push({ ...plan, fetches: knownFetches });
+    if (guessedFetches.length > 0) {
+      guessed.push({ ...plan, fetches: guessedFetches, unavailableReason: null });
+    }
+  }
+  return { known, guessed };
 }

@@ -144,6 +144,93 @@ async function seedEnrichment(cookiePair: string): Promise<void> {
   db.close();
 }
 
+
+/**
+ * The four named pilot candidates, with their real parsed YC evidence.
+ *
+ * These exist in the E2E database so the analyst evidence workflow can be
+ * exercised in a real browser — viewing the claim and its source,
+ * accepting, editing before accepting, rejecting — WITHOUT recording fake
+ * analyst decisions against the production-like development database.
+ * That separation is deliberate: a decision is a person's judgement, and
+ * a test must never leave one behind on a real record.
+ *
+ * The companies are created through the real CSV import API; the pending
+ * evidence is produced by running the real parser over the committed YC
+ * fixtures and the real `recordYcPendingEvidence` service, so what the
+ * browser sees is what the pipeline actually produces — not hand-written
+ * rows shaped to make the panel look right.
+ */
+const PILOT_CSV = [
+  'name,oneLiner,vertical,subcategory,stage,city,state,foundedYear,teamSize,tractionLevel,tractionNote,founderName,founderRole,founderBackground,evidenceClaim,evidenceSource,evidenceUrl,evidenceDate,evidenceType',
+  'Scheduling Wizard,Logistics infrastructure to modernize healthcare operations,health,Healthcare infrastructure,Unknown,Washington,DC,2024,3,0,Unknown — not yet researched,Samuel Oberly,Founder,Johns Hopkins and Cambridge trained mathematician,Listed in the Y Combinator public directory,Y Combinator,https://www.ycombinator.com/companies/scheduling-wizard,2026-08-06,Database record',
+  'Grade,API for performance-based payroll,fintech,Payments,Unknown,San Francisco,CA,2025,2,0,Unknown — not yet researched,Lotanna Ezeike,CEO Co-founder,2x VC-backed founder previously product lead at Barclays,Listed in the Y Combinator public directory,Y Combinator,https://www.ycombinator.com/companies/grade,2026-08-06,Database record',
+].join('\n');
+
+async function seedPilotCandidates(cookiePair: string): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/companies/import-csv`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookiePair },
+    body: JSON.stringify({ csv: PILOT_CSV }),
+  });
+  if (!res.ok) throw new Error(`E2E pilot seed failed: ${res.status} ${await res.text()}`);
+
+  const listed = await fetch(`${baseUrl}/api/companies/imported`, { headers: { Cookie: cookiePair } });
+  const { companies } = await listed.json() as { companies: { id: string; name: string }[] };
+  const ids: Record<string, string> = {};
+  for (const name of ['Scheduling Wizard', 'Grade']) {
+    const found = companies.find((c) => c.name === name);
+    if (!found) throw new Error(`E2E pilot seed could not find "${name}".`);
+    ids[name] = found.id;
+  }
+
+  /**
+   * Recorded in a CHILD PROCESS, with DATABASE_FILE in its environment.
+   *
+   * This is not ceremony. `recordYcPendingEvidence` writes through the
+   * `getDb()` singleton, and that singleton resolves its path from `env`,
+   * which is parsed from `process.env` once at module load. Setting
+   * `process.env.DATABASE_FILE` from inside this already-loaded process
+   * therefore does nothing, and the service writes to the DEFAULT
+   * development database instead of the isolated E2E one.
+   *
+   * That is exactly what happened on the first attempt: the seed aborted
+   * on `FOREIGN KEY constraint failed`, because it was trying to attach
+   * E2E company ids to the real dev database. The constraint caught it and
+   * nothing was written — but relying on a foreign key to notice that a
+   * test is writing to production-like data is not a design. A child
+   * process gets a correctly-configured `env` from the start.
+   */
+  const { execFileSync } = await import('node:child_process');
+  const { E2E_DB_PATH, E2E_KV_PATH } = await import('./env');
+  const script = `
+    import { parseYcProfile } from './server/enrichment/ycProfile.ts';
+    import { recordYcPendingEvidence } from './server/services/pendingEvidence.ts';
+    import { SCHEDULING_WIZARD, GRADE } from './server/tests/fixtures/ycProfiles.ts';
+    const ids = JSON.parse(process.env.PILOT_IDS!);
+    const pairs: [string, string, string][] = [
+      ['Scheduling Wizard', SCHEDULING_WIZARD, 'scheduling-wizard'],
+      ['Grade', GRADE, 'grade'],
+    ];
+    for (const [name, html, slug] of pairs) {
+      const profile = parseYcProfile(html, 'https://www.ycombinator.com/companies/' + slug);
+      if (!profile) throw new Error('could not parse the ' + name + ' fixture');
+      const r = recordYcPendingEvidence(ids[name], profile, { accessedAt: '2026-08-06', actor: 'e2e-seed' });
+      console.log(name, JSON.stringify(r));
+    }
+  `;
+  execFileSync('npx', ['tsx', '--eval', script], {
+    cwd: path.join(import.meta.dirname, '..'),
+    env: {
+      ...process.env,
+      DATABASE_FILE: E2E_DB_PATH,
+      DATA_FILE: E2E_KV_PATH,
+      PILOT_IDS: JSON.stringify(ids),
+    },
+    stdio: 'inherit',
+  });
+}
+
 export default async function globalSetup(): Promise<void> {
   fs.mkdirSync(E2E_DATA_DIR, { recursive: true });
   await waitForBackend(30_000);
@@ -178,6 +265,7 @@ export default async function globalSetup(): Promise<void> {
   }
 
   await seedEnrichment(cookiePair);
+  await seedPilotCandidates(cookiePair);
 
   // Persist the session so specs start signed in. Specs that test the
   // gate itself opt out with an empty storageState (see auth.spec.ts).

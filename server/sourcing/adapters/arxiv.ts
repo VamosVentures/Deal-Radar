@@ -2,6 +2,7 @@ import { fetchWithTimeout } from '../../lib/http';
 import { classifyFetchError, classifyHttpStatus } from '../errors';
 import { validateLeads } from '../validate';
 import type { AdapterOutcome, SourceAdapter } from '../types';
+import { resolveQueryTerm } from '../verticalQueries';
 
 /**
  * arXiv's public search API (export.arxiv.org) — official, key-free,
@@ -79,7 +80,7 @@ export const arxivAdapter: SourceAdapter = {
   sourceType: 'api',
 
   async run(q, budget): Promise<AdapterOutcome> {
-    const term = q.terms[0] ?? q.subcategory ?? q.vertical ?? 'startup';
+    const term = resolveQueryTerm(q.terms, q.vertical, 'research', q.subcategory ?? q.vertical ?? 'startup');
     const params = new URLSearchParams({
       search_query: `all:${term}`,
       start: '0',

@@ -18,7 +18,7 @@ function fixtureRun(over: Partial<DiscoveryRun>, id: string): DiscoveryRun {
   return {
     id, at: startedAt, completedAt: over.completedAt ?? startedAt, runType: 'manual', mode: 'live',
     query: baseQuery, sourceResults: [], discovered: 0, updatedExisting: 0, duplicatesSkipped: 0,
-    duplicatesIdentified: 0, filteredByPolicy: 0, rejectedByValidation: 0, imported: 0, errors: [],
+    duplicatesIdentified: 0, filteredByPolicy: 0, filteredByThesis: 0, filteredByQuality: 0, preview: false, rejectedByValidation: 0, imported: 0, errors: [],
     apiCalls: 0, modelCalls: 0, estimatedTokens: 0, estimatedCostUsd: 0, durationMs: 0,
     status: 'Completed', initiatedBy: 'test',
     ...over,

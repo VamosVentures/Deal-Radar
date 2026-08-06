@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { validateExternal, validateLeads } from '../validate';
 import { politeFetch, RequestBudget } from '../politeness';
 import type { AdapterOutcome, SourceAdapter } from '../types';
+import { resolveQueryTerm } from '../verticalQueries';
 
 /**
  * SBIR/STTR public awards API (api.www.sbir.gov) — the U.S. government
@@ -55,7 +56,7 @@ export const sbirAdapter: SourceAdapter = {
   sourceType: 'award',
 
   async run(q, budget): Promise<AdapterOutcome> {
-    const term = q.terms[0] ?? q.subcategory ?? q.vertical ?? 'technology';
+    const term = resolveQueryTerm(q.terms, q.vertical, 'grants', q.subcategory ?? q.vertical ?? 'technology');
     const rows = Math.min(budget.maxResults, 25);
     const url = `https://api.www.sbir.gov/public/api/awards?keyword=${encodeURIComponent(term)}&rows=${rows}`;
 
@@ -76,18 +77,47 @@ export const sbirAdapter: SourceAdapter = {
     });
 
     if (!res.ok) {
+      /**
+       * Diagnose the failure HONESTLY, because the previous mapping did
+       * not and the run report inherited the mistake.
+       *
+       * `forbidden` used to map to 'missing-credentials', which produced
+       * "Missing credentials: … Usually a User-Agent or access-policy
+       * requirement." That is false: the SBIR public API has no
+       * credential, no key, and no account. Nothing we could configure
+       * would change the outcome, so labelling it a credential problem
+       * sends a reader off to fix something that does not exist.
+       *
+       * What the service actually returns, verified directly on
+       * 2026-08-05 across spaced attempts from a cold session, is:
+       *   HTTP 429 {"Code":"TooManyRequestsError",
+       *             "Message":"The SBIR Public API is not available at this time."}
+       * on the FIRST request — so it is the service declaring itself
+       * unavailable to everyone, not us exceeding a rate. The older
+       * documented path (www.sbir.gov/api/awards.json) now returns 404.
+       * Both are outages to report and wait out, not controls to work
+       * around, and this adapter does not attempt to.
+       */
+      const body = (res.body ?? '').slice(0, 400);
+      const serviceDeclaredDown = /not available at this time|TooManyRequestsError/i.test(body);
       const failure =
-        res.failure === 'service-unavailable' ? 'http-error'
-        : res.failure === 'forbidden' ? 'missing-credentials'
+        serviceDeclaredDown ? 'http-error'
+        : res.failure === 'service-unavailable' ? 'http-error'
+        // No credential exists for this API, so a 403 is an access
+        // policy on THEIR side (CDN/geo/bot rule), not a missing secret.
+        : res.failure === 'forbidden' ? 'http-error'
         : res.failure === 'rate-limited-by-us' ? 'rate-limited'
         : res.failure === 'timeout' ? 'timeout'
         : 'network';
-      return {
-        ok: false,
-        failure,
-        apiCalls: res.requests,
-        detail: `SBIR/STTR awards API: ${res.detail ?? 'request failed'}`,
-      };
+      const detail = serviceDeclaredDown
+        ? 'SBIR/STTR awards API is refusing all traffic — the service returns '
+          + '"The SBIR Public API is not available at this time" on a first request from a cold session, '
+          + 'so this is a sbir.gov-side outage, not our rate limit and not a missing credential '
+          + '(this API has none). Zero awards were collected; nothing was inferred or substituted. '
+          + 'Grant coverage for this run is ABSENT, not empty-but-checked.'
+        : `SBIR/STTR awards API: ${res.detail ?? 'request failed'}`
+          + (res.failure === 'forbidden' ? ' — note this API requires no credential, so this is an access policy on sbir.gov, not a missing secret.' : '');
+      return { ok: false, failure, apiCalls: res.requests, detail };
     }
 
     let payload: unknown;

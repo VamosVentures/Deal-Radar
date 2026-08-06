@@ -16,6 +16,8 @@ import {
 } from '../db/repos/operations';
 import { scoreCompany } from '../../src/lib/scoring';
 import { checkEntityType, classifyCandidate } from '../sourcing/classify';
+import { evaluateThesisEligibility } from '../sourcing/thesisFilter';
+import { assessQuality } from '../sourcing/qualitySignals';
 import type { Company, VerticalId } from '../../src/types';
 
 // Deduplication lives in server/sourcing/dedupe.ts; re-exported here
@@ -59,12 +61,24 @@ const STATE_IN_GEO: Record<string, string[]> = {
   'Preferred states': ['NM', 'NY', 'NJ', 'OR', 'CA', 'TX', 'IL'],
 };
 
-function normalizeCandidate(raw: RawCandidate, runId: string, sourceId: string, simulated: boolean): unknown {
+function normalizeCandidate(
+  raw: RawCandidate,
+  runId: string,
+  sourceId: string,
+  simulated: boolean,
+  /**
+   * How to mint this candidate's id. Injected because `store.nextId`
+   * PERSISTS the counter it bumps, and a preview run must leave the
+   * database byte-identical — including the id sequence. A preview
+   * passes a purely in-memory counter instead.
+   */
+  nextId: () => string = () => store.nextId('cand'),
+): unknown {
   const nextStep =
     raw.website ? `Verify the pitch and team on ${raw.website}, then classify vertical/stage.`
     : 'Requires manual review — locate an official website or filing before classifying.';
   return {
-    id: store.nextId('cand'),
+    id: nextId(),
     runId,
     discoveredAt: new Date().toISOString(),
     sourceId,
@@ -159,9 +173,24 @@ function releaseRunLock(): void {
   setConfig(RUN_LOCK_KEY, null);
 }
 
+/**
+ * Monotonic, process-lifetime sequence for PREVIEW run ids.
+ *
+ * Not a timestamp: two previews in one process routinely start inside
+ * the same millisecond (five verticals, mocked sources), and an id that
+ * is merely "usually unique" produced a real misattribution — one
+ * company's researched evidence reported under another company's name.
+ * Not store.nextId either, because that persists, and a preview must
+ * leave the id sequence exactly where it found it.
+ */
+let previewRunSeq = 0;
+
 // ── Run pipeline ─────────────────────────────────────────────────
 
-export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType: DiscoveryRun['runType'] = 'manual'): Promise<DiscoveryRun> {
+/** A preview run additionally carries the candidates it found but did not store. */
+export type DiscoveryRunResult = DiscoveryRun & { previewCandidates?: DiscoveryCandidate[] };
+
+export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType: DiscoveryRun['runType'] = 'manual'): Promise<DiscoveryRunResult> {
   assertNoRestrictedSources(rawReq);
   /**
    * The USER-facing schema, not the internal one.
@@ -186,7 +215,25 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
     const startedAt = new Date();
     store.raw.discoveryCancelRequested = false;
 
-    const runId = store.nextId('run');
+    // A preview must not advance the persisted id counters either, so
+    // both its run id and its candidate ids come from memory. The ids
+    // are still unique within the run, which is all a preview needs —
+    // nothing references them afterwards because nothing is stored.
+    let previewSeq = 0;
+    if (q.preview) previewRunSeq += 1;
+    const runId = q.preview
+      ? `preview-run-${startedAt.toISOString()}-${previewRunSeq}`
+      : store.nextId('run');
+    // Scoped to the RUN id, not a bare counter. A bare counter restarts
+    // at 1 for every preview, so two previews in the same process (one
+    // per vertical, say) minted the same ids — and any caller keying a
+    // Map by candidate id silently got the last run's data for the
+    // earlier run's company. That is exactly what happened the first
+    // time: a fintech candidate was reported with a sustainability
+    // company's cited evidence.
+    const nextCandidateId = q.preview
+      ? () => { previewSeq += 1; return `${runId}-cand-${previewSeq}`; }
+      : () => store.nextId('cand');
     const sourceResults: DiscoveryRun['sourceResults'] = [];
     const errors: string[] = [];
     let apiCalls = 0;
@@ -194,10 +241,21 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
     let duplicatesSkipped = 0;
     let duplicatesIdentified = 0;
     let filteredByPolicy = 0;
+    let filteredByThesis = 0;
+    let filteredByQuality = 0;
     let rejectedByValidation = 0;
     let enrichedInRun = 0;
+    let mergedIntoPending = 0;
     let cancelled = false;
     const accepted: DiscoveryCandidate[] = [];
+    // Snapshot of every prior candidate, parsed once (held under the run
+    // lock, so nothing else can mutate the store underneath this run).
+    // Reused below so a 'likely' duplicate of an already-PENDING
+    // candidate from an earlier run enriches that row in place instead
+    // of accumulating a second pending row for the same real company —
+    // see the mergeIntoRun(pendingPrior, cand) call below.
+    const priorAll = existingCandidates();
+    const pendingPrior = priorAll.filter((c) => c.status === 'pending');
 
     for (const sourceId of q.sources) {
       if (store.raw.discoveryCancelRequested) { cancelled = true; break; }
@@ -217,7 +275,7 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
       let found = 0;
       for (const raw of result.candidates) {
         if (discovered >= q.maxResults) break;
-        const parsed = discoveryCandidateSchema.safeParse(normalizeCandidate(raw, runId, sourceId, result.mode !== 'live'));
+        const parsed = discoveryCandidateSchema.safeParse(normalizeCandidate(raw, runId, sourceId, result.mode !== 'live', nextCandidateId));
         if (!parsed.success) {
           rejectedByValidation += 1;
           continue;
@@ -232,10 +290,53 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
           duplicatesSkipped += 1;
           continue; // still counted; humans can rerun in 'all' mode to see them
         }
+
+        // ── Two-stage funnel ─────────────────────────────────────
+        // Stage 1 decides whether a candidate could EVER be a Vamos
+        // deal (hard thesis requirements); stage 2 decides which of the
+        // survivors deserves expensive enrichment first. Both are
+        // evaluated for every candidate and both verdicts are recorded
+        // on the row regardless of what happens next, so a reviewer can
+        // always see why something ranked where it did — including for
+        // candidates that are kept.
+        //
+        // Neither stage touches the Vamos Fit Score. The triage
+        // priority is a separate number, stored on the candidate, that
+        // orders research effort; scoreCompany() below is called with
+        // exactly the same inputs it always was.
+        const eligibility = evaluateThesisEligibility(cand, q);
+        const quality = assessQuality(cand);
+        cand = {
+          ...cand,
+          thesisEligible: eligibility.eligible,
+          thesisRejections: eligibility.rejections,
+          qualityPriority: quality.priority,
+          qualityBand: quality.band,
+          qualitySignals: quality.signals,
+          independentSources: quality.independentSources,
+        };
+        if (q.enforceThesisFilter && !eligibility.eligible) {
+          filteredByThesis += 1;
+          continue;
+        }
+        if (q.minQualityPriority !== null && quality.priority < q.minQualityPriority) {
+          filteredByQuality += 1;
+          continue;
+        }
         // Enrichment: the same company surfaced by another source in THIS
         // run gains evidence + missing fields instead of a duplicate row.
         if (mergeIntoRun(accepted, cand)) {
           enrichedInRun += 1;
+          continue;
+        }
+        // Same idea, but against a still-pending candidate from an
+        // EARLIER run: without this, a 'likely' duplicate (fuzzy name or
+        // founder-overlap match — never auto-merged into a real company)
+        // accumulated a fresh pending row every time the same company
+        // resurfaced, piling up identical review work instead of adding
+        // new information to the one row a human still needs to decide.
+        if (mergeIntoRun(pendingPrior, cand)) {
+          mergedIntoPending += 1;
           continue;
         }
         accepted.push(cand);
@@ -245,8 +346,11 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
       sourceResults.push({ sourceId, mode: result.mode, found, detail: result.detail, ...(result.failureKind ? { failureKind: result.failureKind } : {}) });
       if (result.mode === 'failed') errors.push(`${sourceId}: ${result.detail}`);
     }
-
-    store.raw.discoveryCandidates = [...store.raw.discoveryCandidates, ...accepted];
+    // Preview runs persist NOTHING. Everything above this line is reads
+    // and network calls against public sources; everything below is the
+    // only place discovery writes anything at all, so a single guard
+    // here is sufficient and cannot be bypassed by a caller.
+    if (!q.preview) store.raw.discoveryCandidates = [...priorAll, ...accepted];
 
     const liveCount = sourceResults.filter((r) => r.mode === 'live').length;
     const simCount = sourceResults.filter((r) => r.mode === 'simulated').length;
@@ -270,6 +374,9 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
       duplicatesSkipped,
       duplicatesIdentified,
       filteredByPolicy,
+      filteredByThesis,
+      filteredByQuality,
+      preview: q.preview,
       rejectedByValidation,
       imported: 0,
       errors,
@@ -286,14 +393,22 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
       initiatedBy,
     });
     void cost;
-    saveRun(run);
-    store.save();
+    if (!q.preview) {
+      saveRun(run);
+      store.save();
+    }
+    // The audit entry is written either way: a preview really did make
+    // real requests to real third parties, and an unlogged network call
+    // is exactly the kind of thing this ledger exists to prevent.
     audit({
       provider: 'system', mode: liveCount > 0 ? 'live' : 'local', action: 'discovery-run',
       subject: `${q.sources.join(',')}`, outcome: run.status === 'Failed' ? 'error' : 'ok',
-      detail: `${discovered} discovered, ${enrichedInRun} enriched cross-source, ${duplicatesIdentified} duplicates identified (${duplicatesSkipped} skipped), ${filteredByPolicy} filtered by recency/refresh-age policy, ${rejectedByValidation} rejected, ${apiCalls} API calls, status ${run.status}${budgetWarnings.length > 0 ? ` (${budgetWarnings.join('; ')})` : ''}`,
+      detail: `${q.preview ? 'PREVIEW (nothing persisted) — ' : ''}${discovered} discovered, ${enrichedInRun} enriched cross-source, ${duplicatesIdentified} duplicates identified (${duplicatesSkipped} skipped, ${mergedIntoPending} merged into an existing pending candidate), ${filteredByPolicy} filtered by recency/refresh-age policy, ${filteredByThesis} filtered by thesis eligibility, ${filteredByQuality} below the triage-priority floor, ${rejectedByValidation} rejected, ${apiCalls} API calls, status ${run.status}${budgetWarnings.length > 0 ? ` (${budgetWarnings.join('; ')})` : ''}`,
     });
-    return run;
+    // Preview callers need the candidates themselves to report on; they
+    // are attached OUTSIDE the persisted run shape, because a run row is
+    // a summary and this array is deliberately never stored.
+    return q.preview ? Object.assign(run, { previewCandidates: accepted }) : run;
   } finally {
     releaseRunLock();
   }
@@ -427,6 +542,7 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
         reviewStatus: 'Awaiting Review',
         discoverySource: cand.sourceId,
         discoveredAt: cand.discoveredAt.slice(0, 10),
+        discoveryRunId: cand.runId,
       });
       saveScore(company.value.id, scoreCompany(company.value as unknown as Company), company.value.evidence.map((e) => e.url));
       recordReviewDecision({ subjectType: 'candidate', subjectId: cand.id, decision: 'imported', actor: req.actor });
@@ -476,7 +592,7 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
  * imported. What changed is that a candidate whose own text plainly says
  * "robotics" is no longer thrown away.
  */
-function resolveVertical(c: DiscoveryCandidate): { vertical: VerticalId | null; reason: string; matched: string[] } {
+export function resolveVertical(c: DiscoveryCandidate): { vertical: VerticalId | null; reason: string; matched: string[] } {
   if (c.vertical !== 'Unknown') {
     return { vertical: c.vertical as VerticalId, reason: 'Sector supplied by the source.', matched: [] };
   }
@@ -501,7 +617,7 @@ function resolveVertical(c: DiscoveryCandidate): { vertical: VerticalId | null; 
 }
 
 /** Candidates become imported companies only with honest defaults — Unknowns stay visible. */
-function candidateToImportedCompany(
+export function candidateToImportedCompany(
   c: DiscoveryCandidate,
   vertical: VerticalId,
 ): { success: true; value: ImportedCompany } | { success: false; reason: string } {

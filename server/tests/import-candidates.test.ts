@@ -38,7 +38,7 @@ function candidate(over: Partial<DiscoveryCandidate> = {}): DiscoveryCandidate {
       source: 'Y Combinator',
       url: 'https://www.ycombinator.com/companies?q=Cosmic%20Robotics',
       dateAccessed: new Date().toISOString().slice(0, 10),
-      verificationStatus: 'Not verified', confidence: 0.7, notes: '',
+      verificationStatus: 'Not verified' as const, assertionType: 'fact' as const, confidence: 0.7, notes: '',
     }],
     confidence: 0.7, verificationStatus: 'Not verified',
     duplicateStatus: 'none', duplicateOfId: null, duplicateOfName: null,
@@ -72,7 +72,7 @@ describe('importCandidates', () => {
     const saved = listCompanies()[0];
     expect(saved.name).toBe('Cosmic Robotics');
     // Classified from its own text, not guessed and not left Unknown.
-    expect(saved.vertical).toBe('robotics');
+    expect(saved.vertical).toBe('frontier');
     // The source URL and evidence date survive the import.
     expect(saved.evidence[0].url).toContain('ycombinator.com');
     expect(saved.evidence[0].date).toBe(new Date().toISOString().slice(0, 10));
@@ -98,7 +98,7 @@ describe('importCandidates', () => {
     expect(out.imported).toHaveLength(3);
     expect(listCompanies()).toHaveLength(3);
     expect(new Set(listCompanies().map((c) => c.vertical)))
-      .toEqual(new Set(['robotics', 'health', 'sustainability']));
+      .toEqual(new Set(['frontier', 'health', 'sustainability']));
   });
 
   it('skips an exact duplicate with the exact-duplicate code', () => {
@@ -139,7 +139,7 @@ describe('importCandidates', () => {
   it('rejects a candidate whose text carries no sector signal, with a reason', () => {
     seed(candidate({ companyName: 'Acme Holdings', pitch: 'Unknown', subcategory: 'Unknown', evidence: [{
       claim: 'A filing exists.', source: 'SEC', url: 'https://www.sec.gov/x',
-      dateAccessed: '2026-07-01', publishedAt: null, verificationStatus: 'Not verified', confidence: 0.4, notes: '',
+      dateAccessed: '2026-07-01', publishedAt: null, verificationStatus: 'Not verified' as const, assertionType: 'fact' as const, confidence: 0.4, notes: '',
     }] }));
     const out = importCandidates({ candidateIds: ['cand-1'], actor: 'test', duplicateAction: 'skip' });
 
@@ -212,7 +212,7 @@ describe('importCandidates', () => {
   it('merges evidence into an existing company when asked, instead of creating a second row', () => {
     saveCompany({
       id: 'existing-1', name: 'Cosmic Robotics', oneLiner: 'Solar install robots.',
-      vertical: 'robotics', subcategory: 'Field & agricultural robotics', stage: 'Seed',
+      vertical: 'frontier', subcategory: 'Field & agricultural robotics', stage: 'Seed',
       city: 'Unknown', state: '??', foundedYear: 2024, teamSize: 3,
       traction: { level: 0, note: 'Unknown' },
       founders: [{ name: 'Unknown founder', role: 'Unknown', background: 'Unknown' }],

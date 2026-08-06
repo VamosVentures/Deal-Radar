@@ -9,8 +9,9 @@ import {
  * The rule this module exists to enforce is that a sector is not a
  * keyword hit. "AI" appears on essentially every startup's home page in
  * 2026; a diagnostics company that mentions its machine-learning model
- * is a health company, and classifying it as General AI because the
- * token appeared would be both wrong and unfalsifiable. So each sector is
+ * is a health company, and classifying it as horizontal Future of Work
+ * AI infrastructure because the token appeared would be both wrong and
+ * unfalsifiable. So each sector is
  * described by two independent question groups —
  *
  *   WHAT IT DOES   the product, the technology, the thing being built
@@ -98,25 +99,6 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       ['treasury|reconciliation|ledger', 'treasury and ledger infrastructure'],
     ],
   },
-  fow: {
-    does: [
-      'hiring', 'recruiting', 'talent', 'workforce', 'employee', 'onboarding', 'training',
-      'upskilling', 'learning management', 'performance review', 'scheduling shifts',
-      'frontline worker', 'contractor management', 'benefits administration', 'hr platform',
-      'people operations', 'collaboration', 'productivity', 'knowledge management',
-    ],
-    pays: [
-      'hr team', 'employer', 'chro', 'people team', 'staffing', 'enterprise', 'per employee',
-      'per seat', 'recruiter', 'hiring manager', 'workforce management',
-    ],
-    subverticals: [
-      ['hiring|recruiting|talent acquisition', 'talent acquisition'],
-      ['training|upskilling|learning', 'learning and development'],
-      ['benefits|payroll|hr platform|people operations', 'HR operations'],
-      ['frontline|shift|scheduling', 'frontline workforce management'],
-      ['collaboration|productivity|knowledge', 'workplace collaboration'],
-    ],
-  },
   sustainability: {
     does: [
       'carbon', 'emissions', 'decarbon', 'renewable', 'solar', 'wind', 'battery',
@@ -138,15 +120,22 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       ['agriculture|regenerative|farm', 'agriculture technology'],
     ],
   },
-  robotics: {
+  // Frontier = Robotics + Space Tech, combined (src/data/taxonomy.ts).
+  frontier: {
     does: [
       'robot', 'robotic', 'autonomous vehicle', 'drone', 'uav', 'manipulator', 'end effector',
       'warehouse automation', 'industrial automation', 'motion planning', 'lidar', 'slam',
       'teleoperation', 'humanoid', 'cobot', 'actuator', 'perception stack', 'automation cell',
+      'satellite', 'spacecraft', 'launch vehicle', 'orbital', 'in-orbit', 'propulsion',
+      'earth observation', 'remote sensing', 'ground station', 'constellation', 'payload',
+      'rocket', 'cislunar', 'space station', 'reentry', 'hypersonic', 'smallsat', 'cubesat',
     ],
     pays: [
       'warehouse', 'factory', 'manufacturer', 'logistics', 'fulfillment', '3pl',
       'industrial operator', 'agriculture operator', 'construction', 'per robot', 'robots as a service',
+      'space agency', 'nasa', 'esa', 'defense', 'department of defense', 'space force',
+      'satellite operator', 'telecom operator', 'government contract', 'per launch',
+      'imagery customer', 'earth observation customer',
     ],
     subverticals: [
       ['warehouse|fulfillment|logistics', 'warehouse and logistics robotics'],
@@ -155,20 +144,6 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       ['humanoid|manipulator|cobot', 'general-purpose and collaborative robots'],
       ['surgical robot', 'surgical robotics'],
       ['agriculture|harvest', 'agricultural robotics'],
-    ],
-  },
-  spacetech: {
-    does: [
-      'satellite', 'spacecraft', 'launch vehicle', 'orbital', 'in-orbit', 'propulsion',
-      'earth observation', 'remote sensing', 'ground station', 'constellation', 'payload',
-      'rocket', 'cislunar', 'space station', 'reentry', 'hypersonic', 'smallsat', 'cubesat',
-    ],
-    pays: [
-      'space agency', 'nasa', 'esa', 'defense', 'department of defense', 'space force',
-      'satellite operator', 'telecom operator', 'government contract', 'per launch',
-      'imagery customer', 'earth observation customer',
-    ],
-    subverticals: [
       ['launch|rocket|propulsion', 'launch and propulsion'],
       ['earth observation|remote sensing|imagery', 'earth observation'],
       ['satellite|constellation|smallsat|cubesat', 'satellite systems'],
@@ -176,18 +151,33 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       ['in-orbit|servicing|debris', 'in-orbit services'],
     ],
   },
-  ai: {
+  // General AI was retired as a market of its own — AI is a technology,
+  // not a market (src/data/taxonomy.ts) — so horizontal AI-infra
+  // vocabulary now scores toward Future of Work, the default the task
+  // specifies for AI that is not specific to another sector's market.
+  fow: {
     does: [
+      'hiring', 'recruiting', 'talent', 'workforce', 'employee', 'onboarding', 'training',
+      'upskilling', 'learning management', 'performance review', 'scheduling shifts',
+      'frontline worker', 'contractor management', 'benefits administration', 'hr platform',
+      'people operations', 'collaboration', 'productivity', 'knowledge management',
       'large language model', 'foundation model', 'machine learning platform', 'inference',
       'model training', 'fine-tuning', 'vector database', 'retrieval augmented',
       'agent framework', 'mlops', 'gpu cluster', 'model evaluation', 'prompt',
       'computer vision platform', 'speech recognition', 'generative ai', 'ai infrastructure',
     ],
     pays: [
+      'hr team', 'employer', 'chro', 'people team', 'staffing', 'enterprise', 'per employee',
+      'per seat', 'recruiter', 'hiring manager', 'workforce management',
       'developer', 'developers', 'ml team', 'data team', 'enterprise ai', 'per token',
       'per inference', 'api customer', 'platform customer', 'ai engineer',
     ],
     subverticals: [
+      ['hiring|recruiting|talent acquisition', 'talent acquisition'],
+      ['training|upskilling|learning', 'learning and development'],
+      ['benefits|payroll|hr platform|people operations', 'HR operations'],
+      ['frontline|shift|scheduling', 'frontline workforce management'],
+      ['collaboration|productivity|knowledge', 'workplace collaboration'],
       ['foundation model|large language model|model training', 'foundation models'],
       ['inference|gpu|mlops|ai infrastructure', 'AI infrastructure'],
       ['agent framework|agents', 'agent platforms'],
@@ -251,18 +241,20 @@ export function matchSubvertical(sector: PrimarySector, text: string): string | 
  * the same rule the free-text scan enforces: a domain sector beats a
  * technique. Checkr is "Human Resources" AND "Artificial Intelligence";
  * it is a Future of Work company that uses AI, not an AI company. Only a
- * record whose ONLY signal is a technique lands in General AI.
+ * record whose ONLY signal is a technique lands in Future of Work via
+ * that fallback rather than a domain sector.
  */
 const DIRECTORY_CATEGORY_MAP: [RegExp, PrimarySector][] = [
   // Domain sectors first — these win over technique labels.
   [/health|medical|diagnostic|bio|therapeut|pharma|wellness|fitness|nutrition|mental/i, 'health'],
   [/fintech|payment|banking|finance|insurance|lending|credit|asset management|investing|crypto/i, 'fintech'],
-  [/aviation|space|satellite|aerospace/i, 'spacetech'],
-  [/robotic|manufacturing|drone|autonomous|hard tech|industrial/i, 'robotics'],
+  [/aviation|space|satellite|aerospace/i, 'frontier'],
+  [/robotic|manufacturing|drone|autonomous|hard tech|industrial/i, 'frontier'],
   [/climate|energy|sustainab|agriculture|carbon|environment|water|recycl/i, 'sustainability'],
   [/human resources|recruit|hiring|talent|education|elearning|learning|productivity|workforce|future of work|hr tech|ops|supply chain|logistics/i, 'fow'],
   // Technique labels last: only reached when nothing above matched.
-  [/artificial intelligence|machine learning|generative|data|analytics|developer tools|infrastructure/i, 'ai'],
+  // General AI was retired as a market of its own, so these fall to fow.
+  [/artificial intelligence|machine learning|generative|data|analytics|developer tools|infrastructure/i, 'fow'],
 ];
 
 /** Placeholder subcategory values that carry no classification signal. */
@@ -401,7 +393,7 @@ export function classifyCompany(input: ClassificationInput): ClassificationOutpu
         + 'this company in a sector, and no accelerator directory has categorised it. A sector assigned from this '
         + 'evidence would be a guess.',
       evidenceGap: `Nothing on record states what the company builds or who pays for it. `
-        + `${input.text.trim().length} characters of description were searched against all seven sector vocabularies `
+        + `${input.text.trim().length} characters of description were searched against all five sector vocabularies `
         + 'and none produced both a product and a buyer signal.',
     };
   }

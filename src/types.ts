@@ -1,17 +1,24 @@
 // ── VamosVentures Deal Radar: domain types ───────────────────────
 
-// Keep in lockstep with VERTICAL_ID_VALUES in shared/discovery.ts —
-// that array is the runtime (Zod) source of truth and this union is the
-// compile-time one; a mismatch is a type error at the import sites.
-export type VerticalId =
-  | 'health'
-  | 'fintech'
-  | 'fow'
-  | 'sustainability'
-  | 'robotics'
-  | 'spacetech'
-  | 'ai'
-  | 'aoi';
+/**
+ * The five approved investment verticals — the single canonical list of
+ * id strings. Everything else (shared/discovery.ts's Zod enum,
+ * shared/enrichment.ts's PRIMARY_SECTORS, src/data/taxonomy.ts's display
+ * metadata, the sidebar, filters, KPI breakdowns) derives from this
+ * array rather than re-declaring its own copy.
+ *
+ * Robotics and Space Tech were combined into 'frontier'. General AI was
+ * removed as a standalone vertical — AI is a technology attribute, not a
+ * market, so an AI company is classified by the market it actually
+ * serves (health/fintech/sustainability/frontier), defaulting to 'fow'
+ * for genuinely horizontal AI. The legacy 'aoi' catch-all is retired
+ * from the user-facing taxonomy entirely. See
+ * src/data/taxonomy.ts's LEGACY_VERTICAL_ALIASES / normalizeVerticalId
+ * for how old stored values (robotics, spacetech, space-tech, ai, aoi)
+ * map onto this list.
+ */
+export const VERTICAL_ID_VALUES = ['health', 'fintech', 'fow', 'sustainability', 'frontier'] as const;
+export type VerticalId = (typeof VERTICAL_ID_VALUES)[number];
 
 // 'Stealth' means the company is deliberately operating in stealth.
 // 'Unknown' means WE do not know the stage. Conflating the two was a

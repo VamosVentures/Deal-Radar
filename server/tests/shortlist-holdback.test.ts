@@ -90,7 +90,7 @@ describe('shortlist hold-back accounting', () => {
     const pool = Array.from({ length: 9 }, (_, i) =>
       candidate(`Company ${i + 1}`, { evidencePublishedAt: `2026-07-${String(20 - i).padStart(2, '0')}` }));
 
-    const result = selectSectorShortlist('ai', pool);
+    const result = selectSectorShortlist('fow', pool);
 
     expect(result.selected).toHaveLength(DEFAULT_PER_SECTOR);
     expect(result.heldBack).toHaveLength(4);
@@ -111,7 +111,7 @@ describe('shortlist hold-back accounting', () => {
       candidate('General Intuition', { primaryTier: 2, evidencePublishedAt: '2026-06-01' }),
     ];
 
-    const result = selectSectorShortlist('ai', pool);
+    const result = selectSectorShortlist('fow', pool);
 
     const held = result.heldBack.find((h) => h.name === 'General Intuition');
     expect(held).toBeDefined();
@@ -139,7 +139,7 @@ describe('shortlist hold-back accounting', () => {
       candidate('No Financing Source', {}, { independentSources: 0, operatingEvidence: 'substantive' }),
     ];
 
-    const result = selectSectorShortlist('ai', pool);
+    const result = selectSectorShortlist('fow', pool);
 
     expect(result.selected.map((s) => s.name)).toEqual(['Well Sourced']);
     const held = result.heldBack.find((h) => h.name === 'No Financing Source');
@@ -164,7 +164,7 @@ describe('shortlist hold-back accounting', () => {
       candidate('Parked Domain', {}, { independentSources: 1, operatingEvidence: 'parked' }),
     ];
 
-    const result = selectSectorShortlist('ai', pool);
+    const result = selectSectorShortlist('fow', pool);
 
     expect(result.selected.map((s) => s.name)).toEqual(['Real Product Site']);
     for (const name of ['Bare Domain', 'Parked Domain']) {
@@ -183,7 +183,7 @@ describe('shortlist hold-back accounting', () => {
       candidate('Quarantined Co', {}, { quarantined: true }),
     ];
 
-    const result = selectSectorShortlist('ai', pool);
+    const result = selectSectorShortlist('fow', pool);
 
     expect(result.selected.map((s) => s.name)).toEqual(['Clean']);
     expect(result.heldBack.find((h) => h.name === 'Quarantined Co')!.reasonCode).toBe('quarantined');
@@ -197,7 +197,7 @@ describe('shortlist hold-back accounting', () => {
       candidate('Another Lead', { classification: 'company-lead' as OpportunityClass }),
     ];
 
-    const result = selectSectorShortlist('spacetech', pool);
+    const result = selectSectorShortlist('frontier', pool);
 
     expect(result.selected).toHaveLength(1);
     expect(result.shortfall).toBe(4);

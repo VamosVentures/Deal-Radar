@@ -24,6 +24,7 @@ import { adminRouter } from './routes/admin';
 import { importsRouter } from './routes/imports';
 import { notesRouter } from './routes/notes';
 import { authRouter } from './routes/auth';
+import { overviewRouter } from './routes/overview';
 
 /**
  * App factory: middleware, per-domain routers (server/routes/), and
@@ -145,6 +146,7 @@ export function createApp() {
   app.use('/api', duplicatesRouter);
   app.use('/api', importsRouter);
   app.use('/api', notesRouter);
+  app.use('/api', overviewRouter);
   // These three are entirely administrator-only end to end (every
   // route requires a session — see requireAdmin in each file), so
   // they're mounted at their OWN path prefix rather than the shared

@@ -420,16 +420,19 @@ export type FounderResolution = z.infer<typeof founderResolutionSchema>;
 // ── Vertical classification ───────────────────────────────────────
 
 /**
- * The seven Vamos sectors, as the enrichment layer names them. These map
- * onto the existing `VerticalId` slugs stored on the company row — this
- * table is the display contract, that one is the storage contract.
+ * The five Vamos sectors, as the enrichment layer names them. These map
+ * directly onto `VerticalId` (src/types.ts) — this table is the display
+ * contract, that one is the storage contract, and both list the same
+ * five ids so they can never drift.
  *
  * `aoi` is deliberately absent: it is the legacy catch-all, and a
  * catch-all is exactly what a classification with a stated reason is
- * supposed to replace.
+ * supposed to replace. Robotics and Space Tech are combined into
+ * `frontier`; General AI is retired as a sector of its own (AI is a
+ * technology, not a market) — see src/data/taxonomy.ts's header comment.
  */
 export const PRIMARY_SECTORS = [
-  'health', 'fintech', 'fow', 'sustainability', 'robotics', 'spacetech', 'ai',
+  'health', 'fintech', 'fow', 'sustainability', 'frontier',
 ] as const;
 export type PrimarySector = (typeof PRIMARY_SECTORS)[number];
 
@@ -438,9 +441,7 @@ export const SECTOR_LABELS: Record<PrimarySector, string> = {
   fintech: 'FinTech',
   fow: 'Future of Work',
   sustainability: 'Sustainability',
-  robotics: 'Robotics',
-  spacetech: 'Space Tech',
-  ai: 'General AI',
+  frontier: 'Frontier',
 };
 
 /**

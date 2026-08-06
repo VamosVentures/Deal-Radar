@@ -962,7 +962,14 @@ describe('isolation from qualification data', () => {
     expect(db.prepare('SELECT * FROM issuer_qualification WHERE company_id = ?').get(id)).toEqual(before.qualification);
     expect(db.prepare('SELECT * FROM company_opportunity WHERE company_id = ?').get(id)).toEqual(before.opportunity);
     expect(db.prepare('SELECT * FROM scoring_results WHERE company_id = ?').all(id)).toEqual(before.scores);
-    expect(db.prepare('SELECT * FROM companies WHERE id = ?').get(id)).toEqual(before.company);
+    // Every other company field is untouched by note actions — EXCEPT
+    // last_reviewed_at, which notes are supposed to move: writing a note
+    // is exactly the kind of deliberate analyst engagement that counts
+    // as a human review action (recordReviewDecision stamps it for every
+    // subjectType='company' event — see server/db/repos/operations.ts).
+    const after = db.prepare('SELECT * FROM companies WHERE id = ?').get(id) as Record<string, unknown>;
+    expect({ ...after, last_reviewed_at: null }).toEqual({ ...(before.company as Record<string, unknown>), last_reviewed_at: null });
+    expect(after.last_reviewed_at).not.toBeNull();
   });
 
   it('a note is not evidence — it never appears in the company\'s evidence list', async () => {

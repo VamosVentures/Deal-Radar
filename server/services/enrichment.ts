@@ -1,21 +1,28 @@
 import { getDb } from '../db/client';
-import { applyFieldUpdate, setResolvedFounder } from '../db/repos/companies';
+import { applyFieldUpdate, getCompany, setResolvedFounders } from '../db/repos/companies';
+import { saveScore } from '../db/repos/operations';
+import { scoreCompany } from '../../src/lib/scoring';
+import type { Company } from '../../src/types';
 import { audit } from '../lib/guard';
 import { politeFetch, RequestBudget } from '../sourcing/politeness';
 import { parseFormD } from '../sourcing/formd';
 import { isThinPage, readableText } from '../sourcing/pageSignals';
 import { getQualification } from './issuerQualification';
+import { recordYcPendingEvidence } from './pendingEvidence';
 import { discoverOfficialWebsite, findInYc } from './corroborate';
 import {
   classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
 } from '../enrichment/founderExtraction';
 import { classifyCompany } from '../enrichment/verticalClassifier';
 import {
+  isYcProfileUrl, parseYcProfile, ycProfileMatchesCandidate, type YcProfile,
+} from '../enrichment/ycProfile';
+import {
   extractDescription, extractFunding, extractLocation, resolveCityState,
 } from '../enrichment/companyFacts';
 import { readStatedStage, resolveStage, type StageEvidenceItem } from '../enrichment/stageResolver';
 import {
-  buildResearchPlan, isOnCompanyDomain, type FamilyPlan, type PlanCompany,
+  buildResearchPlan, isOnCompanyDomain, splitKnownFirst, type FamilyPlan, type PlanCompany,
 } from '../enrichment/researchPlan';
 import {
   completeEnrichmentRun, EMPTY_TOTALS, recordResearchAttempt, saveFounderResolution,
@@ -27,8 +34,7 @@ import {
   SOURCE_FAMILY_SPECS, isClassified, NON_SECTOR_STATUS, outcomeAnswered, outcomeInconclusive,
   STAGE_LABELS,
   type FounderResolutionStatus, type MatchSignal, type ResearchOutcome, type SourceFamily,
-  type StageResolution, type VerticalClassification,
-} from '../../shared/enrichment';
+  type StageResolution, type VerticalClassification, SOURCE_FAMILIES,} from '../../shared/enrichment';
 
 /**
  * The founder / vertical / stage enrichment pipeline.
@@ -272,9 +278,21 @@ async function researchFamily(
   c: RawCompany,
   plan: FamilyPlan,
   budget: RequestBudget,
-): Promise<{ outcome: ResearchOutcome; detail: string; candidates: FoundCandidate[]; url: string | null; pageText: string; facts: ResearchedFacts }> {
+): Promise<{
+  outcome: ResearchOutcome; detail: string; candidates: FoundCandidate[]; url: string | null;
+  pageText: string; facts: ResearchedFacts;
+  /**
+   * Accelerator profiles whose IDENTITY matched this record, returned so
+   * the caller can queue their company-claimed sentences for analyst
+   * review. Returned rather than written here: this function is a pure
+   * read, and the pending-evidence insert belongs inside the caller's
+   * apply block with every other write.
+   */
+  ycProfiles: YcProfile[];
+}> {
   if (plan.unavailableReason) {
     return {
+      ycProfiles: [],
       outcome: plan.unavailableReason,
       detail: plan.unavailableReason === 'source-not-applicable'
         ? `${SOURCE_FAMILY_SPECS[plan.family].label} does not apply to this company — nothing on record connects it to this family.`
@@ -288,6 +306,7 @@ async function researchFamily(
   }
 
   const candidates: FoundCandidate[] = [];
+  const ycProfiles: YcProfile[] = [];
   /**
    * Per-family accounting rather than "whatever the last URL did".
    *
@@ -410,6 +429,90 @@ async function researchFamily(
     readOk += 1;
     firstReadUrl ??= fetchPlan.url;
     gatheredText.push(pageText);
+
+    /**
+     * A public YC company profile is parsed STRUCTURALLY, not by
+     * flattening it to text.
+     *
+     * `extractPeopleFromHtml` runs on readableText, whose tag-to-space
+     * flattening destroys the only delimiter this page has: YC puts the
+     * name and the role in sibling divs with no punctuation between
+     * them, so "Joshua Ibrahim Founder" never matched the generic
+     * name-then-title pattern. Every one of these pages was fetched
+     * successfully (HTTP 200, ~100KB, not thin) and then yielded zero
+     * founders, which `deriveFounderStatus` reported as
+     * "research-exhausted" — a page that lists three founders being
+     * described as having none.
+     *
+     * See server/enrichment/ycProfile.ts. Scoped to YC profile URLs;
+     * every other host still uses the generic extractor unchanged.
+     */
+    if (isYcProfileUrl(fetchPlan.url)) {
+      const profile = parseYcProfile(res.body, fetchPlan.url);
+      if (profile) {
+        // Identity on DOMAIN or canonical slug, never on name: the YC
+        // directory contains both "Manifold" (warehouse robotics, S26)
+        // and "Manifold Freight", and a name match would attribute one
+        // company's founders to the other.
+        const identity = ycProfileMatchesCandidate(profile, { website: c.website, ycSlug: null });
+        if (!identity.matches && profile.website) {
+          notes.push(
+            `${fetchPlan.url}: profile is for ${profile.website}, which does not match this record's `
+            + `website (${c.website ?? 'none on file'}). Skipped rather than attributed — same-name companies exist.`,
+          );
+          continue;
+        }
+        /**
+         * Identity matched, so this page's company-claimed sentences are
+         * about THIS company. Handed back for the analyst queue — they
+         * are read here and decided by a person, never scored by this
+         * run.
+         */
+        ycProfiles.push(profile);
+        // YC states these; they are cited facts about the company.
+        if (profile.location && !facts.city) {
+          const loc = resolveCityState(profile.location);
+          if (loc) {
+            facts.city = loc.city;
+            if (loc.state) facts.state = loc.state;
+          }
+        }
+        for (const f of profile.founders) {
+          const signals = signalsFor({
+            company: c, family: plan.family, url: fetchPlan.url,
+            pageText, titleStated: f.role !== null,
+            geographyAgrees: geographyAgrees(pageText, c),
+          });
+          if (!meetsMatchThreshold(signals)) continue;
+          const score = scoreMatch(signals);
+          candidates.push({
+            personKey: personKey(f.fullName),
+            fullName: f.fullName,
+            title: f.role,
+            sourceUrl: profile.canonicalUrl,
+            sourceFamily: plan.family,
+            sourceType: `Y Combinator public profile${profile.batch ? ` (${profile.batch})` : ''}`,
+            publishedAt: fetchPlan.publishedAt,
+            // The biography VERBATIM — this is what makes the founder
+            // component assessable downstream, and it must stay quotable.
+            supportingText: truncateSupport(
+              f.bio ? `${f.fullName} — ${f.role ?? 'founder'}. ${f.bio}` : `${f.fullName} — ${f.role ?? 'founder'} (YC profile).`,
+              600,
+            ),
+            matchSignals: signals,
+            matchScore: score,
+            confidence: candidateConfidence(score, plan.family, f.role !== null),
+          });
+        }
+        notes.push(
+          `${fetchPlan.url}: YC profile parsed structurally — ${profile.founders.length} active founder(s)`
+          + `${profile.batch ? `, batch ${profile.batch}` : ''}${profile.location ? `, ${profile.location}` : ''}`
+          + `${profile.tractionClaims.length > 0 ? `, ${profile.tractionClaims.length} company-authored claim(s) captured for analyst review` : ''}.`,
+        );
+        continue;
+      }
+    }
+
     const people = extractPeopleFromHtml(res.body);
     for (const person of people) {
       const signals = signalsFor({
@@ -455,19 +558,19 @@ async function researchFamily(
   // the concurrent pool.
   const pageText = gatheredText.join(' \n ').slice(0, 20_000);
 
-  if (candidates.length > 0) return { outcome: 'found-candidate', detail, candidates, url, pageText, facts };
+  if (candidates.length > 0) return { outcome: 'found-candidate', detail, candidates, url, pageText, facts, ycProfiles };
 
   // A family that read at least one real page HAS answered: it was
   // readable and it names nobody.
-  if (readOk > 0) return { outcome: 'reached-no-founder-stated', detail, candidates: [], url, pageText, facts };
+  if (readOk > 0) return { outcome: 'reached-no-founder-stated', detail, candidates: [], url, pageText, facts, ycProfiles };
 
   // Everything below is an attempt, NOT a finding about the company —
   // see the note on founder_research_attempts in migration 11.
   if (unreadable > 0 && failed === 0 && blocked === 0) {
-    return { outcome: 'source-unreadable', detail, candidates: [], url, pageText, facts };
+    return { outcome: 'source-unreadable', detail, candidates: [], url, pageText, facts, ycProfiles };
   }
-  if (blocked > 0 && failed === 0) return { outcome: 'source-blocked', detail, candidates: [], url, pageText, facts };
-  return { outcome: 'source-unreachable', detail, candidates: [], url, pageText, facts };
+  if (blocked > 0 && failed === 0) return { outcome: 'source-blocked', detail, candidates: [], url, pageText, facts, ycProfiles };
+  return { outcome: 'source-unreachable', detail, candidates: [], url, pageText, facts, ycProfiles };
 }
 
 /**
@@ -728,6 +831,108 @@ function buildStageEvidence(c: RawCompany): StageEvidenceItem[] {
 
 // ── The pipeline ──────────────────────────────────────────────────
 
+/**
+ * Run the EXACT founder-research loop `runEnrichment` uses, for one
+ * record, without touching the database.
+ *
+ * This exists so newly discovered candidates get the same founder
+ * diligence stored companies already get. The alternative — a second
+ * founder extractor for candidates — is precisely the "disconnected
+ * second system" that would drift from this one within a release: the
+ * source-family ORDER is policy, `deriveFounderStatus` encodes the
+ * conflict/exhaustion rules, and `signalsFor`/`meetsMatchThreshold`
+ * decide what counts as the same person. All three are reused verbatim
+ * here rather than reimplemented.
+ *
+ * The only difference from the stored-company path is what happens
+ * AFTERWARDS: this returns the verdict instead of writing
+ * founder_candidates rows, so a preview can research a company it has
+ * not imported and may never import.
+ */
+export interface FounderResearchResult {
+  companyName: string;
+  candidates: FoundCandidate[];
+  verdict: FounderVerdict;
+  attempts: { family: SourceFamily; outcome: ResearchOutcome; detail: string; url: string | null; found: number }[];
+  /** Facts the same fetches established in passing (city, state, funding). */
+  facts: ResearchedFacts;
+  /** Readable text from the company's own pages, for downstream classification. */
+  siteText: string | null;
+  /**
+   * Accelerator profiles that matched this record's identity. The caller
+   * decides whether to queue their claims for analyst review; this
+   * function itself writes nothing.
+   */
+  ycProfiles: YcProfile[];
+  familiesAnswered: number;
+}
+
+export async function researchFoundersForRecord(
+  c: PlanCompany & { oneLiner?: string; subcategory?: string; foundedYear?: number | null; teamSize?: number | null; quarantined?: boolean },
+  opts: { budget?: RequestBudget; maxRequests?: number; at?: string } = {},
+): Promise<FounderResearchResult> {
+  const budget = opts.budget ?? new RequestBudget(opts.maxRequests ?? 24);
+  const at = opts.at ?? now();
+  const record: RawCompany = {
+    ...c,
+    oneLiner: c.oneLiner ?? '',
+    subcategory: c.subcategory ?? '',
+    foundedYear: c.foundedYear ?? null,
+    teamSize: c.teamSize ?? null,
+    quarantined: c.quarantined ?? false,
+  };
+
+  const { known, guessed } = splitKnownFirst(buildResearchPlan(record));
+  const attempts: FounderResearchResult['attempts'] = [];
+  const candidates: FoundCandidate[] = [];
+  const facts: ResearchedFacts = {};
+  const ycProfiles: YcProfile[] = [];
+  let siteText: string | null = null;
+  const byFamily = new Map<SourceFamily, FounderResearchResult['attempts'][number]>();
+
+  // Pass 1: every KNOWN url (accelerator profile, filing, cited
+  // announcement). Pass 2: the guessed /about,/team sweep, only if the
+  // budget survived. See splitKnownFirst.
+  for (const pass of [known, guessed]) {
+    for (const plan of pass) {
+      const r = await researchFamily(record, plan, budget);
+      candidates.push(...r.candidates);
+      ycProfiles.push(...r.ycProfiles);
+      for (const [k, v] of Object.entries(r.facts)) {
+        if (v && !(k in facts)) (facts as Record<string, string>)[k] = v;
+      }
+      if (plan.family === 'company-site' && r.pageText.length > 0) {
+        siteText = siteText ? `${siteText} \n ${r.pageText}` : r.pageText;
+      }
+      // One attempt row per family: a later pass only replaces an
+      // earlier one when it actually learned something better.
+      const prev = byFamily.get(plan.family);
+      if (!prev || (outcomeAnswered(r.outcome) && !outcomeAnswered(prev.outcome))) {
+        byFamily.set(plan.family, {
+          family: plan.family, outcome: r.outcome, detail: r.detail, url: r.url, found: r.candidates.length,
+        });
+      }
+    }
+  }
+  for (const f of SOURCE_FAMILIES) {
+    const a = byFamily.get(f);
+    if (a) attempts.push(a);
+  }
+
+  return {
+    companyName: record.name,
+    candidates,
+    verdict: deriveFounderStatus(record.name, candidates, attempts, at),
+    attempts,
+    facts,
+    siteText,
+    ycProfiles,
+    familiesAnswered: attempts.filter((a) => outcomeAnswered(a.outcome)).length,
+  };
+}
+
+export type { FoundCandidate };
+
 export async function runEnrichment(opts: EnrichmentOptions): Promise<EnrichmentRunResult> {
   const runId = `enr-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const mode = opts.apply ? 'apply' : 'dry-run';
@@ -778,6 +983,7 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
     const attempts: { family: SourceFamily; outcome: ResearchOutcome; detail: string; url: string | null; found: number }[] = [];
     const candidates: FoundCandidate[] = [];
     const facts: ResearchedFacts = {};
+    const ycProfiles: YcProfile[] = [];
     let siteText: string | null = null;
     let pressText: string | null = null;
 
@@ -785,6 +991,7 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       const r = await researchFamily(c, plan, budget);
       attempts.push({ family: plan.family, outcome: r.outcome, detail: r.detail, url: r.url, found: r.candidates.length });
       candidates.push(...r.candidates);
+      ycProfiles.push(...r.ycProfiles);
       // First source to state a fact wins; families run in confirming
       // order, so this prefers the filing over the press write-up.
       for (const [k, v] of Object.entries(r.facts)) {
@@ -1024,6 +1231,7 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
           matchScore: cand.matchScore,
           confidence: cand.confidence,
           status: verdict.resolvedPersonKey === cand.personKey ? 'verified-founder' : verdict.status,
+          runId,
         });
         // Evidence-backed edges: person ↔ company, and company ↔ domain.
         upsertRelationship({
@@ -1069,6 +1277,27 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       saveStageResolution(stage);
 
       /**
+       * Queue the accelerator profile's own words for a PERSON to decide.
+       *
+       * Until this call existed, `pending_evidence` was unreachable in
+       * production: the service, the HTTP routes, the API client and the
+       * analyst panel were all built and tested, and nothing ever
+       * inserted a row, so the table was empty on a database with 209
+       * companies and the panel had nothing to show. The parser was
+       * reading "20 departments across 16 hospitals" off a public page
+       * and then dropping it on the floor.
+       *
+       * Deliberately here, beside the other writes, and deliberately not
+       * touching `stage`, `vertical` or any score computed above: a
+       * queued claim is a claim, not a rating. Re-running enrichment
+       * re-inserts nothing — UNIQUE (company_id, kind, quote) makes the
+       * insert idempotent per claim.
+       */
+      for (const profile of ycProfiles) {
+        recordYcPendingEvidence(c.id, profile, { accessedAt: today(), actor: opts.initiatedBy });
+      }
+
+      /**
        * Write the researched facts onto the company row.
        *
        * The scoring model reads the ROW, not these tables, so without
@@ -1086,8 +1315,40 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
         if (res.applied) changes.push({ field: String(field), previous: null, next: value });
       };
 
-      // Stage, as the label the row and the score both understand.
-      if (stage.stage !== 'stage-conflict-manual-review') {
+      /**
+       * Stage, as the label the row and the score both understand — but
+       * ONLY when a source actually named it.
+       *
+       * `early-stage-round-not-disclosed` is the residual bucket
+       * stageResolver falls back to when nothing on record names a round.
+       * Its own explanation says so: "Recorded as early-stage with the
+       * round undisclosed because the company is in an early-stage
+       * pipeline, not because any evidence establishes it." Stamping that
+       * onto the company row handed it to the scorer, where the label is
+       * worth 9/15 AND counts as assessable — so it also removed `stage`
+       * from `missingCritical` and helped companies clear the
+       * non-provisional gate.
+       *
+       * Measured on this database before the gate: 195 of 209 companies
+       * carried that label, every one of them from an `inferred`
+       * resolution and not one from an explicit source. Accelerator
+       * participation, a founding year and a team size were, in effect,
+       * being converted into most of a stage score. That is the exact
+       * laundering server/services/pendingEvidence.ts promises does not
+       * happen ("auto-applying it is what previously labelled decade-old
+       * alumni as early-stage") — the promise was true of the pending
+       * queue and false of this line.
+       *
+       * The inference is NOT discarded: it is still written to
+       * `company_stage_resolution` above, with its confidence and its
+       * explanation, and it is still queued for an analyst as pending
+       * stage evidence. What it no longer does is score itself. An
+       * explicit stage from a source, and evidence-backed inferences like
+       * `Grant-funded`, are unaffected.
+       */
+      const stageIsUnsourcedResidual = stage.stage === 'early-stage-round-not-disclosed'
+        && stage.basis === 'inferred';
+      if (stage.stage !== 'stage-conflict-manual-review' && !stageIsUnsourcedResidual) {
         stamp('stage', STAGE_LABELS[stage.stage], stage.evidenceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
       }
       /**
@@ -1122,19 +1383,43 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       }
 
       /**
-       * A verified founder replaces the "Unknown founder" placeholder on
-       * the founders table, so the score, the HubSpot contact builder,
-       * and the outreach drafter can all see them. Only verified — a
-       * candidate is never written anywhere that treats it as fact.
+       * EVERY verified founder replaces the "Unknown founder"
+       * placeholder, so the score, the HubSpot contact builder and the
+       * outreach drafter all see the real founding team. Only verified —
+       * a candidate is never written anywhere that treats it as fact.
+       *
+       * This used to write only `verdict.resolvedName`, the single
+       * PRIMARY founder. That is the answer to "who is the contact?", not
+       * "who founded this?", and it left Unifold and Scheduling Wizard
+       * displaying one founder each when research had verified three.
+       * `resolvedPersonKey` still marks the primary, and is ordered first.
        */
       if (verdict.status === 'verified-founder' && verdict.resolvedName) {
-        const replaced = setResolvedFounder(c.id, {
-          name: verdict.resolvedName,
-          role: verdict.resolvedTitle ?? '',
-          background: verdict.summary,
-        });
+        const verified = candidates.filter((cand) => cand.fullName && cand.title);
+        const primaryFirst = [
+          ...verified.filter((cand) => cand.personKey === verdict.resolvedPersonKey),
+          ...verified.filter((cand) => cand.personKey !== verdict.resolvedPersonKey),
+        ];
+        const rows = primaryFirst.length > 0
+          ? primaryFirst.map((cand) => ({
+            name: cand.fullName,
+            role: cand.title ?? '',
+            // The primary carries the research summary; a co-founder
+            // carries the biography the source published about THEM.
+            // Reusing the summary for everyone would attribute one
+            // person's background to their co-founders.
+            background: cand.personKey === verdict.resolvedPersonKey
+              ? verdict.summary
+              : cand.supportingText,
+          }))
+          : [{ name: verdict.resolvedName, role: verdict.resolvedTitle ?? '', background: verdict.summary }];
+        const replaced = setResolvedFounders(c.id, rows);
         if (replaced) {
-          changes.push({ field: 'founder-row', previous: 'Unknown founder', next: verdict.resolvedName });
+          changes.push({
+            field: 'founder-row',
+            previous: 'Unknown founder',
+            next: rows.map((r) => r.name).join(', '),
+          });
         }
       }
 
@@ -1146,6 +1431,24 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       }
       if (prevStage?.stage !== stage.stage) {
         changes.push({ field: 'stage', previous: prevStage?.stage ?? null, next: stage.stage });
+      }
+
+      /**
+       * The score is a function of the company row, so writing the
+       * research onto the row (above) is only half the fix — without
+       * this, a company enriched from 'Unknown' stage to 'Seed' keeps
+       * its stale pre-enrichment score until someone separately runs
+       * "Refresh live research". Only rescore when something the score
+       * actually reads (stage.stage/vertical/funding/etc, tracked above
+       * as `changes`) changed, so an enrichment pass that found nothing
+       * new doesn't churn the scoring log with an identical row.
+       */
+      if (changes.length > 0) {
+        const rescored = getCompany(c.id);
+        if (rescored) {
+          const fit = scoreCompany(rescored as unknown as Company);
+          saveScore(c.id, fit, rescored.evidence.map((e) => e.url));
+        }
       }
     }
 

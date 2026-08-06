@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceConfidence, SCORING_VERSION, scoreCompany } from '../../src/lib/scoring';
+import { evidenceConfidence, NON_PROVISIONAL_POLICY, SCORING_VERSION, scoreCompany } from '../../src/lib/scoring';
+import { HOT_THRESHOLD } from '../../shared/scoringThresholds';
 import type { Company } from '../../src/types';
 
 /**
@@ -42,7 +43,7 @@ describe('Vamos Fit scoring invariants', () => {
   it('keeps every score in the 1.0–10.0 range and breakdowns summing to the total', () => {
     const variants: Company[] = [
       base,
-      { ...base, vertical: 'aoi', subcategory: 'Robotics', flags: ['hardware-heavy'] },
+      { ...base, vertical: 'frontier', subcategory: 'Humanoid & general-purpose robots', flags: ['hardware-heavy'] },
       { ...base, stage: 'Pre-seed', state: 'FL', founders: [{ name: 'B. Fixture', role: 'CTO', background: 'x' }] },
       { ...base, traction: { level: 0, note: 'Unknown — not yet researched' }, evidence: base.evidence },
     ];
@@ -191,16 +192,84 @@ describe('normalized scoring (v4)', () => {
     // the company at all.
     const fit = scoreCompany(bare);
     expect(fit.provisional).toBe(true);
-    expect(fit.provisionalReason).toMatch(/only the quality of our own sourcing/i);
+    expect(fit.provisionalReason).toMatch(/critical component/i);
     expect(fit.components.filter((x) => x.assessable).every((x) => x.about === 'our-evidence')).toBe(true);
   });
 
-  it('stops being provisional as soon as one company-descriptive fact is recorded', () => {
-    // Recording a location is enough to make the score a statement about
-    // the company rather than about our sourcing.
+  /**
+   * v4.1 replaced "one company fact is enough" with an evidence-backed
+   * policy. Recording a single location no longer makes a score
+   * assessed — a live preview run produced 7.1/10 records at 35%
+   * completeness with no stage, traction, founder or funding, and they
+   * were ranking against genuinely researched companies and qualifying
+   * for High-Fit. See NON_PROVISIONAL_POLICY.
+   */
+  it('stays provisional when only one company-descriptive fact is recorded', () => {
     const fit = scoreCompany({ ...bare, state: 'TX' });
-    expect(fit.provisional).toBe(false);
     expect(fit.components.find((x) => x.key === 'geo')!.assessable).toBe(true);
+    expect(fit.provisional).toBe(true);
+    // The reason must NAME what is missing, so the record is actionable.
+    expect(fit.provisionalReason).toMatch(/stage/);
+    expect(fit.provisionalReason).toMatch(/traction/);
+  });
+
+  it('becomes non-provisional only when every critical component is judgeable', () => {
+    const fit = scoreCompany(base);
+    for (const key of NON_PROVISIONAL_POLICY.requiredComponents) {
+      expect(fit.components.find((x) => x.key === key)!.assessable, key).toBe(true);
+    }
+    expect(fit.completeness).toBeGreaterThanOrEqual(NON_PROVISIONAL_POLICY.minCompleteness);
+    expect(fit.provisional).toBe(false);
+    expect(fit.provisionalReason).toBeNull();
+  });
+
+  it('drops back to provisional when any single critical component is removed', () => {
+    // One at a time, so a failure names the component that stopped
+    // being enforced rather than just "something changed".
+    const removals: { key: string; company: Company }[] = [
+      { key: 'thesis', company: { ...base, subcategory: 'Unclassified — requires manual review' } },
+      { key: 'stage', company: { ...base, stage: 'Unknown' } },
+      { key: 'traction', company: { ...base, traction: { level: 0, note: 'Unknown — not yet researched' } } },
+      { key: 'founder', company: { ...base, founders: [{ name: 'Unknown founder', role: 'Unknown', background: 'Unknown' }] } },
+      { key: 'geo', company: { ...base, state: '??' } },
+    ];
+    for (const { key, company } of removals) {
+      const fit = scoreCompany(company);
+      expect(fit.components.find((x) => x.key === key)!.assessable, `${key} should be unassessable`).toBe(false);
+      expect(fit.provisional, `removing ${key} must force provisional`).toBe(true);
+    }
+  });
+
+  it('does NOT require mission alignment — unknown diversity data is never a penalty', () => {
+    // Mission alignment needs voluntary founder self-identification,
+    // which this codebase refuses to infer and the approved policy says
+    // must not become an automatic rejection. Requiring it would make
+    // non-provisional unreachable for every company on file.
+    expect(NON_PROVISIONAL_POLICY.requiredComponents).not.toContain('mission');
+    const fit = scoreCompany(base);
+    expect(fit.components.find((x) => x.key === 'mission')!.assessable).toBe(true);
+    // Same company, self-ID withdrawn: mission becomes unassessable, and
+    // the score must still be presentable as assessed.
+    const withoutSelfId = scoreCompany({
+      ...base,
+      founders: base.founders.map((f) => ({ ...f, identity: undefined })),
+    });
+    expect(withoutSelfId.components.find((x) => x.key === 'mission')!.assessable).toBe(false);
+    expect(withoutSelfId.provisional).toBe(false);
+  });
+
+  it('requires at least one cited source URL', () => {
+    const uncited = scoreCompany({ ...base, evidence: [] });
+    expect(uncited.provisional).toBe(true);
+    expect(uncited.provisionalReason).toMatch(/cited source/i);
+  });
+
+  it('can only move a record toward provisional — it never raises a score', () => {
+    // The policy is a labelling gate, not a scoring input: the numeric
+    // score for a given company is identical whatever the flag says.
+    const thin = scoreCompany({ ...bare, state: 'TX' });
+    const earned = thin.components.filter((x) => x.assessable).reduce((s, x) => s + x.points, 0);
+    expect(thin.score).toBeCloseTo(Math.max(1, Math.round((earned / thin.assessablePoints) * 100) / 10), 5);
   });
 
   it('never inflates: adding an unmeasured component cannot raise the score', () => {
@@ -219,5 +288,69 @@ describe('normalized scoring (v4)', () => {
     expect(fit.explanation).toContain('assessable points');
     expect(fit.explanation).toMatch(/completeness/i);
     expect(fit.explanation).toMatch(/never findings against the company/i);
+  });
+
+  it('is deterministic: identical input with a pinned clock produces an identical score and explanation', () => {
+    const today = new Date('2026-06-15T00:00:00.000Z');
+    const first = scoreCompany(base, today);
+    const second = scoreCompany({ ...base }, today);
+    expect(second.score).toBe(first.score);
+    expect(second.explanation).toBe(first.explanation);
+    expect(second.components).toEqual(first.components);
+  });
+
+  it('is reproducible across calendar days for evidence-recency and funding-recency components once `today` is pinned', () => {
+    // Before `today` was injectable, fundingEvidence/evidenceRecency read
+    // Date.now() directly, so the same stored record could score
+    // differently depending on which day the test (or a real KPI
+    // computation) happened to run. Pinning `today` closes that gap.
+    const today = new Date('2026-06-15T00:00:00.000Z');
+    const c = { ...base, lastFundingDate: '2026-05-01', evidence: [...base.evidence, { claim: 'Funded', source: 'Fixture', url: 'https://example.com/f', date: '2026-06-01', type: 'News' as const }] };
+    const runs = Array.from({ length: 5 }, () => scoreCompany(c, today));
+    expect(new Set(runs.map((r) => r.score)).size).toBe(1);
+    expect(new Set(runs.map((r) => r.explanation)).size).toBe(1);
+  });
+
+  describe('Hot threshold boundary (score >= 8.0)', () => {
+    // A fully-assessable fixture (assessablePoints === 100) so a 1-unit
+    // change in analyst traction rating moves the score by exactly 0.1 —
+    // the fine-grained lever used to land precisely either side of 8.0.
+    const boundaryBase: Company = {
+      ...base,
+      founders: [
+        {
+          name: 'A. Fixture', role: 'CEO', background: 'Founded a startup before; ex-Google engineer.',
+          identity: { latinoLed: true, femaleLed: true, basis: 'Self-identified', source: 'Fixture verification source (test only)' },
+        },
+        { name: 'B. Fixture', role: 'CTO', background: 'Founded a company before; ex-Meta engineer.' },
+      ],
+      evidence: [{ claim: 'Fixture claim', source: 'Fixture source A', url: 'https://example.com/fixture-a', date: '2026-06-01', type: 'News' }],
+      raising: '$2M seed',
+      lastFundingDate: '2026-05-01',
+    };
+    const today = new Date('2026-06-15T00:00:00.000Z');
+
+    it('just below the boundary (7.9) is not Hot', () => {
+      const fit = scoreCompany({ ...boundaryBase, traction: { level: 1, note: 'x' } }, today);
+      expect(fit.assessablePoints).toBe(100);
+      expect(fit.score).toBe(7.9);
+      expect(fit.score >= HOT_THRESHOLD).toBe(false);
+    });
+
+    it('exactly at the boundary (8.0) IS Hot', () => {
+      const fit = scoreCompany({ ...boundaryBase, traction: { level: 2, note: 'x' } }, today);
+      expect(fit.assessablePoints).toBe(100);
+      expect(fit.score).toBe(8.0);
+      expect(fit.score >= HOT_THRESHOLD).toBe(true);
+    });
+
+    it('a provisional score never counts as Hot regardless of its numeric value', () => {
+      // bare has no company-descriptive component assessable at all, so
+      // it is provisional — Overview/CompanyTable/executiveKpis all
+      // exclude provisional scores from "Hot" even if the raw number
+      // happens to clear the threshold.
+      const fit = scoreCompany(bare, today);
+      expect(fit.provisional).toBe(true);
+    });
   });
 });

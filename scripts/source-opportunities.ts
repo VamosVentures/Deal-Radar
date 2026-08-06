@@ -44,10 +44,7 @@ const SECTOR_TERMS: Record<VerticalId, string[]> = {
   fintech: ['fintech', 'payments', 'lending', 'insurance technology'],
   fow: ['workforce', 'recruiting', 'human resources software', 'productivity software'],
   sustainability: ['climate', 'renewable energy', 'solar', 'carbon'],
-  robotics: ['robotics', 'automation', 'autonomous systems'],
-  spacetech: ['space', 'satellite', 'aerospace', 'orbital'],
-  ai: ['artificial intelligence', 'machine learning', 'ai infrastructure'],
-  aoi: [],
+  frontier: ['robotics', 'automation', 'space', 'satellite'],
 };
 
 /** Source families to draw from, in priority order. SEC leads because it is tier 1 and dated. */
@@ -71,6 +68,7 @@ function query(terms: string[], sources: string[]): DiscoveryQuery {
     dateTo: new Date().toISOString().slice(0, 10),
     maxResults: 20, maxApiCalls: 20, maxModelCalls: 0, maxEstimatedTokens: 0,
     minConfidence: 0, mode: 'all',
+    preview: false, enforceThesisFilter: false, minQualityPriority: null,
     minEvidenceRecencyDays: null, staleAfterDays: 30,
   } as DiscoveryQuery;
 }

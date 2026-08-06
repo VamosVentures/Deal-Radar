@@ -94,10 +94,10 @@ describe('a valid investor announcement becomes structured evidence', () => {
     expect(e.sources[0].participation).toContain('ARCH-backed');
   });
 
-  it('produces space-tech evidence, the sector the shortlist is shortest in', () => {
+  it('produces frontier (space) evidence, the sector the shortlist is shortest in', () => {
     const e = event(F.SPACE_INVESTMENT);
     expect(e.companyName).toBe('Star Catcher');
-    expect(e.sector).toBe('spacetech');
+    expect(e.sector).toBe('frontier');
     expect(e.roundType).toBe('Series A');
   });
 
@@ -588,7 +588,7 @@ describe('an investor announcement becomes a second source family on an existing
     expect(listCompanies()).toHaveLength(1);
     const [company] = listCompanies();
     expect(company.name).toBe('Star Catcher');
-    expect(company.vertical).toBe('spacetech');
+    expect(company.vertical).toBe('frontier');
 
     const [evidence] = listDealEvidence(company.id);
     expect(evidence.sourceId).toBe('investor-news');
@@ -609,7 +609,7 @@ describe('an investor announcement becomes a second source family on an existing
     const { __importInvestorEventForTests } = await import('../services/investorNews');
     __importInvestorEventForTests(event(F.SPACE_INVESTMENT), TODAY);
 
-    const analytics = diversityAnalytics(['spacetech'], { today: TODAY });
+    const analytics = diversityAnalytics(['frontier'], { today: TODAY });
     expect(analytics.totalOpportunities).toBe(0);
   });
 
@@ -623,7 +623,7 @@ describe('an investor announcement becomes a second source family on an existing
     // skipped the gate.
     markQualifiedForTests(out!.companyId);
 
-    const analytics = diversityAnalytics(['spacetech'], { today: TODAY });
+    const analytics = diversityAnalytics(['frontier'], { today: TODAY });
     expect(analytics.totalOpportunities).toBe(1);
     expect(analytics.byFamily).toEqual({ 'investor-primary': 1 });
     expect(analytics.familySharePct).toEqual({ 'investor-primary': 100 });

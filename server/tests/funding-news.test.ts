@@ -213,7 +213,7 @@ describe('only an explicit raise by an operating company qualifies', () => {
     expect(event.hqCity).toBe('Austin');
     expect(event.hqState).toBe('TX');
     expect(event.publisher).toBe('techcrunch.com');
-    expect(event.sector).toBe('robotics');
+    expect(event.sector).toBe('frontier');
   });
 
   it('records a raise with an undisclosed amount without inventing one', () => {
@@ -567,10 +567,10 @@ describe('one financing event is counted once', () => {
 // ── Sector classification (§8) ────────────────────────────────────
 
 describe('sector assignment is based on the product, not a broad word', () => {
-  it('places a rocket-engine company in space tech', () => {
+  it('places a rocket-engine company in Frontier', () => {
     expect(eventFrom({
       title: 'Venus Aerospace raises $90M Series B to build a new kind of rocket engine',
-    }).sector).toBe('spacetech');
+    }).sector).toBe('frontier');
   });
 
   it('places a workforce product in future of work', () => {
@@ -580,11 +580,11 @@ describe('sector assignment is based on the product, not a broad word', () => {
     }).sector).toBe('fow');
   });
 
-  it('places a model company in general AI', () => {
+  it('places a horizontal AI model company in Future of Work — General AI is not a standalone vertical', () => {
     expect(eventFrom({
       title: 'Fish Audio raises $52M seed',
       description: 'Fish Audio builds AI voice models for creators and enterprises.',
-    }).sector).toBe('ai');
+    }).sector).toBe('fow');
   });
 
   it('refuses a sector when the text does not support one', () => {

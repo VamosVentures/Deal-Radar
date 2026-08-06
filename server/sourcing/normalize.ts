@@ -40,6 +40,10 @@ export function leadToEvidence(lead: LeadEvidence): CandidateEvidence {
     // value we cannot parse stays null rather than being guessed.
     publishedAt: toIsoDate(lead.publishedAt),
     verificationStatus: 'Not verified',
+    // Adapters record what the source printed, verbatim — never a
+    // summary or a derivation (server/sourcing/types.ts). That is
+    // exactly what 'fact' means here: the cited page states this.
+    assertionType: 'fact',
     confidence: lead.confidence,
     notes: [
       lead.publishedAt ? `Published ${lead.publishedAt.slice(0, 10)}` : null,
@@ -59,7 +63,8 @@ export function leadToEvidence(lead: LeadEvidence): CandidateEvidence {
  * Zod fills the null. Every other field stays required — an adapter
  * that omits a URL or a claim is a bug, not a missing fact.
  */
-export type RawEvidence = Omit<CandidateEvidence, 'publishedAt'> & { publishedAt?: string | null };
+export type RawEvidence = Omit<CandidateEvidence, 'publishedAt' | 'assertionType'>
+  & { publishedAt?: string | null; assertionType?: CandidateEvidence['assertionType'] };
 
 export interface RawCandidate {
   companyName: string;

@@ -15,6 +15,7 @@ import {
   type PortfolioCompany,
   type PortfolioComparison,
 } from '../../shared/integrations';
+import { HOT_THRESHOLD, TRACK_THRESHOLD } from '../../shared/scoringThresholds';
 import { z } from 'zod';
 
 /**
@@ -97,8 +98,8 @@ function localFitExplanation(c: FitExplainContext): FitExplanation {
     concerns,
     suggestedNextStep:
       c.exceptions.length > 0 ? 'Route to partner review — a policy exception needs sign-off before anything else.' :
-      c.score >= 8 ? 'Prioritize: assign an owner and approve outreach.' :
-      c.score >= 6.5 ? 'Track actively and fill the weakest evidence gaps before outreach.' :
+      c.score >= HOT_THRESHOLD ? 'Prioritize: assign an owner and approve outreach.' :
+      c.score >= TRACK_THRESHOLD ? 'Track actively and fill the weakest evidence gaps before outreach.' :
       'Monitor; revisit when traction or evidence improves.',
     demo: true,
     cached: false,

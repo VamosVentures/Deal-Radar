@@ -218,7 +218,7 @@ describe('duplicate detection & evidence merge', () => {
     await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
     const cand = existingCandidates()[0];
     // Force a duplicate relationship with a CONFLICTING claim.
-    cand.evidence = [{ claim: 'Team size is 14 (conflicts with existing record)', source: 'Simulated filing', url: 'https://example.com/conflict', dateAccessed: '2026-07-10', publishedAt: null, verificationStatus: 'Not verified', confidence: 0.5, notes: '' }];
+    cand.evidence = [{ claim: 'Team size is 14 (conflicts with existing record)', source: 'Simulated filing', url: 'https://example.com/conflict', dateAccessed: '2026-07-10', publishedAt: null, verificationStatus: 'Not verified' as const, assertionType: 'fact' as const, confidence: 0.5, notes: '' }];
     cand.duplicateStatus = 'likely';
     cand.duplicateOfId = existingId;
     cand.duplicateOfName = 'Nueva Salud';
@@ -274,7 +274,7 @@ describe('selective import → Awaiting Review (human gates intact)', () => {
     cand.subcategory = 'Unknown';
     cand.evidence = [{
       claim: 'A record exists.', source: 'Test', url: 'https://example.com/record',
-      dateAccessed: '2026-07-01', publishedAt: null, verificationStatus: 'Not verified', confidence: 0.4, notes: '',
+      dateAccessed: '2026-07-01', publishedAt: null, verificationStatus: 'Not verified' as const, assertionType: 'fact' as const, confidence: 0.4, notes: '',
     }];
     store.raw.discoveryCandidates = [cand];
     const outcome = importCandidates({ candidateIds: [cand.id] });
