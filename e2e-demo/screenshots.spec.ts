@@ -14,10 +14,19 @@ import { mkdirSync } from 'node:fs';
 const OUT = 'docs/sourcing-workflow/screenshots';
 mkdirSync(OUT, { recursive: true });
 
+/**
+ * The demo defaults to signed in (Vercel Authentication in front of the
+ * whole deployment is the real gate — see DEPLOYMENT_READINESS.md §9),
+ * so a fresh tab normally lands straight on Overview. Kept idempotent:
+ * if a prior test in this file signed out, this signs back in.
+ */
 async function signIn(page: Page) {
   await page.goto('/');
-  await page.getByLabel('Administrator password').fill('demo');
-  await page.getByRole('button', { name: 'Sign in' }).click();
+  const passwordField = page.getByLabel('Administrator password');
+  if (await passwordField.isVisible().catch(() => false)) {
+    await passwordField.fill('demo');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+  }
   await expect(page.getByText('Sourcing radar')).toBeVisible({ timeout: 10_000 });
 }
 
@@ -33,7 +42,13 @@ async function settle(page: Page) {
 test.describe.configure({ mode: 'serial' });
 
 test('01 — access screen', async ({ page }) => {
+  // This build defaults to signed in (see signIn() above) so the access
+  // screen is reachable via Settings → Sign out, not on first load — force
+  // that state explicitly rather than relying on being first in the file.
   await page.goto('/');
+  await expect(page.getByText('Sourcing radar')).toBeVisible({ timeout: 10_000 });
+  await page.evaluate(() => sessionStorage.setItem('deal-radar-demo-signed-in', '0'));
+  await page.reload();
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await settle(page);
   await page.screenshot({ path: `${OUT}/01-access-screen.png` });

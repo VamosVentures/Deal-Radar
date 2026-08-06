@@ -131,16 +131,21 @@ describe('demoApi — synthetic data only', () => {
     expect(solstice!.oneLiner).toMatch(/SYNTHETIC DEMO EXAMPLE/);
   });
 
-  it('sign-in succeeds locally with no network call and no real credential check', async () => {
+  it('defaults to signed in (Vercel Authentication is the real gate in front of this build), and sign-out/sign-in both work locally with no network call', async () => {
     const fetchSpy = vi.fn(() => { throw new Error('must not call fetch'); });
     vi.stubGlobal('fetch', fetchSpy);
-    const before = await demoApi.auth.status();
-    expect(before.authenticated).toBe(false);
-    await demoApi.auth.login('literally anything');
-    const after = await demoApi.auth.status();
-    expect(after.authenticated).toBe(true);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    const initial = await demoApi.auth.status();
+    expect(initial.authenticated).toBe(true);
+
     await demoApi.auth.logout();
+    const afterLogout = await demoApi.auth.status();
+    expect(afterLogout.authenticated).toBe(false);
+
+    await demoApi.auth.login('literally anything — never checked against a real credential');
+    const afterLogin = await demoApi.auth.status();
+    expect(afterLogin.authenticated).toBe(true);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 });

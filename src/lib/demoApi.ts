@@ -41,13 +41,27 @@ function disabled<T = never>(): Promise<T> {
  * real credential). Backed by sessionStorage so a direct-route refresh
  * keeps you signed in within the same tab, with an in-memory fallback
  * for environments with no Web Storage (the unit-test/node runner).
+ *
+ * Defaults to SIGNED IN. The real security boundary for this build is
+ * Vercel Authentication in front of the whole deployment (see
+ * DEPLOYMENT_READINESS.md §9) — anyone who reaches this bundle at all
+ * has already cleared that gate, so the app's own password screen would
+ * be pure friction with nothing behind it to protect. "Sign out" (in
+ * Settings) still works and returns to the real sign-in screen, so it
+ * remains reachable — it just isn't the default entry experience.
  */
 const SESSION_KEY = 'deal-radar-demo-signed-in';
 let memSignedIn = (() => {
-  try { return sessionStorage.getItem(SESSION_KEY) === '1'; } catch { return false; }
+  try {
+    const stored = sessionStorage.getItem(SESSION_KEY);
+    return stored === null ? true : stored === '1';
+  } catch { return true; }
 })();
 function isSignedIn(): boolean {
-  try { return sessionStorage.getItem(SESSION_KEY) === '1'; } catch { return memSignedIn; }
+  try {
+    const stored = sessionStorage.getItem(SESSION_KEY);
+    return stored === null ? true : stored === '1';
+  } catch { return memSignedIn; }
 }
 function setSignedIn(v: boolean): void {
   memSignedIn = v;

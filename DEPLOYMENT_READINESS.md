@@ -251,9 +251,11 @@ A separate, read-only **demo** build (`VITE_DEMO_MODE=true`) was deployed as a V
 **Preview** deployment under the existing, already-authorized `vamos-ventures/deal-radar`
 project (`prj_z9zKeT1Eff2iRRs3pzddL3poc0kr`) — not production, and not a new project.
 
-**URL:** `https://deal-radar-fw7d1cd7z-vamos-ventures.vercel.app`
-**Deployment:** `dpl_5Jrf8nkHJJbt581Q5vA11XYbqi2Z` — `target: null` (Preview, not Production),
+**URL:** `https://deal-radar-nr9mpczv6-vamos-ventures.vercel.app`
+**Deployment:** `dpl_DPw8ReWdYBH1n8iPWdP8F8M8iJsJ` — `target: null` (Preview, not Production),
 `functions: none` (confirmed via the Vercel API — purely static, no serverless compute).
+(An earlier deployment of the same build, `dpl_5Jrf8nkHJJbt581Q5vA11XYbqi2Z`, is superseded —
+see the auto-sign-in note below.)
 
 It is:
 
@@ -263,6 +265,12 @@ It is:
   scoped to Preview deployments only (Production is untouched). Verified with `curl`:
   every path tested — `/`, `/index.html`, and a built JS asset under `/assets/` — returns
   **302** to `vercel.com/sso-api`, never 200 with content, for an unauthenticated caller.
+- **Auto-signed-in on load.** Because Vercel Authentication in front of the whole deployment
+  is the real access boundary here, the demo build's own internal sign-in screen (a synthetic
+  check that accepts any input) defaults to signed in rather than asking a second time —
+  anyone who reaches the bundle at all has already cleared the real gate. "Sign out" (in
+  Settings) still returns to that screen for anyone who wants to see it. This only applies to
+  `VITE_DEMO_MODE=true` builds; the real application's sign-in is untouched.
 - **Not a demonstration of hosted-pilot readiness.** It proves the frontend renders correctly
   when hosted on Vercel; it proves nothing about the backend, the database, the scheduler, or
   authentication, none of which exist in that build. Sections 1–7 above are unchanged by its
