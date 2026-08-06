@@ -66,7 +66,7 @@ The handoff's figures were close but not all correct. Actuals, measured before a
 | Scoring rows | ~676 | **676** ✓ | **879** |
 | `pending_evidence` | possibly 0 | **0** ✓ | **44** |
 | `traction_reviews` | — | 0 | **0** (unchanged, by design) |
-| Unit tests | 1,076 | **1,076 pass** ✓ | **1,094 pass** |
+| Unit tests | 1,076 | **1,076 pass** ✓ | **1,110 pass** (56 files) |
 | Playwright | 124 | **124 pass** ✓ | **131 pass** |
 
 **The "372 founders" claim was wrong.** 372 was the `founder_candidates` count — research
@@ -341,7 +341,7 @@ fabricated analyst decision was written to the development database:
 |---|---|
 | `npm run typecheck` | **clean** |
 | `npm run lint` | **clean** (3 pre-existing `react-refresh` warnings, untouched) |
-| `npm test` | **1,094 passed / 55 files** (baseline 1,076) |
+| `npm test` | **1,110 passed / 56 files** (baseline 1,076 / 54) |
 | `npm run test:e2e` | **131 passed** (baseline 124 + 7 new) |
 | `npm run build` | **success** |
 | `npm run db:integrity` | **OK** |
@@ -370,8 +370,25 @@ npm run dev
 
 ## 19. Git
 
-See §20 of the command output in the session; commit hash and final `git status` are recorded
-immediately below the commit.
+| | |
+|---|---|
+| Commit | **`eb6845640786d24822386820a1cdc50b17cb424b`** |
+| Subject | `Connect the analyst evidence queue, and stop scoring a stage nobody stated` |
+| Branch | `frontend-redesign` (not pushed — no push authorization was given) |
+| Scope | 112 files changed, 16,157 insertions, 706 deletions |
+| Working tree after | **clean** |
+
+One local checkpoint commit. **Nothing was pushed, no PR was opened, and no release was
+published** — none of those was separately authorized.
+
+Excluded from the commit and verified not staged: `.env`, `server/.data/` (the database and
+every backup), `dist/`, `test-results/`, and logs — all gitignored. A targeted credential
+scan over every staged file (OpenAI/GitHub/Slack/AWS key shapes, private-key headers, quoted
+password assignments) returned nothing. The only credential-like strings in the tree are the
+E2E fixture's deliberately fake `e2e-test-admin-password` / `e2e-test-session-secret`.
+
+Nothing was left uncommitted: all 112 changed files belong to this stacked implementation
+effort, and there were no unrelated user files in the worktree.
 
 ## 20. Remaining human decisions
 
