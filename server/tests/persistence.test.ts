@@ -270,7 +270,7 @@ describe('conflicting source data and provenance', () => {
     // us nothing about whether versioning works.
     expect(snap!.version).toBe(SCORING_VERSION);
     expect(snap!.evidenceConfidence).toBeGreaterThanOrEqual(0);
-    expect(snap!.explanation).toContain('Vamos Fit Score'); // explanation stored
+    expect(snap!.explanation).toContain('VamosVentures Fit Score'); // explanation stored
     expect(snap!.supportingEvidence.length).toBeGreaterThanOrEqual(1); // evidence URLs stored
     expect(snap!.computedAt).toMatch(/^\d{4}-/); // calculation date stored
   });

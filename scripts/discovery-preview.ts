@@ -4,7 +4,7 @@
  * Runs the discovery pipeline TWICE per vertical against the same live
  * public sources — once with the pre-existing behaviour (baseline) and
  * once with this pass's improvements (improved) — and reports the
- * difference under the UNCHANGED Vamos Fit Score. Both runs are
+ * difference under the UNCHANGED VamosVentures Fit Score. Both runs are
  * `preview: true`, so neither writes a candidate, a run row, a company,
  * a score, a review decision or an id counter. Nothing is added to the
  * pipeline, no CRM stage moves, nothing syncs to HubSpot, and no

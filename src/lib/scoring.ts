@@ -2,7 +2,7 @@ import type { Company, FitScore, PolicyFlag, ScoreComponent } from '../types';
 import { PREFERRED_STATES, verticalById } from '../data/taxonomy';
 
 /**
- * Vamos Fit Score — repeatable 100-point weighted model, displayed as
+ * VamosVentures Fit Score — repeatable 100-point weighted model, displayed as
  * 1.0–10.0. Every point is deterministic and explained; there is no
  * unexplained AI-generated number anywhere in the score.
  *
@@ -559,7 +559,7 @@ export function scoreCompany(c: Company, today: Date = new Date()): FitScore {
     exceptions,
     version: SCORING_VERSION,
     evidenceConfidence: confidence,
-    explanation: `Vamos Fit Score ${score.toFixed(1)}/10 — ${earned} of ${assessablePoints} assessable points (model ${SCORING_VERSION}). Strongest assessed component: ${strongest.label} (${strongest.points}/${strongest.max}). Weakest: ${weakest.label} (${weakest.points}/${weakest.max}).${gapNote}${provisionalReason ? ` ${provisionalReason}` : ''} Evidence confidence ${Math.round(confidence * 100)}% — a separate measure of how well-sourced the record is, not of thesis fit.`,
+    explanation: `VamosVentures Fit Score ${score.toFixed(1)}/10 — ${earned} of ${assessablePoints} assessable points (model ${SCORING_VERSION}). Strongest assessed component: ${strongest.label} (${strongest.points}/${strongest.max}). Weakest: ${weakest.label} (${weakest.points}/${weakest.max}).${gapNote}${provisionalReason ? ` ${provisionalReason}` : ''} Evidence confidence ${Math.round(confidence * 100)}% — a separate measure of how well-sourced the record is, not of thesis fit.`,
   };
 }
 

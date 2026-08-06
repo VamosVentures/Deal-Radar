@@ -137,7 +137,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
             <ScoreGauge score={fit.score} />
             <div>
               <div className="text-sm font-semibold">{recommendationFor(fit.score)}</div>
-              <div className="text-xs text-slate-mid">Vamos Fit Score {fit.score.toFixed(1)} / 10 · {c.stage} · {c.city}, {c.state}</div>
+              <div className="text-xs text-slate-mid">VamosVentures Fit Score {fit.score.toFixed(1)} / 10 · {c.stage} · {c.city}, {c.state}</div>
             </div>
           </div>
 

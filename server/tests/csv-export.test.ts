@@ -104,7 +104,7 @@ describe('row content', () => {
     expect(r.fit.provisional).toBe(true); // bare record — nothing about the company is judgeable
 
     expect(cell(r, 'Company')).toBe('Fixture Health, Inc.');
-    expect(cell(r, 'Vamos fit score (1-10)')).toBe(r.fit.score.toFixed(1));
+    expect(cell(r, 'VamosVentures fit score (1-10)')).toBe(r.fit.score.toFixed(1));
     expect(cell(r, 'Score is provisional')).toBe('yes');
   });
 

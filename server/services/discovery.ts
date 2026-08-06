@@ -300,7 +300,7 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
         // always see why something ranked where it did — including for
         // candidates that are kept.
         //
-        // Neither stage touches the Vamos Fit Score. The triage
+        // Neither stage touches the VamosVentures Fit Score. The triage
         // priority is a separate number, stored on the candidate, that
         // orders research effort; scoreCompany() below is called with
         // exactly the same inputs it always was.

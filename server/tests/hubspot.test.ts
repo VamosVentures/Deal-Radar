@@ -55,7 +55,7 @@ const deal = (over: Partial<HubSpotDealRecord> = {}): HubSpotDealRecord => ({
   sourcingStatus: 'Surfaced by Deal Radar', dateSurfaced: '2026-04-12',
   nextAction: 'Approve outreach', relationshipOwner: 'DR',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
-  scoreExplanation: 'Vamos Fit Score 8.7/10 (test fixture explanation).',
+  scoreExplanation: 'VamosVentures Fit Score 8.7/10 (test fixture explanation).',
   approvedBy: 'DR', approvalDate: '2026-07-18',
   sourceUrls: ['https://example.com/solcare-pilot'],
   ...over,
@@ -168,7 +168,7 @@ describe('payload builders', () => {
     const p = buildDealProperties(deal(), 's', 'p');
     expect(p.vamos_reviewer).toBe('DR');
     expect(p.vamos_approval_date).toBe('2026-07-18');
-    expect(p.vamos_score_explanation).toContain('Vamos Fit Score');
+    expect(p.vamos_score_explanation).toContain('VamosVentures Fit Score');
     expect(p.vamos_source_urls).toContain('https://example.com/solcare-pilot');
   });
 });

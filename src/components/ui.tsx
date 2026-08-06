@@ -3,7 +3,7 @@ import type { Founder, PolicyFlag, VerifiedIdentity } from '../types';
 import { flagLabel } from '../lib/scoring';
 
 /**
- * Signature element: a radar-sweep gauge for the Vamos Fit Score. The
+ * Signature element: a radar-sweep gauge for the VamosVentures Fit Score. The
  * tick marks around the ring are literal — this is the "radar" the
  * product is named for, not an arbitrary donut chart.
  */
@@ -14,7 +14,7 @@ export function ScoreGauge({ score, size = 44 }: { score: number; size?: number 
   const tone = score >= 7.5 ? 'var(--color-verde)' : score >= 5.5 ? 'var(--color-marigold)' : 'var(--color-slate-mid)';
   const ticks = 28;
   return (
-    <span className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }} title={`Vamos Fit Score ${score.toFixed(1)} / 10`}>
+    <span className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }} title={`VamosVentures Fit Score ${score.toFixed(1)} / 10`}>
       <svg width={size} height={size} className="-rotate-90">
         {Array.from({ length: ticks }).map((_, i) => {
           const a = (i / ticks) * 2 * Math.PI;

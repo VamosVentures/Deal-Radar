@@ -135,7 +135,7 @@ export const discoveryQuerySchema = z.object({
    * Minimum stage-2 triage priority (0–100) a candidate must reach to be
    * kept. null = keep everything, which is the default.
    *
-   * This orders and filters CANDIDATES only. It is not the Vamos Fit
+   * This orders and filters CANDIDATES only. It is not the VamosVentures Fit
    * Score, cannot change one, and has no relationship to the 8.0 Hot
    * threshold — see server/sourcing/qualitySignals.ts.
    */
@@ -294,7 +294,7 @@ export const discoveryCandidateSchema = z.object({
   thesisRejections: z.array(thesisCheckSchema).default([]),
   /**
    * Stage 2 (qualitySignals.ts): INTERNAL enrichment-triage priority,
-   * 0–100. This is not, and must never be conflated with, the Vamos Fit
+   * 0–100. This is not, and must never be conflated with, the VamosVentures Fit
    * Score — it ranks candidates for research effort, is computed from
    * different inputs, and never reaches scoring_results.
    */

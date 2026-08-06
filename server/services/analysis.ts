@@ -93,7 +93,7 @@ function localFitExplanation(c: FitExplainContext): FitExplanation {
     ...c.exceptions.map((e) => `Policy exception: ${e}`),
   ];
   return fitExplanationSchema.parse({
-    summary: `${c.companyName} scores ${c.score.toFixed(1)}/10 on the Vamos Fit model as a ${c.stage} company in ${c.vertical} → ${c.subcategory}. The score is a weighted sum of the audited components below — nothing here is inferred beyond the recorded evidence.`,
+    summary: `${c.companyName} scores ${c.score.toFixed(1)}/10 on the VamosVentures Fit model as a ${c.stage} company in ${c.vertical} → ${c.subcategory}. The score is a weighted sum of the audited components below — nothing here is inferred beyond the recorded evidence.`,
     strengths: strengths.length > 0 ? strengths : [`Highest-weighted component: ${sorted[0].label} (${sorted[0].points}/${sorted[0].max}).`],
     concerns,
     suggestedNextStep:

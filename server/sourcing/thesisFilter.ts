@@ -8,7 +8,7 @@ import { checkEntityType } from './classify';
  * A hard, cheap, deterministic gate applied to every candidate BEFORE any
  * expensive enrichment is spent on it. It answers one question — "could
  * this ever be a Vamos deal?" — and nothing else. It does not rank, does
- * not score, and has no connection whatsoever to the Vamos Fit Score
+ * not score, and has no connection whatsoever to the VamosVentures Fit Score
  * (src/lib/scoring.ts). Stage 2 (qualitySignals.ts) does the ranking.
  *
  * The single most important rule here, inherited from the existing

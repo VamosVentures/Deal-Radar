@@ -19,7 +19,7 @@ import { E2E_BACKEND_PORT } from './env';
 async function openFixtureDetail(page: import('@playwright/test').Page) {
   await page.goto('/companies');
   await page.getByText('E2E Health Fixture Co').click();
-  await expect(page.getByText(/Vamos Fit Score:/)).toBeVisible();
+  await expect(page.getByText(/VamosVentures Fit Score:/)).toBeVisible();
 }
 
 test.describe('Manual website confirmation', () => {

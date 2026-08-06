@@ -52,7 +52,7 @@ function metricDetail(entity: KpiEntityKind, metric: KpiMetricKind): string {
     case 'discoveredThisWeek':
       return `Retained sourced ${noun} whose effective discovery date falls in the current calendar week (ISO-8601, Monday–Sunday, UTC).`;
     case 'hot':
-      return `${entity === 'companies' ? 'Companies scoring' : 'Stealth founders whose associated company scores'} ${HOT_THRESHOLD.toFixed(1)} or higher on the Vamos Fit Score. Provisional scores (no company-descriptive evidence yet) are excluded${entity === 'founders' ? ', and rejected candidates never count here regardless of their company\'s score' : ''}.`;
+      return `${entity === 'companies' ? 'Companies scoring' : 'Stealth founders whose associated company scores'} ${HOT_THRESHOLD.toFixed(1)} or higher on the VamosVentures Fit Score. Provisional scores (no company-descriptive evidence yet) are excluded${entity === 'founders' ? ', and rejected candidates never count here regardless of their company\'s score' : ''}.`;
     case 'stale':
       return `${entity === 'companies' ? 'Companies' : 'Stealth founders'} not reviewed by a team member in 7 or more days — a human review action only; automated refreshes/enrichment never count. Includes records that have never been reviewed at all, once they've existed 7+ days.`;
     case 'awaitingReview':
@@ -233,7 +233,7 @@ export function Overview() {
       <PageHeader
         eyebrow="Overview"
         title="Sourcing radar — this week"
-        blurb="Ranked by Vamos Fit Score (1.0–10.0). Every rank is auditable: open a company to see the point-by-point breakdown and the evidence behind it."
+        blurb="Ranked by VamosVentures Fit Score (1.0–10.0). Every rank is auditable: open a company to see the point-by-point breakdown and the evidence behind it."
       />
 
       {loadError && (

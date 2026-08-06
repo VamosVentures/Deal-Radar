@@ -421,7 +421,7 @@ export function CompanyTable({
             {states.map((s) => <option key={s}>{s}</option>)}
           </select>
           <select className={select} value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)} aria-label="Sort by">
-            <option value="fit">Sort: Vamos Fit Score</option>
+            <option value="fit">Sort: VamosVentures Fit Score</option>
             <option value="evidence-recency">Sort: Evidence recency</option>
             <option value="discovery-date">Sort: Discovery date</option>
           </select>
@@ -934,7 +934,7 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             <button className="text-slate-mid hover:text-ink" onClick={() => setRefreshResult(null)}>Dismiss ✕</button>
           </div>
           <div className="mb-1.5 font-semibold text-ink">
-            Vamos Fit Score: {refreshResult.oldScore ? `${refreshResult.oldScore.score.toFixed(1)} → ` : ''}{refreshResult.newScore.score.toFixed(1)}
+            VamosVentures Fit Score: {refreshResult.oldScore ? `${refreshResult.oldScore.score.toFixed(1)} → ` : ''}{refreshResult.newScore.score.toFixed(1)}
             {refreshResult.oldScore && refreshResult.oldScore.score === refreshResult.newScore.score ? ' (unchanged)' : ''}
             <span className="ml-1.5 font-mono text-[10px] font-normal text-slate-mid">model {refreshResult.newScore.version}</span>
           </div>
@@ -972,7 +972,7 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
         {/* ── Inspector rail: score, status, and every action, always in view. ── */}
         <aside className="mb-5 lg:sticky lg:top-12 lg:mb-0 lg:w-60 lg:shrink-0">
           <div className={`border border-line ${scoreTone} border-l-[3px] bg-panel px-3.5 py-3`}>
-            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Vamos Fit Score</div>
+            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">VamosVentures Fit Score</div>
             <div className="mt-0.5 flex items-baseline gap-2">
               <span className="font-display text-3xl font-bold leading-none text-ink">{fit.score.toFixed(1)}</span>
               <span className="font-mono text-xs text-slate-mid">/10</span>
@@ -989,7 +989,7 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
             )}
             <div className="mt-2 space-y-1 border-t border-line pt-2 font-mono text-[10px] text-slate-mid">
               <div className="flex items-center justify-between gap-2">
-                <span>Vamos Fit Score:</span><span className="text-ink">{fit.score.toFixed(1)}/10</span>
+                <span>VamosVentures Fit Score:</span><span className="text-ink">{fit.score.toFixed(1)}/10</span>
               </div>
               {/*
                 Model-assessable %, evidence confidence, and the scoring

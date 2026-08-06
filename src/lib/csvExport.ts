@@ -87,7 +87,7 @@ export function csvCell(value: unknown): string {
 
 export const EXPORT_COLUMNS = [
   'Company',
-  'Vamos fit score (1-10)',
+  'VamosVentures fit score (1-10)',
   'Score is provisional',
   'Opportunity classification',
   'Qualification verdict',

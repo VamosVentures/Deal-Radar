@@ -39,7 +39,7 @@ const base: Company = {
   flags: [],
 };
 
-describe('Vamos Fit scoring invariants', () => {
+describe('VamosVentures Fit scoring invariants', () => {
   it('keeps every score in the 1.0–10.0 range and breakdowns summing to the total', () => {
     const variants: Company[] = [
       base,
@@ -68,7 +68,7 @@ describe('Vamos Fit scoring invariants', () => {
     for (const k of ['thesis', 'stage', 'mission', 'traction', 'founder', 'geo', 'funding', 'validation', 'evidence', 'recency']) {
       expect(keys).toContain(k);
     }
-    expect(fit.explanation).toContain('Vamos Fit Score');
+    expect(fit.explanation).toContain('VamosVentures Fit Score');
     expect(fit.explanation).toContain(SCORING_VERSION);
   });
 

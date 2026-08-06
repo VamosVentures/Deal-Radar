@@ -7,7 +7,7 @@ import { HOT_THRESHOLD } from '../../shared/scoringThresholds';
 import { ExceptionBadge, IdentityChips, ScoreGauge } from './ui';
 
 /**
- * Vamos Fit ranking — strongest current opportunities first, with the
+ * VamosVentures Fit ranking — strongest current opportunities first, with the
  * primary filters only (vertical, stage, state) and free search.
  */
 export function Ranking() {
@@ -81,7 +81,7 @@ export function Ranking() {
   return (
     <section>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">Vamos Fit ranking</h2>
+        <h2 className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">VamosVentures Fit ranking</h2>
         <div className="ml-auto flex flex-wrap gap-1 border border-line bg-panel p-0.5">
           {([['top10', 'Top 10'], ['highFit', `High-Fit (assessed, ${HOT_THRESHOLD.toFixed(1)}+)`], ['all', 'All']] as const).map(([id, label]) => (
             <button key={id} onClick={() => setShow(id)} className={`rounded-[1px] px-2 py-1 text-xs transition-colors ${show === id ? 'bg-verde-soft font-semibold text-verde' : 'text-slate-mid hover:text-ink'}`}>{label}</button>

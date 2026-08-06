@@ -27,7 +27,7 @@ export interface SourceAnalytics {
   resultsRetrieved: number;
   companiesImported: number;
   companiesApprovedOrSynced: number;
-  /** Average of the LATEST Vamos Fit Score for companies whose discovery_source is this source. */
+  /** Average of the LATEST VamosVentures Fit Score for companies whose discovery_source is this source. */
   avgFitScoreOfImported: number | null;
   mostRecentSuccessfulRunAt: string | null;
   mostRecentFailedRunAt: string | null;

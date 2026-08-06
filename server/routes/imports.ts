@@ -243,7 +243,7 @@ importsRouter.post('/companies/:id/traction', wrap(async (req, res) => {
 /**
  * "Refresh live research" — actually re-queries live, company-level-
  * capable sources for this one company, merges new evidence (never
- * duplicated, never deleting history), recomputes the Vamos Fit
+ * duplicated, never deleting history), recomputes the VamosVentures Fit
  * Score, and reports exactly what changed. See
  * server/services/companyRefresh.ts for the full algorithm. Rate-
  * limited in app.ts since this makes real outbound requests.

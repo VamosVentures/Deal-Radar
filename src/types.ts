@@ -169,7 +169,7 @@ export interface ScoreComponent {
 
 export interface FitScore {
   /**
-   * 1.0–10.0 Vamos Fit Score, computed over the components that could
+   * 1.0–10.0 VamosVentures Fit Score, computed over the components that could
    * actually be judged. Read it together with `completeness`.
    */
   score: number;

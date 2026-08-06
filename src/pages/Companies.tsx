@@ -30,7 +30,7 @@ export function Companies() {
       <PageHeader
         eyebrow="All Deals"
         title="All Deals"
-        blurb="Every retained deal across every vertical, ranked by Vamos Fit Score. Search and filter across one or more verticals, then expand a row for the point-by-point score breakdown, the evidence behind it, and screening actions."
+        blurb="Every retained deal across every vertical, ranked by VamosVentures Fit Score. Search and filter across one or more verticals, then expand a row for the point-by-point score breakdown, the evidence behind it, and screening actions."
       />
 
       {loadError && (

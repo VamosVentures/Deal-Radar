@@ -22,7 +22,7 @@ test.describe('Responsive layout', () => {
       await page.setViewportSize(size);
       await page.goto('/companies');
       await page.getByText('E2E Health Fixture Co').click();
-      await expect(page.getByText(/Vamos Fit Score:/)).toBeVisible();
+      await expect(page.getByText(/VamosVentures Fit Score:/)).toBeVisible();
       await page.getByRole('button', { name: 'Monitor' }).click();
       await expect(page.getByText('Monitor', { exact: true }).first()).toBeVisible();
     });

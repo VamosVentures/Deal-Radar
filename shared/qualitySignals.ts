@@ -7,7 +7,7 @@ import type { DiscoveryCandidate } from './discovery';
  * THIS IS NOT THE VAMOS FIT SCORE AND MUST NEVER BECOME IT.
  * ─────────────────────────────────────────────────────────────────────
  *
- * The official Vamos Fit Score lives in src/lib/scoring.ts, is computed
+ * The official VamosVentures Fit Score lives in src/lib/scoring.ts, is computed
  * only from a persisted `Company`, and is unchanged by this file — same
  * ten components, same weights, same 8.0 Hot threshold. The number
  * produced here is an INTERNAL TRIAGE PRIORITY (0–100) whose only job is
@@ -78,7 +78,7 @@ export interface QualitySignal {
 }
 
 export interface QualityAssessment {
-  /** 0–100 internal triage priority. NOT the Vamos Fit Score. */
+  /** 0–100 internal triage priority. NOT the VamosVentures Fit Score. */
   priority: number;
   band: 'high' | 'medium' | 'low';
   signals: QualitySignal[];
@@ -601,7 +601,7 @@ export function assessQuality(
   const pos = signals.filter((s) => s.direction === 'positive');
   const neg = signals.filter((s) => s.direction === 'negative');
   const rationale =
-    `Triage priority ${priority}/100 (${band}) — an internal enrichment-ordering value, not the Vamos Fit Score. `
+    `Triage priority ${priority}/100 (${band}) — an internal enrichment-ordering value, not the VamosVentures Fit Score. `
     + `${pos.length} positive signal(s)${pos.length > 0 ? `: ${pos.map((s) => `${s.label} (+${s.points}${s.weight < 1 ? ` of ${s.fullPoints}, company-claimed` : ''})`).join(', ')}` : ''}. `
     + `${neg.length} negative signal(s)${neg.length > 0 ? `: ${neg.map((s) => `${s.label} (${s.points})`).join(', ')}` : ''}. `
     + `${independentSources} independent source(s) after collapsing syndicated copies.`;

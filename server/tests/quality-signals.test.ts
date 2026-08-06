@@ -164,10 +164,10 @@ describe('stage 2 — evidence-backed quality prioritization', () => {
 /**
  * The load-bearing separation in this whole pass. The triage priority is
  * allowed to influence which candidates get researched; it is not allowed
- * to influence, contaminate, or stand in for the official Vamos Fit
+ * to influence, contaminate, or stand in for the official VamosVentures Fit
  * Score. These tests fail loudly if that ever stops being true.
  */
-describe('the triage priority is isolated from the official Vamos Fit Score', () => {
+describe('the triage priority is isolated from the official VamosVentures Fit Score', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   /**
    * Comments are stripped before matching: both files DISCUSS the

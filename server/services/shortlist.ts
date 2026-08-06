@@ -405,7 +405,7 @@ export function selectSectorShortlist(
     if (cap) {
       hold(c, 'source-family-cap', cap, rank);
     } else if (rank > perSector) {
-      hold(c, 'ranked-below-cutoff', `Ranked #${rank} of ${contenders.length} live deals in this sector and only ${perSector} slots exist. Order is decided by evidence tier first, then how recent the evidence is, then Vamos fit score.`, rank);
+      hold(c, 'ranked-below-cutoff', `Ranked #${rank} of ${contenders.length} live deals in this sector and only ${perSector} slots exist. Order is decided by evidence tier first, then how recent the evidence is, then VamosVentures fit score.`, rank);
     } else {
       // Inside the top `perSector` by rank, yet not selected: pass 1 gave
       // the slot to a lower-ranked candidate from a source family this

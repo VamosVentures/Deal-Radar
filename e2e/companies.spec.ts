@@ -78,7 +78,7 @@ test.describe('All Deals (companies review queue)', () => {
   test('the company detail view opens and review-status actions work', async ({ page }) => {
     await page.goto('/companies');
     await page.getByText('E2E Health Fixture Co').click();
-    await expect(page.getByText(/Vamos Fit Score:/)).toBeVisible();
+    await expect(page.getByText(/VamosVentures Fit Score:/)).toBeVisible();
 
     await page.getByRole('button', { name: 'Monitor' }).click();
     await expect(page.getByText('Monitor', { exact: true }).first()).toBeVisible();

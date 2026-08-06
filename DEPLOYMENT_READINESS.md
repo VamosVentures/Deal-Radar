@@ -251,11 +251,11 @@ A separate, read-only **demo** build (`VITE_DEMO_MODE=true`) was deployed as a V
 **Preview** deployment under the existing, already-authorized `vamos-ventures/deal-radar`
 project (`prj_z9zKeT1Eff2iRRs3pzddL3poc0kr`) — not production, and not a new project.
 
-**URL:** `https://deal-radar-jr8urr9gf-vamos-ventures.vercel.app`
-**Deployment:** `dpl_3RaS4d2ppSjMtNCa9GB88wquoMZu` — `target: null` (Preview, not Production),
+**URL:** `https://deal-radar-5gdmoqdvg-vamos-ventures.vercel.app`
+**Deployment:** `dpl_C9Y9dxLQQ9z2paRz2s2Gjbdjwf6q` — `target: null` (Preview, not Production),
 `functions: none` (confirmed via the Vercel API — purely static, no serverless compute).
-(Two earlier deployments of the same build, `dpl_5Jrf8nkHJJbt581Q5vA11XYbqi2Z` and
-`dpl_DPw8ReWdYBH1n8iPWdP8F8M8iJsJ`, are superseded.)
+(Three earlier deployments of the same build — `dpl_5Jrf8nkHJJbt581Q5vA11XYbqi2Z`,
+`dpl_DPw8ReWdYBH1n8iPWdP8F8M8iJsJ`, `dpl_3RaS4d2ppSjMtNCa9GB88wquoMZu` — are superseded.)
 
 **Team access without a Vercel Pro upgrade.** The team is on Vercel's Hobby plan, which
 supports neither password protection ("Advanced Deployment Protection is not enabled on your
