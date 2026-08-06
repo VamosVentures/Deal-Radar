@@ -566,6 +566,7 @@ export const DEMO_DISCOVERY_RUNS: DiscoveryRun[] = [
 export const DEMO_STEALTH_SIGNALS: StealthSignal[] = [];
 
 export const DEMO_RADAR_ENTRIES: RadarEntry[] = [
+  // ── Probable candidate — unconfirmed (no company name yet) ──────────
   {
     companyId: 'demo-stealth-1', companyName: '(Stealth — no company name on record)', website: null,
     city: 'Seattle', state: 'WA',
@@ -587,6 +588,128 @@ export const DEMO_RADAR_ENTRIES: RadarEntry[] = [
       { family: 'accelerator', label: 'Accelerator / incubator profile', outcome: 'reached-no-founder-stated', detail: 'No accelerator profile found (demo/synthetic).' },
     ] },
     lastCheckedAt: isoDate(-1), nextAction: 'Continue monitoring; consider a research pass once a company name appears.',
+    relationships: [], financing: [],
+    filingFacts: [],
+  },
+
+  // ── Verified founder — a filed company, confirmed identity, financing + relationships ──
+  {
+    companyId: 'demo-stealth-2', companyName: 'Northbeam Robotics (stealth, demo/synthetic)', website: 'https://example.com/demo/northbeam',
+    city: 'Pittsburgh', state: 'PA',
+    stealthReason: 'Demo synthetic example — an SEC Form D names a related person who also appears on the company\'s own (unlisted) leadership page.',
+    status: 'verified-founder', statusLabel: 'Verified founder',
+    verifiedFounders: [
+      {
+        candidateId: 9010, personKey: 'demo founder c', fullName: 'Demo Founder C', title: 'CEO & Co-founder (synthetic)',
+        sourceUrl: 'https://example.com/demo/sec/northbeam', sourceFamily: 'sec-form-d', sourceFamilyLabel: 'SEC Form D',
+        publishedAt: isoDate(-40), supportingText: 'Related person listed on a Form D reporting a $2.1M exempt offering (demo/synthetic).',
+        matchEvidence: ['SEC Form D related-person record', 'Statement on the company\'s own domain'],
+        matchScore: 10, confidence: 0.92, verified: true, reviewDecision: 'confirmed', reviewedBy: 'Demo Analyst', reviewedAt: isoDate(-38),
+      },
+    ],
+    candidates: [],
+    conflicts: [],
+    progress: { answered: 5, total: 5, families: [
+      { family: 'sec-form-d', label: 'SEC Form D', outcome: 'found-candidate', detail: 'Filing reached and read (demo/synthetic).' },
+      { family: 'company-site', label: 'Company website', outcome: 'found-candidate', detail: 'Unlisted leadership page reached (demo/synthetic).' },
+      { family: 'accelerator', label: 'Accelerator / incubator profile', outcome: 'reached-no-founder-stated', detail: 'No accelerator profile found (demo/synthetic).' },
+    ] },
+    lastCheckedAt: isoDate(-2), nextAction: 'Confirmed — proceed to standard research/outreach workflow like any other founder record.',
+    relationships: [
+      { relation: 'related person', to: 'Northbeam Robotics, Inc. (demo/synthetic)', toType: 'company', evidenceUrl: 'https://example.com/demo/sec/northbeam', sourceFamily: 'sec-form-d', confidence: 0.92 },
+    ],
+    financing: [
+      { amountText: '$2.1M', roundType: 'Exempt offering (Form D)', investors: [], url: 'https://example.com/demo/sec/northbeam', publishedAt: isoDate(-40) },
+    ],
+    filingFacts: [
+      { label: 'Filing type', value: 'Form D', url: 'https://example.com/demo/sec/northbeam' },
+      { label: 'Offering amount', value: '$2.1M', url: 'https://example.com/demo/sec/northbeam' },
+    ],
+  },
+
+  // ── Conflicting evidence — two sources disagree ─────────────────────
+  {
+    companyId: 'demo-stealth-3', companyName: '(Stealth — no company name on record)', website: null,
+    city: 'Austin', state: 'TX',
+    stealthReason: 'Demo synthetic example — a conference bio and a professional profile name different titles for the same person at the same unnamed project.',
+    status: 'conflicting-founder-evidence', statusLabel: 'Conflicting evidence',
+    verifiedFounders: [],
+    candidates: [
+      {
+        candidateId: 9020, personKey: 'demo founder d', fullName: 'Demo Founder D', title: 'Founder (synthetic, per conference bio)',
+        sourceUrl: 'https://example.com/demo/conference/founder-d', sourceFamily: 'public-profile', sourceFamilyLabel: 'Public speaker / award profile',
+        publishedAt: isoDate(-20), supportingText: 'Conference program bio: "…is building a new company in the agtech space." (demo/synthetic)',
+        matchEvidence: ['Public bio states building/founder/stealth'],
+        matchScore: 5, confidence: 0.5, verified: false, reviewDecision: null, reviewedBy: null, reviewedAt: null,
+      },
+      {
+        candidateId: 9021, personKey: 'demo founder d', fullName: 'Demo Founder D', title: 'Advisor (synthetic, per professional profile)',
+        sourceUrl: 'https://example.com/demo/profile/founder-d', sourceFamily: 'professional-profile', sourceFamilyLabel: 'Public professional profile',
+        publishedAt: isoDate(-10), supportingText: 'Public professional profile lists this person as an advisor, not a founder, to an unnamed early-stage project (demo/synthetic).',
+        matchEvidence: ['Title stated in source'],
+        matchScore: 5, confidence: 0.5, verified: false, reviewDecision: null, reviewedBy: null, reviewedAt: null,
+      },
+    ],
+    conflicts: [
+      { detail: 'Conference bio states "founder"; professional profile states "advisor" for the same unnamed project (demo/synthetic). Not resolved automatically.', sourceUrl: 'https://example.com/demo/profile/founder-d' },
+    ],
+    progress: { answered: 4, total: 5, families: [
+      { family: 'public-profile', label: 'Public speaker / award profile', outcome: 'found-candidate', detail: 'Conference bio reached (demo/synthetic).' },
+      { family: 'professional-profile', label: 'Public professional profile', outcome: 'found-candidate', detail: 'Profile reached (demo/synthetic).' },
+    ] },
+    lastCheckedAt: isoDate(-3), nextAction: 'Manual review required — the two sources disagree on this person\'s role and neither can settle it alone.',
+    relationships: [], financing: [],
+    filingFacts: [],
+  },
+
+  // ── Research exhausted — every applicable source checked, nothing public ──
+  {
+    companyId: 'demo-stealth-4', companyName: '(Stealth — no company name on record)', website: null,
+    city: 'Denver', state: 'CO',
+    stealthReason: 'Demo synthetic example — a government grant lists a principal investigator, but no other public source names a company or co-founders.',
+    status: 'research-exhausted', statusLabel: 'Research completed — no attributable founder',
+    verifiedFounders: [],
+    candidates: [],
+    conflicts: [],
+    progress: { answered: 5, total: 5, families: [
+      { family: 'company-site', label: 'Company website', outcome: 'source-not-applicable', detail: 'No company website on record (demo/synthetic).' },
+      { family: 'accelerator', label: 'Accelerator / incubator profile', outcome: 'reached-no-founder-stated', detail: 'No accelerator profile found (demo/synthetic).' },
+      { family: 'founder-announcement', label: 'Founder-authored announcement', outcome: 'reached-no-founder-stated', detail: 'No founder-authored post found (demo/synthetic).' },
+      { family: 'public-profile', label: 'Public speaker / award profile', outcome: 'reached-no-founder-stated', detail: 'No conference or award profile found (demo/synthetic).' },
+      { family: 'professional-profile', label: 'Public professional profile', outcome: 'reached-no-founder-stated', detail: 'No public professional profile found (demo/synthetic).' },
+    ] },
+    lastCheckedAt: isoDate(-5), nextAction: 'Research completed — this is a result, not a failure. Re-check after the grant\'s public reporting period ends.',
+    relationships: [],
+    financing: [
+      { amountText: '$275,000', roundType: 'Government grant (non-dilutive)', investors: [], url: 'https://example.com/demo/grants/entry-4', publishedAt: isoDate(-60) },
+    ],
+    filingFacts: [
+      { label: 'Award type', value: 'SBIR Phase I (demo/synthetic)', url: 'https://example.com/demo/grants/entry-4' },
+    ],
+  },
+
+  // ── Manual review required — ambiguous signal, needs a human look ───
+  {
+    companyId: 'demo-stealth-5', companyName: '(Stealth — no company name on record)', website: null,
+    city: 'Boston', state: 'MA',
+    stealthReason: 'Demo synthetic example — a hiring announcement for "founding engineer" at an unnamed stealth company was posted by someone with relevant prior experience.',
+    status: 'manual-review-required', statusLabel: 'Manual review required',
+    verifiedFounders: [],
+    candidates: [
+      {
+        candidateId: 9030, personKey: 'demo founder e', fullName: 'Demo Founder E', title: 'Posting a "founding engineer" role (synthetic)',
+        sourceUrl: 'https://example.com/demo/hiring/founder-e', sourceFamily: 'founder-announcement', sourceFamilyLabel: 'Founder-authored announcement',
+        publishedAt: isoDate(-6), supportingText: '"We\'re hiring our first founding engineer" — posted by this person, no company named (demo/synthetic).',
+        matchEvidence: ['Hiring announcement', 'Public bio states building/founder/stealth'],
+        matchScore: 5, confidence: 0.5, verified: false, reviewDecision: null, reviewedBy: null, reviewedAt: null,
+      },
+    ],
+    conflicts: [],
+    progress: { answered: 2, total: 5, families: [
+      { family: 'founder-announcement', label: 'Founder-authored announcement', outcome: 'found-candidate', detail: 'Hiring post reached (demo/synthetic).' },
+      { family: 'company-site', label: 'Company website', outcome: 'source-not-applicable', detail: 'No company name to check yet (demo/synthetic).' },
+    ] },
+    lastCheckedAt: isoDate(-1), nextAction: 'A person can review the hiring post and decide whether to reach out directly.',
     relationships: [], financing: [],
     filingFacts: [],
   },

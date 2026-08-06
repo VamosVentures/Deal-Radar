@@ -14,6 +14,25 @@ import type {
   WebsiteConfirmationPreview, WebsiteConfirmationResult, PossibleDuplicateEntry,
 } from './api';
 import type { CumulativePeriod, CumulativePeriodResult, EntityKpis, ExecutiveKpis, VerticalBreakdown } from '../../shared/executiveKpis';
+import type { RadarEntry, RadarFilter } from '../../shared/enrichment';
+
+const STATUS_TO_RADAR_FILTER: Record<string, RadarFilter> = {
+  'verified-founder': 'verified',
+  'probable-founder-candidate': 'probable',
+  'conflicting-founder-evidence': 'conflicting',
+  'research-exhausted': 'research-exhausted',
+  'manual-review-required': 'manual-review',
+};
+
+/** Counts must reflect the actual fixture set, not a hand-typed snapshot that drifts as entries are added. */
+function computeRadarCounts(entries: RadarEntry[]): Record<RadarFilter, number> {
+  const counts: Record<RadarFilter, number> = { all: entries.length, verified: 0, probable: 0, conflicting: 0, 'research-exhausted': 0, 'manual-review': 0 };
+  for (const e of entries) {
+    const key = STATUS_TO_RADAR_FILTER[e.status];
+    if (key) counts[key] += 1;
+  }
+  return counts;
+}
 
 /**
  * Demo (fixture-backed) implementation of the `api` client — see
@@ -286,10 +305,15 @@ export const demoApi: Api = {
     addSignal: () => disabled(),
     patchSignal: () => disabled(),
     hypothesis: () => disabled(),
-    radar: () => Promise.resolve({
-      entries: DEMO_RADAR_ENTRIES,
-      counts: { all: 1, verified: 0, probable: 1, conflicting: 0, 'research-exhausted': 0, 'manual-review': 0 },
-    }),
+    radar: (filter = 'all', limit) => {
+      const filtered = filter === 'all'
+        ? DEMO_RADAR_ENTRIES
+        : DEMO_RADAR_ENTRIES.filter((e) => STATUS_TO_RADAR_FILTER[e.status] === filter);
+      return Promise.resolve({
+        entries: limit ? filtered.slice(0, limit) : filtered,
+        counts: computeRadarCounts(DEMO_RADAR_ENTRIES),
+      });
+    },
     duplicateHints: () => Promise.resolve({ hints: [] }),
     reviewCandidate: () => disabled(),
   },

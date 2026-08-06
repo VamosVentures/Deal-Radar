@@ -65,7 +65,7 @@ additions, not duplicates of an existing placeholder.
 - **Caption:** "All Deals — multi-vertical filtering (FinTech + Frontier selected here), stage/state/review-age controls, and the opportunity & evidence filter row."
 - **Demonstrates:** Multi-select vertical filtering and the full filter bar, including the "possible duplicate"/"missing information" data-quality flags and the opportunity/evidence secondary filter row.
 - **Synthetic data:** Yes.
-- **Feature-availability caveat:** The "not reviewed in N days" control is a free numeric input in the current UI, not a preset 7/14/30-day dropdown — see [DOCUMENT_ACCURACY_AUDIT.md](DOCUMENT_ACCURACY_AUDIT.md) §6.
+- **Feature-availability caveat:** The "not reviewed in N days" control is a free numeric input in the current UI, not a preset 7/14/30-day dropdown — see [DOCUMENT_ACCURACY_AUDIT.md](DOCUMENT_ACCURACY_AUDIT.md) §6. The demo build hides "Missing information only," "Min. evidence confidence," and the whole "Opportunity & evidence" filter row for a simpler team-facing view — all three remain fully present and unchanged in the real application (`DEMO_MODE`-gated in `src/components/CompanyTable.tsx`, not removed from the product).
 - **Suggested crop:** Full frame.
 - **Alt text:** "All Deals page with FinTech and Frontier vertical filters selected, showing the full filter bar and a ranked table of synthetic companies."
 
@@ -112,8 +112,8 @@ additions, not duplicates of an existing placeholder.
 ## 09 — `09-stealth-radar.png`
 
 - **Document section:** Walkthrough of Platform → Stealth Radar.
-- **Caption:** "Stealth Radar — founder profile, likely focus, supporting public signals, and a numeric confidence level."
-- **Demonstrates:** A probable-candidate founder card with match evidence, confidence, and the Confirm/Reject action.
+- **Caption:** "Stealth Radar — founder profile, likely focus, supporting public signals, and a numeric confidence level, across every resolution state the feature supports."
+- **Demonstrates:** All six status tabs with live counts (All 5 · Verified 1 · Probable 1 · Conflicting 1 · Research exhausted 1 · Manual review 1); a probable candidate with match evidence and a Confirm/Reject action; and a verified founder backed by an SEC Form D relationship and a $2.1M financing citation. Three further examples (conflicting evidence between two sources, research-exhausted, and manual-review) are present on the page below the fold.
 - **Synthetic data:** Yes.
 - **Feature-availability caveat:** Confidence renders as a numeric percentage on this page, not a low/medium/high label — see [DOCUMENT_ACCURACY_AUDIT.md](DOCUMENT_ACCURACY_AUDIT.md) §13. Confirm/Reject is present but disabled from writing anything in this demo build.
 - **Suggested crop:** Full frame.

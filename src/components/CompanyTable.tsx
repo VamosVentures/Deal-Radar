@@ -18,6 +18,7 @@ import { WebsiteConfirmationPanel } from './WebsiteConfirmation';
 import { CompanyNotes } from './CompanyNotes';
 import { TractionReview } from './TractionReview';
 import { PendingEvidencePanel } from './PendingEvidencePanel';
+import { DEMO_MODE } from '../lib/demoMode';
 import { confirmLeaveUnsavedNotes } from '../lib/unsavedNotes';
 import { useCompanies } from '../store/companies';
 import { btnGhost, btnPrimary } from './Modal';
@@ -443,18 +444,22 @@ export function CompanyTable({
             <input type="checkbox" checked={possibleDuplicateOnly} onChange={(e) => setPossibleDuplicateOnly(e.target.checked)} />
             Possible duplicate only
           </label>
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={missingInfoOnly} onChange={(e) => setMissingInfoOnly(e.target.checked)} />
-            Missing information only
-          </label>
-          <label className="flex items-center gap-1.5">
-            Min. evidence confidence
-            <input
-              type="number" min={0} max={100} step={5} className={`${select} w-16`}
-              value={Math.round(minEvidenceConfidence * 100)}
-              onChange={(e) => setMinEvidenceConfidence(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
-            />%
-          </label>
+          {!DEMO_MODE && (
+            <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={missingInfoOnly} onChange={(e) => setMissingInfoOnly(e.target.checked)} />
+              Missing information only
+            </label>
+          )}
+          {!DEMO_MODE && (
+            <label className="flex items-center gap-1.5">
+              Min. evidence confidence
+              <input
+                type="number" min={0} max={100} step={5} className={`${select} w-16`}
+                value={Math.round(minEvidenceConfidence * 100)}
+                onChange={(e) => setMinEvidenceConfidence(Math.max(0, Math.min(100, Number(e.target.value))) / 100)}
+              />%
+            </label>
+          )}
           <label className="flex items-center gap-1.5">
             Not reviewed in
             <input
@@ -468,7 +473,11 @@ export function CompanyTable({
 
         {/* Opportunity-trust filters. Separated from the descriptive
             filters above because these answer a different question:
-            not "which companies" but "which of these is actually a deal". */}
+            not "which companies" but "which of these is actually a deal".
+            Hidden in the demo build only — a simpler filter bar for a
+            documentation/team-demo audience; the real analyst tool is
+            unaffected (DEMO_MODE is a build-time constant). */}
+        {!DEMO_MODE && (
         <div className="mt-2.5 border-t border-line pt-2.5">
           <div className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-slate-mid">
             Opportunity &amp; evidence
@@ -568,6 +577,7 @@ export function CompanyTable({
             </label>
           </div>
         </div>
+        )}
       </div>
 
       {selected.size > 0 && (

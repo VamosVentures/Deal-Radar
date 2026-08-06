@@ -251,11 +251,25 @@ A separate, read-only **demo** build (`VITE_DEMO_MODE=true`) was deployed as a V
 **Preview** deployment under the existing, already-authorized `vamos-ventures/deal-radar`
 project (`prj_z9zKeT1Eff2iRRs3pzddL3poc0kr`) — not production, and not a new project.
 
-**URL:** `https://deal-radar-nr9mpczv6-vamos-ventures.vercel.app`
-**Deployment:** `dpl_DPw8ReWdYBH1n8iPWdP8F8M8iJsJ` — `target: null` (Preview, not Production),
+**URL:** `https://deal-radar-jr8urr9gf-vamos-ventures.vercel.app`
+**Deployment:** `dpl_3RaS4d2ppSjMtNCa9GB88wquoMZu` — `target: null` (Preview, not Production),
 `functions: none` (confirmed via the Vercel API — purely static, no serverless compute).
-(An earlier deployment of the same build, `dpl_5Jrf8nkHJJbt581Q5vA11XYbqi2Z`, is superseded —
-see the auto-sign-in note below.)
+(Two earlier deployments of the same build, `dpl_5Jrf8nkHJJbt581Q5vA11XYbqi2Z` and
+`dpl_DPw8ReWdYBH1n8iPWdP8F8M8iJsJ`, are superseded.)
+
+**Team access without a Vercel Pro upgrade.** The team is on Vercel's Hobby plan, which
+supports neither password protection ("Advanced Deployment Protection is not enabled on your
+team") nor inviting additional team members ("Team members are not permitted on the Hobby
+Plan") — both confirmed by the API rejecting each, not assumed. Vercel Authentication alone
+would therefore only let the one existing team-owner account in. A free, Hobby-compatible
+alternative is enabled instead: a Protection Bypass for Automation secret
+(`vercel project protection enable deal-radar --protection-bypass`), normally meant for CI,
+which also works as a general bypass — visiting the deployment URL once with
+`?x-vercel-protection-bypass=<secret>&x-vercel-set-bypass-cookie=true` sets a 7-day cookie in
+that browser, after which the plain URL works with no Vercel account needed. The secret itself
+is intentionally not written into any committed file (it lives only in chat with Matthew and
+in Vercel's own project settings); it can be rotated or disabled at any time via the same CLI
+command with `disable`.
 
 It is:
 

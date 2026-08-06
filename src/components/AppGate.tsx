@@ -95,7 +95,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen items-center justify-center bg-paper px-5 py-10">
       <div className="w-full max-w-md">
         <div className="mb-5">
-          <div className="font-display text-lg font-semibold text-ink">Vamos Deal Radar</div>
+          <div className="font-display text-lg font-semibold text-ink">VamosVentures Deal Radar</div>
           <div className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">
             VamosVentures · internal
           </div>
