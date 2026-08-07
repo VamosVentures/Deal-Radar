@@ -1,0 +1,39 @@
+# Render Blueprint — deploys the existing Dockerfile as-is: a real
+# persistent Express server + SQLite file, not a serverless function.
+# In the Render dashboard: New > Blueprint > select this repo/branch.
+# Secrets (marked sync: false) are entered once in the Render
+# dashboard after the first deploy — never committed here.
+services:
+  - type: web
+    name: deal-radar
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /health/live
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "8787"
+      - key: DATABASE_FILE
+        value: /app/server/.data/deal-radar.db
+      - key: RUN_SCHEDULER
+        value: "true"
+      # Set to this service's real Render URL after the first deploy
+      # (also the CORS-allowed origin).
+      - key: FRONTEND_URL
+        sync: false
+      # Shared team password — set in the Render dashboard, not here.
+      - key: ADMIN_PASSWORD
+        sync: false
+      # 32+ random chars — set in the Render dashboard, not here.
+      - key: SESSION_SECRET
+        sync: false
+      # Optional: identifies this app to SEC EDGAR per their request.
+      - key: SEC_CONTACT_EMAIL
+        sync: false
+    disk:
+      name: deal-radar-data
+      mountPath: /app/server/.data
+      sizeGB: 1
