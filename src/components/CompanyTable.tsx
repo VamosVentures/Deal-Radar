@@ -48,6 +48,11 @@ function nextActionTag(
   fit: ReturnType<typeof scoreCompany>,
   m: { reviewStatus?: string; stale?: boolean } | undefined,
 ): { label: string; cls: string } {
+  // An acquired/inactive company has no next action, full stop — not a
+  // score exception, not staleness. This check comes first because
+  // every check below it is otherwise moot once the company itself no
+  // longer exists independently.
+  if (m?.reviewStatus === 'Acquired / Inactive') return { label: 'No action — acquired/inactive', cls: 'border-line bg-paper text-slate-mid' };
   if (fit.exceptions.length > 0) return { label: 'Partner review', cls: 'border-alerta/30 bg-alerta-soft text-alerta' };
   if (m?.stale) return { label: 'Refresh — stale', cls: 'border-alerta/30 bg-alerta-soft text-alerta' };
   if (!m?.reviewStatus || m.reviewStatus === 'New' || m.reviewStatus === 'Awaiting Review') return { label: 'First review', cls: 'border-marigold/30 bg-marigold-soft text-marigold' };
@@ -691,11 +696,15 @@ export function CompanyTable({
                         )}
                       </div>
                     </td>
-                    {/* Vertical, stage, and founder read the ENRICHMENT payload, not the
-                        raw company columns. The raw columns still hold 'Unknown' for most
-                        records; the enrichment carries a resolution state and a summary, so
-                        a cell can say what was searched instead of shrugging. */}
-                    {showVertical && <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}><VerticalCell enrichment={enrichment[c.id]} /></td>}
+                    {/* Stage and founder read the ENRICHMENT payload, not the raw company
+                        columns — those raw columns still hold 'Unknown' for most records,
+                        while the enrichment carries a resolution state and a summary, so a
+                        cell can say what was searched instead of shrugging. Vertical is
+                        different: `companies.vertical` is always populated (it's what
+                        already drives the vertical filter/bucket), so VerticalCell falls
+                        back to it — labelled as unconfirmed — instead of claiming "Not yet
+                        classified" for a company that plainly has a vertical. */}
+                    {showVertical && <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}><VerticalCell enrichment={enrichment[c.id]} rawVerticalId={c.vertical} rawSubcategory={c.subcategory} /></td>}
                     <td className="cursor-pointer px-3 py-2.5 text-xs" onClick={() => requestOpen(open ? null : c.id)}>{c.subcategory}</td>
                     <td className="cursor-pointer px-3 py-2.5 text-xs font-medium" onClick={() => requestOpen(open ? null : c.id)}><StageCell enrichment={enrichment[c.id]} /></td>
                     <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs" onClick={() => requestOpen(open ? null : c.id)}>{c.city}, {c.state}</td>
@@ -880,8 +889,13 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
     { label: 'Funding', value: c.raising ?? null, field: 'raising' },
     { label: 'Last funding date', value: c.lastFundingDate ?? null, field: 'lastFundingDate' },
     { label: 'Accelerator', value: c.accelerator ?? null, field: 'accelerator' },
-    { label: 'Founded', value: String(c.foundedYear) },
-    { label: 'Team size', value: String(c.teamSize) },
+    // Founded and team size are NOT NULL columns that several sources
+    // never state (a funding article names a round, not a founding
+    // date). Those rows carry a placeholder whose provenance is
+    // 'missing' — passing null here is what makes FactRow render
+    // "Missing" instead of showing the placeholder as a fact.
+    { label: 'Founded', value: originKind('foundedYear') === 'missing' ? null : String(c.foundedYear), field: 'foundedYear' },
+    { label: 'Team size', value: originKind('teamSize') === 'missing' ? null : String(c.teamSize), field: 'teamSize' },
   ];
 
   // ── Missing information: exactly what we do not know.
@@ -1080,6 +1094,14 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
               </button>
               <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={() => setStatus('Passed')}>
                 {statusBusy === 'Passed' ? 'Saving…' : 'Pass'}
+              </button>
+              <button
+                className={`${btnGhost} w-full`}
+                disabled={!!statusBusy}
+                onClick={() => setStatus('Acquired / Inactive')}
+                title="The company itself is gone — acquired, shut down, or otherwise no longer operating independently. Distinct from Pass, which is Vamos's own decision to decline."
+              >
+                {statusBusy === 'Acquired / Inactive' ? 'Saving…' : 'Mark acquired / inactive'}
               </button>
             </div>
           </div>

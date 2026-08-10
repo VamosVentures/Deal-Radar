@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { verticalById } from '../data/taxonomy';
 import {
   PRIMARY_SECTORS, RESOLUTION_STATE_LABELS, SECTOR_LABELS, STAGE_LABELS, STAGE_RESULTS,
   NON_SECTOR_STATUS,
@@ -105,16 +106,44 @@ export function FounderCell({ enrichment }: { enrichment: CompanyEnrichment | un
   );
 }
 
-export function VerticalCell({ enrichment }: { enrichment: CompanyEnrichment | undefined }) {
-  if (!enrichment?.vertical.value) {
-    return <span className="text-xs italic text-slate-mid">Not yet classified</span>;
+/**
+ * The vertical cell.
+ *
+ * `enrichment.vertical` only exists once Research has actually run for a
+ * company — it carries a cited, resolution-stated classification. Until
+ * then, the company still has a real vertical: the coarse bucket assigned
+ * at discovery/import time (`companies.vertical`), which is what already
+ * drives the vertical filter/bucket the company sits in. Falling back to
+ * "Not yet classified" here contradicted that — a company visibly sorted
+ * into "Fintech" showed a blank vertical column. Show the import-time
+ * bucket, labelled as unconfirmed, instead of a state that isn't true.
+ */
+export function VerticalCell({
+  enrichment,
+  rawVerticalId,
+  rawSubcategory,
+}: {
+  enrichment: CompanyEnrichment | undefined;
+  rawVerticalId: string;
+  rawSubcategory?: string;
+}) {
+  if (enrichment?.vertical.value) {
+    const v = enrichment.vertical;
+    return (
+      <span className="flex flex-col gap-0.5" title={v.summary}>
+        <span className="text-sm font-semibold text-ink">{v.value!.primaryLabel}</span>
+        {v.value!.subvertical && <span className="text-[11px] text-slate-mid">{v.value!.subvertical}</span>}
+        {v.inferred && <ResolutionBadge state={v.state} inferred confidence={v.confidence} />}
+      </span>
+    );
   }
-  const v = enrichment.vertical;
+  const fallback = verticalById(rawVerticalId);
+  const subcategory = rawSubcategory && rawSubcategory !== 'Unclassified — requires manual review' ? rawSubcategory : undefined;
   return (
-    <span className="flex flex-col gap-0.5" title={v.summary}>
-      <span className="text-sm font-semibold text-ink">{v.value!.primaryLabel}</span>
-      {v.value!.subvertical && <span className="text-[11px] text-slate-mid">{v.value!.subvertical}</span>}
-      {v.inferred && <ResolutionBadge state={v.state} inferred confidence={v.confidence} />}
+    <span className="flex flex-col gap-0.5" title="Assigned at discovery, not yet verified by Research.">
+      <span className="text-sm font-semibold text-ink">{fallback.name}</span>
+      {subcategory && <span className="text-[11px] text-slate-mid">{subcategory}</span>}
+      <ResolutionBadge state="candidate" />
     </span>
   );
 }
@@ -232,6 +261,15 @@ export function EnrichmentPanel({
           This company has not been through founder, sector, or stage research yet. Nothing is known
           either way — this is an absence of research, not an absence of facts.
         </p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-mid">
+          <span className="font-semibold text-ink">What this does:</span> fetches the company's own site,
+          its accelerator/YC profile, and SEC filings live, right now, and cites whatever those specific pages
+          state for founder, sector, and stage. It does not call an AI model or run a general web search, and
+          it never fills a gap with a guess — a fact that isn't on one of those pages stays a labeled gap
+          after running it, not an error. It also does not touch founding year, team size, city/state, or
+          other fields set at initial discovery/import — those come from the discovery source itself, not
+          from this action, so they can still be wrong or thin even right after a fresh "Research now."
+        </p>
         <button
           onClick={research}
           disabled={busy}
@@ -251,7 +289,7 @@ export function EnrichmentPanel({
           onClick={research}
           disabled={busy}
           className="rounded-[2px] bg-ink px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-          title="Re-runs every applicable public source family for this company. Writes are idempotent — pressing this twice refreshes rather than duplicates."
+          title="Re-fetches the company's site, accelerator/YC profile, and SEC filings live and re-classifies founder/sector/stage from what those pages actually state — no AI model, no web search, no guessing. Writes are idempotent — pressing this twice refreshes rather than duplicates. Doesn't touch founding year, team size, or other fields set at import — this only ever writes founder, sector, and stage."
         >
           {busy ? 'Researching…' : 'Research again'}
         </button>
