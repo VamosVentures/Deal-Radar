@@ -66,6 +66,18 @@ interface IdTokenClaims {
   /** Present when the identity was federated in from ANOTHER provider (guest/B2B). */
   idp?: string;
   /**
+   * Authentication Methods References — which factors Entra actually
+   * checked for THIS sign-in, as opposed to which ones the account is
+   * capable of. This is the only part of the token that says anything
+   * about how strongly the person was authenticated.
+   *
+   * NOT emitted by default on v2.0 id_tokens (this app uses the v2.0
+   * endpoint — see discoveryUrl()). The app registration has to add
+   * `amr` as an optional ID-token claim, which is why its absence is
+   * treated as "unproven" rather than "fine". See requireMfa() below.
+   */
+  amr?: unknown;
+  /**
    * "Email domain owner verified" — Microsoft's own signal that the
    * email in this token belongs to a domain the tenant proved it owns.
    * Explicitly `false` means the address is self-asserted.
@@ -88,6 +100,54 @@ export interface VerifiedMicrosoftIdentity {
 function authError(message: string): Error {
   return Object.assign(new Error(message), { status: 401 });
 }
+
+// ── Multi-factor enforcement ─────────────────────────────────────
+
+/**
+ * The `amr` values that, on their own, prove Entra checked more than one
+ * factor for this specific sign-in.
+ *
+ * Deliberately narrow. Entra emits `mfa` whenever a multi-factor
+ * requirement was satisfied — including passwordless sign-ins, where the
+ * array looks like ["face", "mfa"] or ["fido", "mfa"] — and `ngcmfa`
+ * when a "next generation credential" (Windows Hello for Business,
+ * passkey provisioning) satisfied it. Those two are the claims Microsoft
+ * documents as meaning multi-factor, so those two are what is accepted.
+ *
+ * Single-method values are NOT here on purpose. `otp`, `sms`, `rsa` and
+ * `phh` each describe ONE factor: a tenant can be configured to accept a
+ * texted code as a first and only factor, so seeing `sms` alone does not
+ * establish that two factors were used. `wiaormfa` is excluded for the
+ * same reason its name suggests — it means the person did Windows
+ * Integrated Auth *or* MFA, which is precisely the ambiguity this check
+ * exists to remove.
+ */
+export const MFA_AMR_VALUES: readonly string[] = ['mfa', 'ngcmfa'];
+
+/**
+ * Whether an `amr` claim proves multi-factor.
+ *
+ * Fails closed on every shape that is not an array of strings. A token
+ * with no `amr` at all is the common case worth naming: it does not mean
+ * "no MFA happened", it means the app registration is not emitting the
+ * claim, so this server cannot tell either way. Treating unknown as
+ * satisfied would turn the whole check into decoration.
+ */
+export function amrProvesMfa(amr: unknown): boolean {
+  if (!Array.isArray(amr)) return false;
+  return amr.some((m) => typeof m === 'string' && MFA_AMR_VALUES.includes(m.toLowerCase()));
+}
+
+/**
+ * Why a sign-in was refused for want of MFA, written for the person who
+ * hit it rather than for a log. Surfaced on the sign-in screen by
+ * server/routes/auth.ts, so it names the fix without naming any claim
+ * the reader has no way to inspect.
+ */
+export const MFA_REQUIRED_MESSAGE =
+  'Deal Radar requires multi-factor authentication. Your Microsoft sign-in did not '
+  + 'include a second factor — set up MFA on your Vamos account, or ask IT to confirm '
+  + 'the Deal Radar app registration releases the "amr" claim, then sign in again.';
 
 // ── Discovery + JWKS, cached ─────────────────────────────────────
 
@@ -294,6 +354,25 @@ export async function verifyIdToken(
   const domain = env.MICROSOFT_ALLOWED_EMAIL_DOMAIN.toLowerCase();
   if (!email || !email.endsWith(`@${domain}`)) {
     throw authError(`Deal Radar is limited to @${domain} accounts.`);
+  }
+
+  // 12. Multi-factor — required for every account, with no exemption
+  //     list and no environment switch to turn it off.
+  //
+  //     Ordered LAST among the identity checks on purpose: someone whose
+  //     account may not use this app at all (wrong tenant, guest, wrong
+  //     domain) should be told that, not sent away to go configure MFA
+  //     for an account that still would not be let in afterwards.
+  //
+  //     Entra's Conditional Access policy is what MAKES a second factor
+  //     happen; this check is what makes the application refuse to
+  //     believe a sign-in that did not have one. Both are needed — a
+  //     policy can be scoped to exclude a group, put in report-only
+  //     mode, or switched off in the portal without anyone touching this
+  //     repository, and none of those should silently become a way into
+  //     Deal Radar. See docs/microsoft-mfa-setup.md.
+  if (!amrProvesMfa(claims.amr)) {
+    throw authError(MFA_REQUIRED_MESSAGE);
   }
 
   return {

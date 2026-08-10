@@ -69,6 +69,11 @@ function validClaims(overrides: Record<string, unknown> = {}) {
     nonce: 'fixture-nonce-value',
     name: 'Ada Lovelace',
     preferred_username: 'ada@vamosventures.com',
+    // Password plus a second factor — what Entra emits once the app
+    // registration releases `amr` and Conditional Access requires MFA.
+    // Present in the baseline because MFA is required of every account,
+    // so a token WITHOUT it is the exceptional case each test opts into.
+    amr: ['pwd', 'mfa'],
     ...overrides,
   };
 }
@@ -307,6 +312,100 @@ describe('verifyIdToken', () => {
     const { name: _drop, ...noName } = validClaims();
     const identity = await verifyIdToken(makeIdToken(noName), NONCE);
     expect(identity.name).toBe('ada@vamosventures.com');
+  });
+});
+
+// ── Multi-factor enforcement ─────────────────────────────────────
+
+/**
+ * MFA is required of every account. Entra's Conditional Access policy is
+ * what makes a second factor happen; these tests cover the other half —
+ * the application refusing to believe a sign-in that does not PROVE one
+ * happened, whatever the portal currently says.
+ *
+ * The distinction matters because a Conditional Access policy can be put
+ * in report-only mode, scoped to exclude a group, or disabled entirely
+ * without any change to this repository.
+ */
+describe('multi-factor enforcement', () => {
+  const NONCE = { nonce: 'fixture-nonce-value' };
+
+  it('rejects a password-only sign-in', async () => {
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    await expect(
+      verifyIdToken(makeIdToken(validClaims({ amr: ['pwd'] })), NONCE),
+    ).rejects.toThrow(/multi-factor authentication/i);
+  });
+
+  it('rejects a token with no amr claim at all', async () => {
+    // The app registration not releasing `amr` is indistinguishable from
+    // no second factor having been used, so it fails closed rather than
+    // being read as permission.
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    const { amr: _drop, ...noAmr } = validClaims();
+    await expect(verifyIdToken(makeIdToken(noAmr), NONCE))
+      .rejects.toThrow(/multi-factor authentication/i);
+  });
+
+  it('rejects single-factor methods that are not multi-factor on their own', async () => {
+    // A tenant can be configured to accept a texted code as the ONLY
+    // factor, so none of these establishes that two were checked.
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    for (const amr of [['sms'], ['otp'], ['rsa'], ['phh'], ['wia'], ['fed'], ['wiaormfa']]) {
+      await expect(verifyIdToken(makeIdToken(validClaims({ amr })), NONCE))
+        .rejects.toThrow(/multi-factor authentication/i);
+    }
+  });
+
+  it('rejects an amr that is not an array of strings', async () => {
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    for (const amr of ['mfa', { mfa: true }, [{ m: 'mfa' }], [null], 1, true]) {
+      await expect(verifyIdToken(makeIdToken(validClaims({ amr })), NONCE))
+        .rejects.toThrow(/multi-factor authentication/i);
+    }
+  });
+
+  it('accepts a genuine second factor alongside a password', async () => {
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    const identity = await verifyIdToken(makeIdToken(validClaims({ amr: ['pwd', 'mfa'] })), NONCE);
+    expect(identity.email).toBe('ada@vamosventures.com');
+  });
+
+  it('accepts passwordless and Windows Hello sign-ins', async () => {
+    // Passwordless is not a downgrade: Entra still emits `mfa` (or
+    // `ngcmfa` for a next-generation credential) because the requirement
+    // was satisfied. Refusing these would push people back onto passwords.
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    for (const amr of [['face', 'mfa'], ['fido', 'mfa'], ['ngcmfa'], ['pwd', 'ngcmfa']]) {
+      const identity = await verifyIdToken(makeIdToken(validClaims({ amr })), NONCE);
+      expect(identity.oid).toBe('entra-object-id-abc');
+    }
+  });
+
+  it('is not case-sensitive about the method name', async () => {
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    const identity = await verifyIdToken(makeIdToken(validClaims({ amr: ['PWD', 'MFA'] })), NONCE);
+    expect(identity.email).toBe('ada@vamosventures.com');
+  });
+
+  it('reports a wrong-domain account as wrong-domain, not as missing MFA', async () => {
+    // Ordering check. Someone who could never sign in regardless should
+    // not be sent off to configure MFA first and be refused anyway.
+    configureMicrosoft();
+    const { verifyIdToken } = await loadServer();
+    await expect(
+      verifyIdToken(
+        makeIdToken(validClaims({ preferred_username: 'ada@example.com', amr: ['pwd'] })),
+        NONCE,
+      ),
+    ).rejects.toThrow(/limited to @vamosventures\.com/i);
   });
 });
 
@@ -575,6 +674,47 @@ describe('/api/auth/microsoft/callback', () => {
     // And the session opens the gated plane, without any ADMIN_PASSWORD
     // involvement.
     expect((await agent.get('/api/admin/status')).status).toBe(200);
+  });
+
+  it('establishes NO session when the sign-in had no second factor', async () => {
+    // The end-to-end version of the verifyIdToken check: a token that is
+    // valid in every other respect must not leave a cookie behind, and
+    // must not open the gated plane.
+    configureMicrosoft();
+    const { createApp, store } = await loadServer();
+    const app = createApp();
+    const agent = request.agent(app);
+
+    const start = await agent.post('/api/auth/microsoft/start').send({});
+    const state = new URL(start.body.authUrl).searchParams.get('state')!;
+    const nonce = pendingFor(store, state).nonce!;
+    stubTokenEndpoint(makeIdToken(validClaims({ nonce, amr: ['pwd'] })));
+    const res = await agent
+      .get('/api/auth/microsoft/callback')
+      .query({ code: 'test-auth-code', state });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('signin=failed');
+    expect(reasonFrom(res.headers.location)).toMatch(/multi-factor authentication/i);
+    expect(res.headers['set-cookie']).toBeUndefined();
+
+    const status = await agent.get('/api/auth/status');
+    expect(status.body.authenticated).toBe(false);
+    expect(status.body.identity).toBeNull();
+    expect((await agent.get('/api/admin/status')).status).toBe(401);
+  });
+
+  it('audits a refused-for-MFA sign-in as blocked', async () => {
+    configureMicrosoft();
+    const { createApp, store } = await loadServer();
+    const app = createApp();
+
+    await completeFlow(app, store, (nonce) => validClaims({ nonce, amr: ['pwd'] }));
+
+    const entry = (store as unknown as { raw: { audit: Record<string, string>[] } })
+      .raw.audit.find((a) => a.action === 'sso-login');
+    expect(entry?.outcome).toBe('blocked');
+    expect(entry?.detail).toMatch(/multi-factor authentication/i);
   });
 
   it('rejects an unknown state (nothing this server issued)', async () => {
