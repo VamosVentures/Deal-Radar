@@ -202,11 +202,18 @@ export const COMPANY_STATUSES = [
   'Synced to HubSpot',
   'Monitor',
   'Passed',
+  // Distinct from 'Passed': 'Passed' is Vamos's own investment decision
+  // (we looked and declined); this is an objective fact about the company
+  // itself — it was acquired, shut down, or is otherwise no longer an
+  // independent operating company — and applies regardless of whether
+  // Vamos ever reviewed it. Kept separate so a report can later tell
+  // "we passed" apart from "there was nothing left to pass on."
+  'Acquired / Inactive',
 ] as const;
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
 
 /** Statuses for which staleness no longer matters — the review is done. */
-export const TERMINAL_COMPANY_STATUSES: readonly CompanyStatus[] = ['Passed', 'Synced to HubSpot'];
+export const TERMINAL_COMPANY_STATUSES: readonly CompanyStatus[] = ['Passed', 'Synced to HubSpot', 'Acquired / Inactive'];
 
 /** Default age (days) after which a non-terminal company is flagged Stale. */
 export const DEFAULT_STALE_AFTER_DAYS = 30;
