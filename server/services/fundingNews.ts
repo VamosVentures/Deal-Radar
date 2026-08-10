@@ -13,7 +13,7 @@ import { discoverOfficialWebsite } from './corroborate';
 import { addDealEvidence, reclassifyCompany } from '../db/repos/opportunities';
 import { saveCompany, matchRecords, listCompanies } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';
-import { importedCompanySchema } from './imports';
+import { importedCompanySchema, PLACEHOLDER_FOUNDED_YEAR } from './imports';
 import { candidateToDealEvidence } from './shortlist';
 import { scoreCompany } from '../../src/lib/scoring';
 import type { Company } from '../../src/types';
@@ -312,9 +312,12 @@ function persistEvent(event: FundingEvent, website: WebsiteResolution, today: st
       : 'Unknown',
     city: event.hqCity ?? 'Unknown',
     state: event.hqState ?? '??',
-    // Not stated by a funding article. The schema needs a number; the
-    // provenance layer marks it unverified.
-    foundedYear: new Date(event.announcedAt).getFullYear(),
+    // Not stated by a funding article. The schema needs a number, so a
+    // placeholder goes in and `unknownFields` below records it as
+    // MISSING — previously this was the announcement year written with
+    // the same 'extracted' provenance as a genuinely sourced field,
+    // which asserted a founding date no article had stated.
+    foundedYear: PLACEHOLDER_FOUNDED_YEAR,
     teamSize: 1,
     website: website.url ?? undefined,
     raising: event.amountText ?? undefined,
@@ -337,6 +340,9 @@ function persistEvent(event: FundingEvent, website: WebsiteResolution, today: st
     origin: 'extracted', source: `funding-news:${event.publisher}`,
     reviewStatus: 'Awaiting Review', discoverySource: 'funding-news',
     discoveredAt: today,
+    // A funding article states a round and an amount, never a founding
+    // date or a headcount. Both carry placeholders above.
+    unknownFields: ['foundedYear', 'teamSize'],
   });
   saveScore(record.id, scoreCompany(record as unknown as Company), record.evidence.map((e) => e.url));
 

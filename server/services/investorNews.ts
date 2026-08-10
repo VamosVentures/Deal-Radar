@@ -7,7 +7,7 @@ import { familyOf, tierOf } from '../../shared/opportunity';
 import { addDealEvidence, listDealEvidence, reclassifyCompany } from '../db/repos/opportunities';
 import { saveCompany, matchRecords, listCompanies, getCompany } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';
-import { importedCompanySchema } from './imports';
+import { importedCompanySchema, PLACEHOLDER_FOUNDED_YEAR } from './imports';
 import { resolveCompanyWebsite, type WebsiteResolution } from './fundingNews';
 import { scoreCompany } from '../../src/lib/scoring';
 import type { Company } from '../../src/types';
@@ -221,8 +221,12 @@ function persistInvestorEvent(
       city: event.hqCity ?? 'Unknown',
       state: event.hqState ?? '??',
       // Not stated by an investment announcement. The schema needs a
-      // number; the provenance layer marks it unverified.
-      foundedYear: new Date(event.announcedAt).getFullYear(),
+      // number, so a placeholder goes in and `unknownFields` below
+      // records it as MISSING — previously this was the announcement
+      // year written with the same 'extracted' provenance as a genuinely
+      // sourced field, which asserted a founding date no announcement
+      // had stated.
+      foundedYear: PLACEHOLDER_FOUNDED_YEAR,
       teamSize: 1,
       website: website.url ?? undefined,
       raising: event.amountText ?? undefined,
@@ -247,6 +251,9 @@ function persistInvestorEvent(
       reviewStatus: 'Awaiting Review',
       discoverySource: 'investor-news',
       discoveredAt: today,
+      // An investor's announcement states the round and the investor,
+      // never a founding date or a headcount. Both carry placeholders.
+      unknownFields: ['foundedYear', 'teamSize'],
     });
     const stored = getCompany(parsed.data.id);
     saveScore(parsed.data.id, scoreCompany((stored ?? parsed.data) as unknown as Company), parsed.data.evidence.map((e) => e.url));

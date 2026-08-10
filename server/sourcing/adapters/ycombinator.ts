@@ -48,17 +48,39 @@ const responseSchema = z.object({
  * this codebase avoids. It is accurate enough to answer "is this batch
  * recent?", which is the only question asked of it.
  */
-export function batchToApproxDate(batch: string | null | undefined): string | null {
+function parseBatch(batch: string | null | undefined): { year: number; season: string } | null {
   if (!batch) return null;
-  const m = batch.trim().match(/^(W|S|F|Sp|X)(\d{2})$/i);
+  // 'P' (Pioneer-style batches, e.g. "P25") uses the same code shape as
+  // the standard W/S/F seasons and is just as parseable — it was missing
+  // here, which silently dropped ~5% of YC batches from every batch-derived
+  // computation (recency and, since founded years are backfilled from this
+  // same code, founding-year estimates too).
+  const m = batch.trim().match(/^(W|S|F|Sp|P|X)(\d{2})$/i);
   if (!m) return null;
   const season = m[1].toUpperCase();
   const yy = Number(m[2]);
   // YC batch codes are 2-digit years; every batch is post-2005, so a
   // 2-digit year maps unambiguously into the 2000s.
   const year = 2000 + yy;
-  const month = season === 'W' ? '01' : season === 'SP' ? '04' : season === 'S' ? '06' : season === 'F' ? '09' : '01';
+  return { year, season };
+}
+
+export function batchToApproxDate(batch: string | null | undefined): string | null {
+  const parsed = parseBatch(batch);
+  if (!parsed) return null;
+  const { year, season } = parsed;
+  const month = season === 'W' ? '01' : season === 'SP' ? '04' : season === 'S' ? '06' : season === 'F' ? '09' : season === 'P' ? '01' : '01';
   return `${year}-${month}-01`;
+}
+
+/**
+ * Just the year out of a YC batch code, e.g. "W23" -> 2023. Used as a
+ * founding-year proxy when a company's real founding date isn't public:
+ * founders typically apply to YC within a year or so of starting the
+ * company, so the batch year is a far better estimate than "unknown."
+ */
+export function batchToYear(batch: string | null | undefined): number | null {
+  return parseBatch(batch)?.year ?? null;
 }
 
 /**

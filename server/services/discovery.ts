@@ -6,7 +6,7 @@ import {
   RESTRICTED_SOURCES,
   type DiscoveryCandidate, type DiscoveryQuery, type DiscoveryRun,
 } from '../../shared/discovery';
-import { importedCompanySchema, type ImportedCompany } from './imports';
+import { importedCompanySchema, PLACEHOLDER_FOUNDED_YEAR, type ImportedCompany } from './imports';
 import { runSource, type RawCandidate } from './sources';
 import { detectDuplicate, existingCandidates } from '../sourcing/dedupe';
 import { mergeIntoRun } from '../sourcing/enrich';
@@ -18,6 +18,7 @@ import { scoreCompany } from '../../src/lib/scoring';
 import { checkEntityType, classifyCandidate } from '../sourcing/classify';
 import { evaluateThesisEligibility } from '../sourcing/thesisFilter';
 import { assessQuality } from '../sourcing/qualitySignals';
+import { batchToYear } from '../sourcing/adapters/ycombinator';
 import type { Company, VerticalId } from '../../src/types';
 
 // Deduplication lives in server/sourcing/dedupe.ts; re-exported here
@@ -543,6 +544,7 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
         discoverySource: cand.sourceId,
         discoveredAt: cand.discoveredAt.slice(0, 10),
         discoveryRunId: cand.runId,
+        unknownFields: company.unknownFields,
       });
       saveScore(company.value.id, scoreCompany(company.value as unknown as Company), company.value.evidence.map((e) => e.url));
       recordReviewDecision({ subjectType: 'candidate', subjectId: cand.id, decision: 'imported', actor: req.actor });
@@ -616,11 +618,32 @@ export function resolveVertical(c: DiscoveryCandidate): { vertical: VerticalId |
   };
 }
 
+/** A YC batch code like "W23" out of an accelerator string like "Y Combinator (W23)". */
+function extractYcBatch(accelerator: string | undefined): string | null {
+  const m = accelerator?.match(/\(([A-Za-z]+\d{2})\)/);
+  return m ? m[1] : null;
+}
+
 /** Candidates become imported companies only with honest defaults — Unknowns stay visible. */
 export function candidateToImportedCompany(
   c: DiscoveryCandidate,
   vertical: VerticalId,
-): { success: true; value: ImportedCompany } | { success: false; reason: string } {
+): { success: true; value: ImportedCompany; unknownFields: readonly ('foundedYear')[] } | { success: false; reason: string } {
+  // No source we scrape publishes a founding date directly (see
+  // shared/discovery.ts), so `c.foundingYear` is null for every candidate
+  // today. It previously fell straight through to the current calendar
+  // year — a fabricated "fact" (e.g. a company in YC's Winter 2020 batch
+  // was stamped "founded 2026") that contradicted this function's own
+  // "honest defaults" rule above. A YC batch code is a real, if
+  // approximate, signal — founders apply within roughly a year of
+  // starting the company — so it's used here before giving up.
+  //
+  // When even that is unavailable (SEC, GitHub, SBIR and every non-YC
+  // source, which carry no batch code), there is genuinely nothing to
+  // derive from: the year is reported as UNKNOWN rather than invented,
+  // and the placeholder below is never shown as a fact.
+  const derivedYear = c.foundingYear ?? batchToYear(extractYcBatch(c.accelerator));
+  const foundedYear = derivedYear ?? PLACEHOLDER_FOUNDED_YEAR;
   const parsed = importedCompanySchema.safeParse({
     id: `disc-${c.id}`,
     name: c.companyName,
@@ -632,7 +655,7 @@ export function candidateToImportedCompany(
     stage: c.stage,
     city: c.hqCity !== 'Unknown' ? c.hqCity : 'Unknown',
     state: c.hqState !== 'Unknown' ? c.hqState : '??',
-    foundedYear: c.foundingYear ?? new Date().getFullYear(),
+    foundedYear,
     teamSize: Math.max(1, c.founderCount ?? 1),
     website: c.website !== 'Unknown' ? c.website : undefined,
     raising: c.publicFunding !== 'Unknown' ? c.publicFunding : undefined,
@@ -657,7 +680,7 @@ export function candidateToImportedCompany(
   if (!parsed.success) {
     return { success: false, reason: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') };
   }
-  return { success: true, value: parsed.data };
+  return { success: true, value: parsed.data, unknownFields: derivedYear === null ? ['foundedYear'] : [] };
 }
 
 /** Merge candidate evidence into the matched record — appends, never overwrites; conflicts stay visible. */

@@ -58,6 +58,24 @@ export const importedCompanySchema = z.object({
 });
 export type ImportedCompany = z.infer<typeof importedCompanySchema>;
 
+/**
+ * The value written to a NOT NULL column the source never stated.
+ *
+ * `founded_year` is NOT NULL (and cannot become nullable without
+ * rebuilding a table 19 others cascade off), so a source that doesn't
+ * publish a founding date still has to write SOMETHING. The number
+ * itself is meaningless and must never be displayed as a fact: callers
+ * pair it with `SaveOptions.unknownFields`, which records the field as
+ * `missing` provenance so the UI renders "Missing" and any later real
+ * value overwrites it.
+ *
+ * Deliberately NOT the current year, and not a plausible-looking recent
+ * year: those are exactly what made the old fabricated values pass for
+ * facts. 1990 is the schema's floor, so it is obviously a sentinel if it
+ * ever leaks into a view that forgot to check provenance.
+ */
+export const PLACEHOLDER_FOUNDED_YEAR = 1990;
+
 export const CSV_COLUMNS = [
   'name', 'oneLiner', 'vertical', 'subcategory', 'stage', 'city', 'state',
   'foundedYear', 'teamSize', 'tractionLevel', 'tractionNote',

@@ -153,6 +153,19 @@ function loadCompanies(opts: EnrichmentOptions): RawCompany[] {
     const dealRows = db.prepare('SELECT source_id, source_name, url, published_at, summary FROM deal_evidence WHERE company_id = ? ORDER BY id')
       .all(id) as { source_id: string; source_name: string; url: string; published_at: string | null; summary: string }[];
     const website = (r.website as string | null) || null;
+    /**
+     * `founded_year` and `team_size` are NOT NULL, so a source that never
+     * stated them still wrote a placeholder — recorded as `missing`
+     * provenance. Reading the raw number here would feed that placeholder
+     * into `companyAgeYears`, which the stage resolver weighs: an unknown
+     * founding date would silently become "founded 1990", i.e. a decades-old
+     * company. Provenance is the only thing that distinguishes the two, so
+     * it is consulted rather than pattern-matching the value.
+     */
+    const missingFields = new Set(
+      (db.prepare("SELECT field FROM field_provenance WHERE company_id = ? AND origin = 'missing'")
+        .all(id) as { field: string }[]).map((p) => p.field),
+    );
     return {
       id,
       name: r.name as string,
@@ -162,8 +175,8 @@ function loadCompanies(opts: EnrichmentOptions): RawCompany[] {
       state: (r.state as string | null) || null,
       oneLiner: (r.one_liner as string) ?? '',
       subcategory: (r.subcategory as string) ?? '',
-      foundedYear: typeof r.founded_year === 'number' && r.founded_year > 1900 ? r.founded_year : null,
-      teamSize: typeof r.team_size === 'number' && r.team_size > 0 ? r.team_size : null,
+      foundedYear: !missingFields.has('foundedYear') && typeof r.founded_year === 'number' && r.founded_year > 1900 ? r.founded_year : null,
+      teamSize: !missingFields.has('teamSize') && typeof r.team_size === 'number' && r.team_size > 0 ? r.team_size : null,
       quarantined: Number(r.quarantined ?? 0) === 1,
       evidence,
       dealEvidence: dealRows.map((d) => ({

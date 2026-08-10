@@ -30,7 +30,8 @@
     "db:rescore": "tsx --env-file-if-exists=.env scripts/rescore.ts",
     "diligence": "tsx --env-file-if-exists=.env scripts/candidate-diligence.ts",
     "pilot:finalize": "tsx --env-file-if-exists=.env scripts/finalize-pilot-candidates.ts",
-    "db:correct-stage": "tsx --env-file-if-exists=.env scripts/correct-inferred-stage.ts"
+    "db:correct-stage": "tsx --env-file-if-exists=.env scripts/correct-inferred-stage.ts",
+    "db:backfill-founded-year": "tsx --env-file-if-exists=.env scripts/backfill-founded-year.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.2",

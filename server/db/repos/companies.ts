@@ -144,6 +144,23 @@ export interface SaveOptions {
   discoveredAt?: string;
   /** The sourcing run whose candidate became this company. Set only at creation, like discoveredAt. */
   discoveryRunId?: string;
+  /**
+   * Fields this save does NOT actually know, despite passing a value.
+   *
+   * Some columns are NOT NULL (`founded_year`, `team_size`) while the
+   * source that produced the record never stated them — a funding
+   * article names a round, not a founding date. The caller still has to
+   * hand the schema a number, so without this the placeholder was
+   * written with the same `origin` as genuinely sourced fields and
+   * became indistinguishable from a fact.
+   *
+   * Listed fields get provenance `'missing'` instead, which is what the
+   * UI reads to show "Missing" rather than the placeholder. Because
+   * `missing` is the LOWEST precedence, any later real value overwrites
+   * it automatically, and on the update path the placeholder is skipped
+   * entirely so it can never overwrite a value already on record.
+   */
+  unknownFields?: readonly (keyof typeof FIELD_COLUMNS)[];
 }
 
 export function getCompany(id: string): ImportedCompany | null {
@@ -297,7 +314,14 @@ function saveCompanyUnsafe(record: ImportedCompany, opts: SaveOptions): { create
       opts.discoveredAt ?? null, opts.discoveryRunId ?? null, record.raising ?? null, record.accelerator ?? null,
       record.lastFundingDate ?? null, ts, ts,
     );
-    for (const field of Object.keys(FIELD_COLUMNS)) writeProvenance(record.id, field, opts.origin, opts.source);
+    const unknown = new Set<string>(opts.unknownFields ?? []);
+    for (const field of Object.keys(FIELD_COLUMNS)) {
+      writeProvenance(
+        record.id, field,
+        unknown.has(field) ? 'missing' : opts.origin,
+        unknown.has(field) ? `${opts.source} (did not state this field)` : opts.source,
+      );
+    }
     replaceFounders(record.id, record.founders);
     appendEvidence(record.id, record.evidence, opts.discoverySource ? 'discovery' : 'import');
     if (opts.externalId) addExternalId(record.id, opts.externalId.sourceId, opts.externalId.externalId);
@@ -314,7 +338,16 @@ function saveCompanyUnsafe(record: ImportedCompany, opts: SaveOptions): { create
     ...(record.accelerator !== undefined ? [['accelerator', record.accelerator] as [keyof typeof FIELD_COLUMNS, string]] : []),
     ...(record.lastFundingDate !== undefined ? [['lastFundingDate', record.lastFundingDate] as [keyof typeof FIELD_COLUMNS, string]] : []),
   ];
-  for (const [field, value] of updates) applyFieldUpdate(record.id, field, value, opts.origin, opts.source);
+  // A field the caller flagged as not-actually-known carries a
+  // schema-satisfying placeholder, never a fact. Skipping it here is the
+  // point: on a re-import it must not overwrite a value another source
+  // did establish, and `applyFieldUpdate` alone would not stop it —
+  // 'extracted' outranks nothing when the incoming origin is the same.
+  const unknownOnUpdate = new Set<string>(opts.unknownFields ?? []);
+  for (const [field, value] of updates) {
+    if (unknownOnUpdate.has(field)) continue;
+    applyFieldUpdate(record.id, field, value, opts.origin, opts.source);
+  }
   db.prepare('UPDATE companies SET normalized_name = ?, domain = ?, flags = ?, updated_at = ? WHERE id = ?')
     .run(normalizeCompanyKey(record.name), domain, JSON.stringify(record.flags), ts, record.id);
   if (record.founders.length > 0) replaceFounders(record.id, record.founders);
