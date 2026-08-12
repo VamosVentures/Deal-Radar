@@ -50,13 +50,13 @@ This file lists **only** things that cannot be completed by writing code. Everyt
 - **Feature blocked:** Syncing an approved company to the real portal, searching real records, duplicate-checking against real HubSpot data
 - **Environment variables:** either `HUBSPOT_ACCESS_TOKEN` (+ optional `HUBSPOT_PORTAL_ID` for deep links), **or** the OAuth trio `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET`, `HUBSPOT_REDIRECT_URI`.
 - **Credential required:** A HubSpot private-app token, or a HubSpot OAuth app.
-- **Minimum permission:** `crm.objects.companies.read` + `.write`, `crm.objects.contacts.read` + `.write`, `crm.objects.deals.read` + `.write`. **If you want to start read-only, the `.read` scopes alone are enough** to verify the connection, run search, and exercise duplicate detection — write scopes are only needed for the sync action itself.
+- **Minimum permission:** `crm.objects.companies.read` + `.write`, `crm.objects.contacts.read` + `.write`, `crm.objects.deals.read` + `.write`, plus `crm.objects.notes.write` if the "Log Activity" note feature will be used. **If you want to start read-only, the three `.read` scopes alone are enough** to verify the connection, run search, and exercise duplicate detection — write scopes (and notes) are only needed for the sync and log-activity actions.
 - **Why required:** HubSpot has no anonymous API.
 - **Owner:** **Vamos** — the HubSpot portal is a Vamos account.
 - **Exact current state:** `HUBSPOT_ACCESS_TOKEN`, `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET`, `HUBSPOT_PORTAL_ID` all empty. `HUBSPOT_REDIRECT_URI` is set to a localhost callback. Status reports *"Implemented — credentials required"*. Every HubSpot action returns `503 not_connected` with a setup hint.
 - **Also required before first write:** the `vamos_*` custom properties must exist in the target portal, or writes fail on HubSpot's side. See the README for the recommended property set.
 - **Already implemented:** Full client — private-app and OAuth auth, the 4-tier duplicate-check ladder (radar id → domain → name → founder email), create/update with explicit-field preservation, associations, notes, search across companies/contacts/deals, sync history, and a retry queue for failures. Tested against a stubbed portal.
-- **Exact next action:** Create a private app in HubSpot with the read scopes above, add `HUBSPOT_ACCESS_TOKEN=<token>` to `.env`, restart, and click **Test connection** in Settings → Integrations. Add write scopes and the `vamos_*` properties only when you are ready to sync for real.
+- **Exact next action:** Create a private app in HubSpot with the read scopes above, add `HUBSPOT_ACCESS_TOKEN=<token>` to `.env`, restart, and click **Test connection** in Settings → Integrations. Add write scopes, `crm.objects.notes.write`, and the `vamos_*` properties only when you are ready to sync for real.
 - **Without it:** Everything else works. Companies are reviewed in-app; the sync button reports honestly that it is not connected.
 
 ## 3. Microsoft Entra — sign-in (SSO) and Outlook

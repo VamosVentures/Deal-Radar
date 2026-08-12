@@ -58,6 +58,7 @@ const HUBSPOT_OAUTH_SCOPES = [
   'crm.objects.companies.read', 'crm.objects.companies.write',
   'crm.objects.contacts.read', 'crm.objects.contacts.write',
   'crm.objects.deals.read', 'crm.objects.deals.write',
+  'crm.objects.notes.write',
 ];
 
 export function beginHubSpotConnect(): { authUrl: string | null; message: string } {
@@ -250,6 +251,8 @@ export interface HubSpotService {
     pipelineId: string;
     resolution: 'create-new' | 'update-existing';
     existingRecordId: string | null;
+    /** The HubSpot deal previously created for this radar record, if known — updates its stage/pipeline instead of creating a twin. */
+    existingDealId: string | null;
   }): Promise<SyncResult>;
   logActivity(args: {
     companyRecordId: string;
@@ -292,6 +295,20 @@ class LiveHubSpot implements HubSpotService {
           filterGroups: [{ filters: [{ propertyName: prop, operator: 'EQ', value }] }],
           properties: ['name', 'domain'],
           limit: 5,
+        }),
+      },
+    );
+  }
+
+  private async searchDealsBy(prop: string, value: string) {
+    return this.call<{ results: { id: string }[] }>(
+      '/crm/v3/objects/deals/search',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          filterGroups: [{ filters: [{ propertyName: prop, operator: 'EQ', value }] }],
+          properties: [],
+          limit: 1,
         }),
       },
     );
@@ -433,7 +450,7 @@ class LiveHubSpot implements HubSpotService {
   }
 
   async syncCompany(args: Parameters<HubSpotService['syncCompany']>[0]): Promise<SyncResult> {
-    const { company, contacts, deal, stageId, pipelineId, resolution, existingRecordId } = args;
+    const { company, contacts, deal, stageId, pipelineId, resolution, existingRecordId, existingDealId } = args;
 
     // Idempotency: if this radar record was ever synced, update that
     // HubSpot company instead of creating a twin — even when the
@@ -485,10 +502,26 @@ class LiveHubSpot implements HubSpotService {
       contactIds.push(res.id);
     }
 
-    const dealRes = await this.call<{ id: string }>('/crm/v3/objects/deals', {
-      method: 'POST',
-      body: JSON.stringify({ properties: buildDealProperties(deal, stageId, pipelineId) }),
-    });
+    // Idempotency: reuse the deal previously created for this radar
+    // record instead of creating a twin on every resync/stage change.
+    // Prefer the caller's persisted hubspot_deal_id (the fast path);
+    // fall back to a live search by our own vamos_deal_radar_id
+    // property for records synced before this link was tracked.
+    let dealTargetId = existingDealId;
+    if (!dealTargetId) {
+      const priorDeal = await this.searchDealsBy('vamos_deal_radar_id', deal.dealRadarId).catch(() => ({ results: [] }));
+      if (priorDeal.results[0]) dealTargetId = priorDeal.results[0].id;
+    }
+    const dealUpdating = !!dealTargetId;
+    const dealRes = dealTargetId
+      ? await this.call<{ id: string }>(`/crm/v3/objects/deals/${dealTargetId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ properties: buildDealProperties(deal, stageId, pipelineId) }),
+        })
+      : await this.call<{ id: string }>('/crm/v3/objects/deals', {
+          method: 'POST',
+          body: JSON.stringify({ properties: buildDealProperties(deal, stageId, pipelineId) }),
+        });
 
     // Associations: deal↔company, deal↔contacts, company↔contacts.
     const assoc = (fromType: string, fromId: string, toType: string, toId: string) =>
@@ -506,7 +539,7 @@ class LiveHubSpot implements HubSpotService {
       provider: 'hubspot', mode: 'live',
       action: updating ? 'update-company' : 'create-company',
       subject: company.dealRadarId, outcome: 'ok',
-      detail: `Company ${companyRes.id}, ${contactIds.length} contact(s), deal ${dealRes.id}`,
+      detail: `Company ${companyRes.id} (${updating ? 'updated' : 'created'}), ${contactIds.length} contact(s), deal ${dealRes.id} (${dealUpdating ? 'updated' : 'created'})`,
     });
     return {
       demo: false,
