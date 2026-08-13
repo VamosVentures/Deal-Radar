@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { store } from '../lib/store';
 import { getStaleSettings, setStaleSettings } from '../db/repos/operations';
 import { saveCompany, companyMetaView } from '../db/repos/companies';
@@ -110,10 +111,22 @@ describe('stale-record settings', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-stale-'));
     const dbPath = path.join(dir, 'stale-restart-test.db');
     const projectRoot = path.resolve(__dirname, '..', '..');
+    // Windows requires a file:// URL for a dynamic import() with an
+    // absolute path — a raw 'C:\...' string isn't a valid ESM specifier.
+    const projectRootUrl = pathToFileURL(projectRoot).href;
     const runScript = (body: string): string => {
       const file = path.join(dir, `step-${Math.random().toString(36).slice(2)}.mts`);
       fs.writeFileSync(file, body);
-      return execFileSync('npx', ['tsx', file], {
+      // Invoke tsx's own CLI script directly via the Node binary, rather
+      // than 'npx tsx' — 'npx' is a .cmd shim on Windows, not a .exe, and
+      // spawning it needs either shell: true (which Node now warns is
+      // unsafe with an args array — DEP0190) or a platform-specific
+      // 'npx.cmd' resolution (which Node refuses to run directly as a
+      // hardened-by-default guard against batch-file argument injection).
+      // Going straight to Node with tsx's CLI script avoids the shell
+      // entirely, on every OS.
+      const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+      return execFileSync(process.execPath, [tsxCli, file], {
         cwd: projectRoot,
         env: { ...process.env, DATABASE_FILE: dbPath, DATA_FILE: dbPath.replace('.db', '-kv.db'), NODE_ENV: 'restart-test' },
         encoding: 'utf8',
@@ -121,13 +134,13 @@ describe('stale-record settings', () => {
     };
 
     runScript(`
-      const { setStaleSettings } = await import('${projectRoot}/server/db/repos/operations');
+      const { setStaleSettings } = await import('${projectRootUrl}/server/db/repos/operations');
       setStaleSettings({ staleAfterDays: 77, monitorGoesStale: false });
       console.log('SAVED');
     `);
 
     const out = runScript(`
-      const { getStaleSettings } = await import('${projectRoot}/server/db/repos/operations');
+      const { getStaleSettings } = await import('${projectRootUrl}/server/db/repos/operations');
       console.log(JSON.stringify(getStaleSettings()));
     `);
     const result = JSON.parse(out.trim().split('\n').pop()!);

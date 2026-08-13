@@ -81,7 +81,7 @@ describe('duplicate detection (in-memory fixture)', () => {
     const svc = new MockHubSpot();
     await svc.syncCompany({
       company: company(), contacts: [], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
+      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
     });
     const matches = await svc.checkDuplicate({ name: 'Totally Different Name', domain: 'https://WWW.solcarehealth.example.com/' });
     expect(matches).toHaveLength(1);
@@ -94,7 +94,7 @@ describe('duplicate detection (in-memory fixture)', () => {
     const svc = new MockHubSpot();
     await svc.syncCompany({
       company: company({ domain: null, website: null }), contacts: [], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
+      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
     });
     const matches = await svc.checkDuplicate({ name: 'solcare health, inc', domain: null });
     expect(matches).toHaveLength(1);
@@ -110,17 +110,21 @@ describe('duplicate detection (in-memory fixture)', () => {
     const svc = new MockHubSpot();
     const first = await svc.syncCompany({
       company: company(), contacts: [], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
+      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
     });
     const second = await svc.syncCompany({
       company: company({ description: 'Updated description' }), contacts: [], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId,
+      stageId: 's', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: null,
     });
     expect(second.action).toBe('updated');
     expect(second.companyId).toBe(first.companyId);
     const companies = store.raw.mockHubSpot.filter((o) => o.type === 'company');
     expect(companies).toHaveLength(1);
     expect(companies[0].properties.description).toBe('Updated description');
+    // The deal is idempotent too: found via vamos_deal_radar_id and
+    // updated in place, never duplicated.
+    expect(second.dealId).toBe(first.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
   });
 });
 
@@ -238,7 +242,7 @@ describe('fixture behavior (tests only)', () => {
   it('labels results as demo and never claims a real action', async () => {
     const res = await new MockHubSpot().syncCompany({
       company: company(), contacts: [contact()], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
+      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
     });
     expect(res.demo).toBe(true);
     expect(res.message).toContain('Test fixture');
@@ -250,17 +254,69 @@ describe('fixture behavior (tests only)', () => {
     const svc = new MockHubSpot();
     const args = {
       company: company(), contacts: [contact()], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'create-new' as const, existingRecordId: null,
+      stageId: 's', pipelineId: 'p', resolution: 'create-new' as const, existingRecordId: null, existingDealId: null,
     };
     await svc.syncCompany(args);
     await svc.syncCompany(args);
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'contact')).toHaveLength(1);
   });
 
+  it('a repeated sync-company call results in exactly one company, one deal, and one contact', async () => {
+    const svc = new MockHubSpot();
+    const args = {
+      company: company(), contacts: [contact()], deal: deal(),
+      stageId: 's', pipelineId: 'p', resolution: 'create-new' as const, existingRecordId: null, existingDealId: null,
+    };
+    const first = await svc.syncCompany(args);
+    const second = await svc.syncCompany(args);
+    expect(second.companyId).toBe(first.companyId);
+    expect(second.dealId).toBe(first.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'company')).toHaveLength(1);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'contact')).toHaveLength(1);
+  });
+
+  it('a later Radar-stage change updates the same HubSpot deal\'s stage rather than creating a new deal', async () => {
+    const svc = new MockHubSpot();
+    const first = await svc.syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 'stage-surfaced', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
+    });
+    // Company already synced before, and the caller now knows the
+    // HubSpot deal id from that first sync (the real flow persists this
+    // via hubspot_deal_id — see server/routes/hubspot.ts performSync).
+    const second = await svc.syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 'stage-approved', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: first.dealId,
+    });
+    expect(second.dealId).toBe(first.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
+    const dealObj = store.raw.mockHubSpot.find((o) => o.id === first.dealId)!;
+    expect(dealObj.properties.dealstage).toBe('stage-approved');
+  });
+
+  it('falls back to a live search by vamos_deal_radar_id when no deal id was persisted (pre-fix records)', async () => {
+    const svc = new MockHubSpot();
+    const first = await svc.syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 'stage-surfaced', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
+    });
+    // Simulate a record synced before hubspot_deal_id was tracked: the
+    // caller has no saved deal id to pass, only the radar/company link.
+    const second = await svc.syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 'stage-approved', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: null,
+    });
+    expect(second.dealId).toBe(first.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
+    const dealObj = store.raw.mockHubSpot.find((o) => o.id === first.dealId)!;
+    expect(dealObj.properties.dealstage).toBe('stage-approved');
+  });
+
   it('associates the deal with company and contacts', async () => {
     const res = await new MockHubSpot().syncCompany({
       company: company(), contacts: [contact()], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null,
+      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
     });
     const dealObj = store.raw.mockHubSpot.find((o) => o.id === res.dealId)!;
     expect(dealObj.associations).toContain(res.companyId);

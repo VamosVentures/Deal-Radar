@@ -1352,6 +1352,19 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE pending_evidence ADD COLUMN edited_quote TEXT;
     `,
   },
+  {
+    version: 21,
+    name: 'hubspot-deal-id',
+    sql: `
+      -- Sync used to POST a brand-new HubSpot deal on every call, with no
+      -- record of which deal belonged to which company — so a resync (a
+      -- retry, or a later stage change) always created a duplicate deal
+      -- instead of updating the one already in HubSpot. This column is
+      -- the same idempotency link hubspot_company_id already provides,
+      -- just for the deal object.
+      ALTER TABLE companies ADD COLUMN hubspot_deal_id TEXT;
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

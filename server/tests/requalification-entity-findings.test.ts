@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { checkEntityType, classifyPossessiveName } from '../sourcing/classify';
 
 /**
@@ -26,13 +27,25 @@ import { checkEntityType, classifyPossessiveName } from '../sourcing/classify';
  */
 
 const projectRoot = path.resolve(__dirname, '..', '..');
+// Windows requires a file:// URL for a dynamic import() with an absolute
+// path — a raw 'C:\...' string isn't a valid ESM specifier.
+const projectRootUrl = pathToFileURL(projectRoot).href;
 let dir: string;
 let dbPath: string;
+
+// Invoke tsx's own CLI script directly via the Node binary, rather than
+// 'npx tsx' — 'npx' is a .cmd shim on Windows, not a .exe, and spawning it
+// needs either shell: true (which Node now warns is unsafe with an args
+// array — DEP0190) or a platform-specific 'npx.cmd' resolution (which
+// Node refuses to run directly as a hardened-by-default guard against
+// batch-file argument injection). Going straight to Node with tsx's CLI
+// script avoids the shell entirely, on every OS.
+const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
 function run(body: string): string {
   const file = path.join(dir, `step-${Math.random().toString(36).slice(2)}.mts`);
   fs.writeFileSync(file, body);
-  return execFileSync('npx', ['tsx', file], {
+  return execFileSync(process.execPath, [tsxCli, file], {
     cwd: projectRoot,
     env: { ...process.env, DATABASE_FILE: dbPath, DATA_FILE: dbPath.replace('.db', '-kv.db'), NODE_ENV: 'requal-test' },
     encoding: 'utf8',
@@ -41,7 +54,7 @@ function run(body: string): string {
 
 /** The real script, offline so no live request is made. */
 function qualifyAll(): string {
-  return execFileSync('npx', ['tsx', 'scripts/qualify-all.ts', '--offline'], {
+  return execFileSync(process.execPath, [tsxCli, 'scripts/qualify-all.ts', '--offline'], {
     cwd: projectRoot,
     env: { ...process.env, DATABASE_FILE: dbPath, DATA_FILE: dbPath.replace('.db', '-kv.db'), NODE_ENV: 'requal-test' },
     encoding: 'utf8',
@@ -52,7 +65,7 @@ interface Row { id: string; quarantined: number; reason: string | null; result: 
 
 function state(): Record<string, Row> {
   const out = run(`
-    const { getDb } = await import('${projectRoot}/server/db/client.ts');
+    const { getDb } = await import('${projectRootUrl}/server/db/client.ts');
     const rows = getDb().prepare(\`
       SELECT c.id AS id, c.quarantined AS quarantined, c.quarantine_reason AS reason,
              q.result AS result, o.classification AS classification
@@ -71,9 +84,9 @@ beforeAll(() => {
   dbPath = path.join(dir, 'requal.db');
 
   run(`
-    const { saveCompany } = await import('${projectRoot}/server/db/repos/companies.ts');
-    const { addDealEvidence } = await import('${projectRoot}/server/db/repos/opportunities.ts');
-    const { getDb } = await import('${projectRoot}/server/db/client.ts');
+    const { saveCompany } = await import('${projectRootUrl}/server/db/repos/companies.ts');
+    const { addDealEvidence } = await import('${projectRootUrl}/server/db/repos/opportunities.ts');
+    const { getDb } = await import('${projectRootUrl}/server/db/client.ts');
 
     const base = (id, name, over = {}) => ({
       id, name,

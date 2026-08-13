@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { isValidSqliteFile } from '../services/backup';
 
 /**
@@ -17,7 +18,15 @@ function runScript(dir: string, dbPath: string, body: string): string {
   const projectRoot = path.resolve(__dirname, '..', '..');
   const file = path.join(dir, `step-${Math.random().toString(36).slice(2)}.mts`);
   fs.writeFileSync(file, body);
-  return execFileSync('npx', ['tsx', file], {
+  // Invoke tsx's own CLI script directly via the Node binary, rather than
+  // 'npx tsx' — 'npx' is a .cmd shim on Windows, not a .exe, and spawning
+  // it needs either shell: true (which Node now warns is unsafe with an
+  // args array — DEP0190) or a platform-specific 'npx.cmd' resolution
+  // (which Node refuses to run directly as a hardened-by-default guard
+  // against batch-file argument injection). Going straight to Node with
+  // tsx's CLI script avoids the shell entirely, on every OS.
+  const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  return execFileSync(process.execPath, [tsxCli, file], {
     cwd: projectRoot,
     env: { ...process.env, DATABASE_FILE: dbPath, DATA_FILE: dbPath.replace('.db', '-kv.db'), NODE_ENV: 'backup-test' },
     encoding: 'utf8',
@@ -36,11 +45,14 @@ describe('SQLite backup/restore', () => {
   it('creates a backup containing existing company records, lists it, and restore produces the same records', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-backup-'));
     const projectRoot = path.resolve(__dirname, '..', '..');
+    // Windows requires a file:// URL for a dynamic import() with an
+    // absolute path — a raw 'C:\...' string isn't a valid ESM specifier.
+    const projectRootUrl = pathToFileURL(projectRoot).href;
     const dbPath = path.join(dir, 'active.db');
 
     // 1) Seed a company in the "active" database.
     runScript(dir, dbPath, `
-      const { saveCompany } = await import('${projectRoot}/server/db/repos/companies');
+      const { saveCompany } = await import('${projectRootUrl}/server/db/repos/companies');
       saveCompany({
         id: 'backup-fixture-co', name: 'Backup Fixture Co', oneLiner: 'Fixture pitch text', vertical: 'health',
         subcategory: 'Care', stage: 'Seed', city: 'Austin', state: 'TX', foundedYear: 2024, teamSize: 3,
@@ -54,7 +66,7 @@ describe('SQLite backup/restore', () => {
 
     // 2) Create a backup — must contain the seeded company.
     const backupOut = runScript(dir, dbPath, `
-      const { createBackup } = await import('${projectRoot}/server/services/backup');
+      const { createBackup } = await import('${projectRootUrl}/server/services/backup');
       const result = await createBackup('test-suite');
       console.log(JSON.stringify(result));
     `);
@@ -70,7 +82,7 @@ describe('SQLite backup/restore', () => {
 
     // 3) It shows up in listBackups().
     const listOut = runScript(dir, dbPath, `
-      const { listBackups } = await import('${projectRoot}/server/services/backup');
+      const { listBackups } = await import('${projectRootUrl}/server/services/backup');
       console.log(JSON.stringify(listBackups()));
     `);
     const list = JSON.parse(listOut.trim().split('\n').pop()!);
@@ -79,19 +91,19 @@ describe('SQLite backup/restore', () => {
 
     // 4) Mutate the active database (simulating drift since the backup)...
     runScript(dir, dbPath, `
-      const { clearCompanies } = await import('${projectRoot}/server/db/repos/companies');
+      const { clearCompanies } = await import('${projectRootUrl}/server/db/repos/companies');
       clearCompanies();
       console.log('CLEARED');
     `);
     const afterClear = runScript(dir, dbPath, `
-      const { listCompanies } = await import('${projectRoot}/server/db/repos/companies');
+      const { listCompanies } = await import('${projectRootUrl}/server/db/repos/companies');
       console.log(JSON.stringify(listCompanies().length));
     `);
     expect(Number(afterClear.trim().split('\n').pop())).toBe(0);
 
     // 5) ...then restore, and the original company is back.
     const restoreOut = runScript(dir, dbPath, `
-      const { restoreBackup } = await import('${projectRoot}/server/services/backup');
+      const { restoreBackup } = await import('${projectRootUrl}/server/services/backup');
       const result = await restoreBackup('${backupResult.backup.file}', 'test-suite');
       console.log(JSON.stringify(result));
     `);
@@ -100,7 +112,7 @@ describe('SQLite backup/restore', () => {
     expect(restoreResult.safetyBackup).toBeTruthy(); // existing (cleared) data was protected by a safety backup first
 
     const afterRestore = runScript(dir, dbPath, `
-      const { listCompanies } = await import('${projectRoot}/server/db/repos/companies');
+      const { listCompanies } = await import('${projectRootUrl}/server/db/repos/companies');
       const companies = listCompanies();
       console.log(JSON.stringify({ count: companies.length, name: companies[0]?.name }));
     `);
@@ -114,11 +126,14 @@ describe('SQLite backup/restore', () => {
   it('rejects a second backup while one is already in progress (overlap lock)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-backup-lock-'));
     const projectRoot = path.resolve(__dirname, '..', '..');
+    // Windows requires a file:// URL for a dynamic import() with an
+    // absolute path — a raw 'C:\...' string isn't a valid ESM specifier.
+    const projectRootUrl = pathToFileURL(projectRoot).href;
     const dbPath = path.join(dir, 'active.db');
 
     // Seed so the backups directory exists, then plant a fresh lock file directly.
     runScript(dir, dbPath, `
-      const { getDb } = await import('${projectRoot}/server/db/client');
+      const { getDb } = await import('${projectRootUrl}/server/db/client');
       getDb(); // ensure the db file (and thus its directory) exists
       console.log('READY');
     `);
@@ -126,7 +141,7 @@ describe('SQLite backup/restore', () => {
     fs.writeFileSync(path.join(dir, 'backups', '.lock'), JSON.stringify({ startedAt: new Date().toISOString(), pid: 999999 }));
 
     const out = runScript(dir, dbPath, `
-      const { createBackup } = await import('${projectRoot}/server/services/backup');
+      const { createBackup } = await import('${projectRootUrl}/server/services/backup');
       const result = await createBackup('test-suite');
       console.log(JSON.stringify(result));
     `);
@@ -140,10 +155,13 @@ describe('SQLite backup/restore', () => {
   it('refuses to restore a file that is not a valid SQLite database', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-backup-badrestore-'));
     const projectRoot = path.resolve(__dirname, '..', '..');
+    // Windows requires a file:// URL for a dynamic import() with an
+    // absolute path — a raw 'C:\...' string isn't a valid ESM specifier.
+    const projectRootUrl = pathToFileURL(projectRoot).href;
     const dbPath = path.join(dir, 'active.db');
 
     runScript(dir, dbPath, `
-      const { getDb } = await import('${projectRoot}/server/db/client');
+      const { getDb } = await import('${projectRootUrl}/server/db/client');
       getDb();
       console.log('READY');
     `);
@@ -152,7 +170,7 @@ describe('SQLite backup/restore', () => {
     fs.writeFileSync(path.join(dir, 'backups', fakeName), 'not a real sqlite file');
 
     const out = runScript(dir, dbPath, `
-      const { restoreBackup } = await import('${projectRoot}/server/services/backup');
+      const { restoreBackup } = await import('${projectRootUrl}/server/services/backup');
       const result = await restoreBackup('${fakeName}', 'test-suite');
       console.log(JSON.stringify(result));
     `);

@@ -219,8 +219,16 @@ async function seedPilotCandidates(cookiePair: string): Promise<void> {
       console.log(name, JSON.stringify(r));
     }
   `;
-  execFileSync('npx', ['tsx', '--eval', script], {
-    cwd: path.join(import.meta.dirname, '..'),
+  const projectRoot = path.join(import.meta.dirname, '..');
+  // Invoke tsx's own CLI script directly via the Node binary, rather than
+  // 'npx tsx' — 'npx' is a .cmd shim on Windows, not a .exe, and Node
+  // refuses to spawn it (or 'npx.cmd' directly) without a shell, which
+  // brings its own problems (DEP0190, batch-file argument-injection
+  // hardening). Going straight to Node with tsx's CLI script needs no
+  // shell at all, on any OS.
+  const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+  execFileSync(process.execPath, [tsxCli, '--eval', script], {
+    cwd: projectRoot,
     env: {
       ...process.env,
       DATABASE_FILE: E2E_DB_PATH,

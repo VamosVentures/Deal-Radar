@@ -133,7 +133,7 @@ export class MockHubSpot implements HubSpotService {
   }
 
   async syncCompany(args: Parameters<HubSpotService['syncCompany']>[0]): Promise<SyncResult> {
-    const { company, contacts, deal, stageId, pipelineId, resolution, existingRecordId } = args;
+    const { company, contacts, deal, stageId, pipelineId, resolution, existingRecordId, existingDealId } = args;
     // Same idempotency as the live client: a radar record synced before
     // updates its existing company instead of creating a twin.
     const prior = store.raw.mockHubSpot.find(
@@ -156,9 +156,18 @@ export class MockHubSpot implements HubSpotService {
         : undefined;
       return this.put('contact', buildContactProperties(c), existing?.id ?? null);
     });
-    const dealObj = this.put('deal', buildDealProperties(deal, stageId, pipelineId), null);
+    // Same idempotency for the deal: prefer the caller's persisted
+    // hubspot_deal_id, else fall back to a search by our own
+    // vamos_deal_radar_id property (records synced before this link
+    // was tracked).
+    const priorDeal = store.raw.mockHubSpot.find(
+      (o) => o.type === 'deal' && o.properties.vamos_deal_radar_id === deal.dealRadarId,
+    );
+    const dealTargetId = existingDealId ?? priorDeal?.id ?? null;
+    const dealUpdating = !!dealTargetId;
+    const dealObj = this.put('deal', buildDealProperties(deal, stageId, pipelineId), dealTargetId);
 
-    dealObj.associations = [companyObj.id, ...contactObjs.map((o) => o.id)];
+    dealObj.associations = Array.from(new Set([...dealObj.associations, companyObj.id, ...contactObjs.map((o) => o.id)]));
     companyObj.associations = Array.from(
       new Set([...companyObj.associations, dealObj.id, ...contactObjs.map((o) => o.id)]),
     );
@@ -168,7 +177,7 @@ export class MockHubSpot implements HubSpotService {
       provider: 'hubspot', mode: 'local',
       action: updating ? 'update-company' : 'create-company',
       subject: company.dealRadarId, outcome: 'ok',
-      detail: `Test fixture: simulated ${updating ? 'update of' : 'creation of'} company, ${contactObjs.length} contact(s), 1 deal`,
+      detail: `Test fixture: simulated ${updating ? 'update of' : 'creation of'} company, ${contactObjs.length} contact(s), ${dealUpdating ? 'update of' : 'creation of'} 1 deal`,
     });
 
     return {
