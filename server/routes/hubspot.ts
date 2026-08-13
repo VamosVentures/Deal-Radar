@@ -142,7 +142,7 @@ hubspotRouter.post('/hubspot/company', wrap(async (req, res) => {
     company, contacts: [],
     deal: minimalDeal(company.name, company.dealRadarId, company.dealRadarUrl),
     ...resolveStage('Surfaced'),
-    resolution: 'create-new', existingRecordId: null,
+    resolution: 'create-new', existingRecordId: null, existingDealId: null,
   });
   res.json(result);
 }));
@@ -181,7 +181,9 @@ async function performSync(parsed: CompanySyncRequest) {
   const { pipelineId, stageId } = resolveStage(parsed.radarStage);
 
   // Idempotency tier 1: our own persisted link.
-  const linkedId = companyMetaView()[parsed.company.dealRadarId]?.hubspotCompanyId ?? null;
+  const meta = companyMetaView()[parsed.company.dealRadarId];
+  const linkedId = meta?.hubspotCompanyId ?? null;
+  const linkedDealId = meta?.hubspotDealId ?? null;
   const resolution = linkedId ? 'update-existing' as const : parsed.duplicateResolution;
   const existingRecordId = linkedId ?? parsed.existingRecordId;
 
@@ -194,6 +196,7 @@ async function performSync(parsed: CompanySyncRequest) {
       stageId,
       resolution,
       existingRecordId,
+      existingDealId: linkedDealId,
     });
     recordHubspotSync({
       companyId: parsed.company.dealRadarId,
@@ -207,7 +210,7 @@ async function performSync(parsed: CompanySyncRequest) {
     });
     // A real, confirmed sync is the one event allowed to move the
     // status forward automatically — it isn't a guess, it's a fact.
-    setCompanyMeta(parsed.company.dealRadarId, { hubspotCompanyId: result.companyId, reviewStatus: 'Synced to HubSpot' });
+    setCompanyMeta(parsed.company.dealRadarId, { hubspotCompanyId: result.companyId, hubspotDealId: result.dealId, reviewStatus: 'Synced to HubSpot' });
     return result;
   } catch (e) {
     recordHubspotSync({
@@ -261,7 +264,7 @@ hubspotRouter.post('/hubspot/contact', wrap(async (req, res) => {
     contacts: [contact],
     deal: minimalDeal(contact.companyName, `contact-only-${Date.now()}`, env.FRONTEND_URL),
     ...resolveStage('Surfaced'),
-    resolution: 'create-new', existingRecordId: null,
+    resolution: 'create-new', existingRecordId: null, existingDealId: null,
   });
   res.json({ contactIds: result.contactIds, demo: result.demo });
 }));
@@ -281,7 +284,7 @@ hubspotRouter.post('/hubspot/deal', wrap(async (req, res) => {
       dealRadarId: deal.dealRadarId, dealRadarUrl: deal.dealRadarUrl,
     },
     contacts: [], deal, pipelineId, stageId,
-    resolution: 'create-new', existingRecordId: null,
+    resolution: 'create-new', existingRecordId: null, existingDealId: null,
   });
   res.json({ dealId: result.dealId, dealUrl: result.dealUrl, demo: result.demo });
 }));

@@ -128,6 +128,7 @@ export interface CompanyMetaEntry {
   discoveredAt?: string;
   lastRefreshed?: string;
   hubspotCompanyId?: string;
+  hubspotDealId?: string;
   /** Computed, never stored: true when a non-terminal company has gone unreviewed past the staleness threshold. */
   stale?: boolean;
   /** Per-field origin (verified / user-entered / extracted / ai-inferred / unverified). */
@@ -191,8 +192,8 @@ export function discoverySourceOf(companyId: string): string | null {
 /** The meta map served alongside companies (review chips, refresh dates, merged evidence). */
 export function companyMetaView(): Record<string, CompanyMetaEntry> {
   const db = getDb();
-  const rows = db.prepare("SELECT id, review_status, discovery_source, discovered_at, last_refreshed, hubspot_company_id, created_at FROM companies WHERE status = 'active'").all() as
-    { id: string; review_status: string | null; discovery_source: string | null; discovered_at: string | null; last_refreshed: string | null; hubspot_company_id: string | null; created_at: string }[];
+  const rows = db.prepare("SELECT id, review_status, discovery_source, discovered_at, last_refreshed, hubspot_company_id, hubspot_deal_id, created_at FROM companies WHERE status = 'active'").all() as
+    { id: string; review_status: string | null; discovery_source: string | null; discovered_at: string | null; last_refreshed: string | null; hubspot_company_id: string | null; hubspot_deal_id: string | null; created_at: string }[];
   const merged = db.prepare("SELECT company_id, claim, source, url, date, type FROM evidence WHERE added_by = 'merge' ORDER BY id").all() as
     { company_id: string; claim: string; source: string; url: string; date: string; type: string }[];
   const provenanceRows = db.prepare('SELECT company_id, field, origin FROM field_provenance').all() as
@@ -207,6 +208,7 @@ export function companyMetaView(): Record<string, CompanyMetaEntry> {
     if (r.discovered_at) entry.discoveredAt = r.discovered_at;
     if (r.last_refreshed) entry.lastRefreshed = r.last_refreshed;
     if (r.hubspot_company_id) entry.hubspotCompanyId = r.hubspot_company_id;
+    if (r.hubspot_deal_id) entry.hubspotDealId = r.hubspot_deal_id;
     // Stale is computed, never stored: a non-terminal company that has
     // gone unreviewed/unrefreshed past the (admin-configurable)
     // threshold since the best "last looked at" signal we have
@@ -484,12 +486,13 @@ export function addExternalId(companyId: string, sourceId: string, externalId: s
 
 export function setCompanyMeta(
   id: string,
-  meta: { reviewStatus?: string | null; lastRefreshed?: string; hubspotCompanyId?: string },
+  meta: { reviewStatus?: string | null; lastRefreshed?: string; hubspotCompanyId?: string; hubspotDealId?: string },
 ): void {
   const db = getDb();
   if (meta.reviewStatus !== undefined) db.prepare('UPDATE companies SET review_status = ?, updated_at = ? WHERE id = ?').run(meta.reviewStatus, now(), id);
   if (meta.lastRefreshed !== undefined) db.prepare('UPDATE companies SET last_refreshed = ?, updated_at = ? WHERE id = ?').run(meta.lastRefreshed, now(), id);
   if (meta.hubspotCompanyId !== undefined) db.prepare('UPDATE companies SET hubspot_company_id = ?, updated_at = ? WHERE id = ?').run(meta.hubspotCompanyId, now(), id);
+  if (meta.hubspotDealId !== undefined) db.prepare('UPDATE companies SET hubspot_deal_id = ?, updated_at = ? WHERE id = ?').run(meta.hubspotDealId, now(), id);
 }
 
 /** Stamp last_refreshed on the given ids (only rows that exist change). */

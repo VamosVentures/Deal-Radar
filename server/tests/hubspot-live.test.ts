@@ -26,9 +26,14 @@ describe('LiveHubSpot (stubbed network)', () => {
     createCalls: number;
     patchBodies: Record<string, unknown>[];
     existingProperties: Record<string, string | null>;
+    dealExists?: boolean;
+    dealCreateCalls?: number;
+    dealPatchBodies?: Record<string, unknown>[];
   }
 
   function stubPortal(state: PortalState) {
+    state.dealCreateCalls ??= 0;
+    state.dealPatchBodies ??= [];
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       const method = init?.method ?? 'GET';
@@ -41,6 +46,10 @@ describe('LiveHubSpot (stubbed network)', () => {
         return jsonResponse({ results: [] });
       }
       if (u.includes('/crm/v3/objects/contacts/search')) return jsonResponse({ results: [] });
+      if (u.includes('/crm/v3/objects/deals/search')) {
+        if (state.dealExists) return jsonResponse({ results: [{ id: 'DL-1' }] });
+        return jsonResponse({ results: [] });
+      }
       if (method === 'GET' && u.includes('/crm/v3/objects/companies/HS-1')) {
         return jsonResponse({ properties: state.existingProperties });
       }
@@ -54,7 +63,15 @@ describe('LiveHubSpot (stubbed network)', () => {
         return jsonResponse({ id: 'HS-1' });
       }
       if (method === 'POST' && u.endsWith('/crm/v3/objects/contacts')) return jsonResponse({ id: 'CT-1' });
-      if (method === 'POST' && u.endsWith('/crm/v3/objects/deals')) return jsonResponse({ id: 'DL-1' });
+      if (method === 'PATCH' && u.includes('/crm/v3/objects/deals/DL-1')) {
+        state.dealPatchBodies!.push(JSON.parse(String(init?.body ?? '{}')));
+        return jsonResponse({ id: 'DL-1' });
+      }
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/deals')) {
+        state.dealCreateCalls! += 1;
+        state.dealExists = true;
+        return jsonResponse({ id: 'DL-1' });
+      }
       if (method === 'PUT' && u.includes('/associations/')) return jsonResponse({});
       if (u.endsWith('/crm/v3/objects/companies?limit=1')) return jsonResponse({ results: [] });
       throw new Error(`Unexpected request in test: ${method} ${u}`);
@@ -96,7 +113,7 @@ describe('LiveHubSpot (stubbed network)', () => {
     const svc = hubspotService();
     const args = {
       company: company(), contacts: [], deal: deal(),
-      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new' as const, existingRecordId: null,
+      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new' as const, existingRecordId: null, existingDealId: null,
     };
     const first = await svc.syncCompany(args);
     expect(first.action).toBe('created');
@@ -104,6 +121,44 @@ describe('LiveHubSpot (stubbed network)', () => {
     expect(second.action).toBe('updated');
     expect(second.companyId).toBe(first.companyId);
     expect(state.createCalls).toBe(1); // never a duplicate company in HubSpot
+    // The deal is idempotent too: found via a live vamos_deal_radar_id
+    // search (no existingDealId was passed) and PATCHed, never re-POSTed.
+    expect(second.dealId).toBe(first.dealId);
+    expect(state.dealCreateCalls).toBe(1);
+    expect(state.dealPatchBodies).toHaveLength(1);
+  });
+
+  it('reuses a persisted hubspot_deal_id directly (PATCH, no search) when the caller supplies it', async () => {
+    const state: PortalState = { companyExists: true, createCalls: 0, patchBodies: [], existingProperties: {}, dealExists: true };
+    stubPortal(state);
+    const { hubspotService } = await liveService();
+    const result = await hubspotService().syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 's-2', pipelineId: 'p-1', resolution: 'update-existing', existingRecordId: 'HS-1', existingDealId: 'DL-1',
+    });
+    expect(result.dealId).toBe('DL-1');
+    expect(state.dealCreateCalls).toBe(0); // never POSTs when the deal id is already known
+    expect(state.dealPatchBodies).toHaveLength(1);
+    expect(state.dealPatchBodies![0].properties as Record<string, unknown>).toMatchObject({ dealstage: 's-2', pipeline: 'p-1' });
+  });
+
+  it('a later Radar-stage change updates the same HubSpot deal\'s stage rather than creating a new one', async () => {
+    const state: PortalState = { companyExists: false, createCalls: 0, patchBodies: [], existingProperties: {} };
+    stubPortal(state);
+    const { hubspotService } = await liveService();
+    const svc = hubspotService();
+    const first = await svc.syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 'stage-surfaced', pipelineId: 'p-1', resolution: 'create-new', existingRecordId: null, existingDealId: null,
+    });
+    const second = await svc.syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 'stage-approved', pipelineId: 'p-1', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: first.dealId,
+    });
+    expect(second.dealId).toBe(first.dealId);
+    expect(state.dealCreateCalls).toBe(1); // exactly one deal ever created
+    const lastPatch = state.dealPatchBodies![state.dealPatchBodies!.length - 1].properties as Record<string, unknown>;
+    expect(lastPatch.dealstage).toBe('stage-approved');
   });
 
   it('explicit HubSpot fields win on update: geography and core fields are never overwritten', async () => {
@@ -120,7 +175,7 @@ describe('LiveHubSpot (stubbed network)', () => {
     const { hubspotService } = await liveService();
     const result = await hubspotService().syncCompany({
       company: company({ city: 'Austin', state: 'TX' }), contacts: [], deal: deal(),
-      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new', existingRecordId: null,
+      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new', existingRecordId: null, existingDealId: null,
     });
     expect(result.action).toBe('updated');
     const patch = state.patchBodies[0].properties as Record<string, unknown>;
@@ -147,7 +202,7 @@ describe('LiveHubSpot (stubbed network)', () => {
     const { hubspotService } = await liveService();
     await hubspotService().syncCompany({
       company: company(), contacts: [], deal: deal(),
-      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new', existingRecordId: null,
+      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new', existingRecordId: null, existingDealId: null,
     });
     const patch = state.patchBodies[0].properties as Record<string, unknown>;
     expect(patch).not.toHaveProperty('name');   // explicit → preserved
