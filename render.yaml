@@ -3,6 +3,10 @@
 # In the Render dashboard: New > Blueprint > select this repo/branch.
 # Secrets (marked sync: false) are entered once in the Render
 # dashboard after the first deploy — never committed here.
+#
+# Render is the single canonical production deployment for this app.
+# There is no Vercel deployment of it, and any older Vercel URL is
+# obsolete — see DEPLOYMENT_READINESS.md.
 services:
   - type: web
     name: deal-radar
@@ -20,14 +24,84 @@ services:
         value: /app/server/.data/deal-radar.db
       - key: RUN_SCHEDULER
         value: "true"
-      # Set to this service's real Render URL after the first deploy
-      # (also the CORS-allowed origin).
-      - key: FRONTEND_URL
+      # THE one place this deployment's public origin is stated. It is
+      # not a secret, so it lives here rather than in the dashboard.
+      # Everything else that needs a URL is derived from it:
+      #   CORS origin
+      #   <base>/api/auth/microsoft/callback   (Entra sign-in)
+      #   <base>/api/outlook/callback          (Outlook mailbox consent)
+      #   <base>/api/hubspot/callback          (HubSpot OAuth)
+      # Moving to a custom domain = change this value, redeploy, and
+      # re-register the same three paths in Entra and HubSpot.
+      #
+      # FRONTEND_URL is deliberately NOT set: one process serves both
+      # the API and the built frontend, so it defaults to APP_BASE_URL.
+      # If FRONTEND_URL is still set on this service in the Render
+      # dashboard from an earlier deploy, DELETE it — two sources of
+      # truth is exactly what this variable exists to remove.
+      - key: APP_BASE_URL
+        value: https://deal-radar-sbo8.onrender.com
+
+      # ── Microsoft Entra sign-in ────────────────────────────────
+      # Declared here — with NO values — so the three variables exist
+      # as named, empty slots in the Render dashboard. Without these
+      # entries there is nothing on the service to fill in, and the
+      # symptom is silent: sign-in reports itself as a plain local
+      # deployment, no Microsoft button renders, and nothing says why.
+      # The boot log now names whichever of these is missing (see
+      # microsoftSsoRequirements in server/env.ts).
+      #
+      # ALL THREE are sync: false. The secret obviously must not be
+      # committed; the client and tenant ids are not secret, but they
+      # identify the Vamos directory in a repository that is not the
+      # place to learn it, and keeping the set together means one
+      # rotation touches one screen.
+      #
+      # MICROSOFT_TENANT_ID must be the Vamos directory GUID. The
+      # schema default is `common`, which means "any Microsoft
+      # directory" — SSO deliberately refuses to consider itself
+      # configured on that value rather than letting any Microsoft
+      # account in the world reach the domain check.
+      - key: MICROSOFT_CLIENT_ID
         sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_TENANT_ID
+        sync: false
+      # Both Entra callbacks are DERIVED from APP_BASE_URL above, so
+      # MICROSOFT_SSO_REDIRECT_URI and MICROSOFT_REDIRECT_URI are
+      # deliberately absent. Register these exact URIs in Entra:
+      #   https://deal-radar-sbo8.onrender.com/api/auth/microsoft/callback
+      #   https://deal-radar-sbo8.onrender.com/api/outlook/callback
+
+      # `hybrid` = Microsoft sign-in AND the shared password, both live.
+      #
+      # Set explicitly to hold the default off for exactly one step. The
+      # default is `auto`, which switches to Microsoft-ONLY the instant
+      # the three variables above are filled in — so the first ever
+      # attempt at this flow would be made with the password already
+      # disabled, and an Entra registration that turns out to be wrong
+      # (a redirect URI typo, or the `amr` optional claim not released —
+      # see docs/microsoft-mfa-setup.md) would lock the whole team out
+      # of the tool with no way back in but a redeploy.
+      #
+      # AFTER a real end-to-end Microsoft sign-in succeeds here, delete
+      # this variable. `auto` then completes the cutover on its own and
+      # the shared password stops working. That deletion is the last
+      # step of the migration, not an optional cleanup.
+      - key: AUTH_MODE
+        value: hybrid
+
       # Shared team password — set in the Render dashboard, not here.
+      # Still required while AUTH_MODE=hybrid: it is the way back in if
+      # Microsoft sign-in fails.
       - key: ADMIN_PASSWORD
         sync: false
       # 32+ random chars — set in the Render dashboard, not here.
+      # Microsoft sign-in REQUIRES this: it keys the session cookie
+      # signature. Without it the key is random per process start, so
+      # every restart would silently sign everyone out — hence SSO
+      # counts it as a precondition rather than tolerating it.
       - key: SESSION_SECRET
         sync: false
       # Optional: identifies this app to SEC EDGAR per their request.
