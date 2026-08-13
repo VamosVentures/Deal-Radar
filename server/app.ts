@@ -41,9 +41,24 @@ export function createApp() {
   // credentials: true here, matching fetch credentials on the client,
   // and the admin session cookie's SameSite changed from 'lax' to
   // 'none' + secure (see server/routes/auth.ts).
+  // The allowed origins are derived from APP_BASE_URL (server/env.ts),
+  // so a move to a custom domain is a one-variable change here too.
+  // The Vite dev-server origins are DEVELOPMENT ONLY: in production the
+  // frontend is served by this same process from APP_BASE_URL, so a
+  // localhost entry in a production allowlist could only ever describe
+  // somebody else's machine.
+  const allowedOrigins = [
+    ...new Set([
+      env.APP_BASE_URL,
+      env.FRONTEND_URL,
+      ...(process.env.NODE_ENV === 'production'
+        ? []
+        : ['http://localhost:5173', 'http://127.0.0.1:5173']),
+    ]),
+  ];
   app.use(
     cors({
-      origin: [env.FRONTEND_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: allowedOrigins,
       credentials: false,
     }),
   );

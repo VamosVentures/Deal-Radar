@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { env } from '../env';
+import { env, microsoftSsoRedirectUri } from '../env';
 import { fetchWithRetry } from './http';
 
 /**
@@ -402,7 +402,9 @@ export async function buildAuthorizeUrl(args: {
   const params = new URLSearchParams({
     client_id: env.MICROSOFT_CLIENT_ID!,
     response_type: 'code',
-    redirect_uri: env.MICROSOFT_SSO_REDIRECT_URI!,
+    // Derived from APP_BASE_URL unless explicitly overridden — the same
+    // value the code exchange below sends, which Entra requires.
+    redirect_uri: microsoftSsoRedirectUri(),
     response_mode: 'query',
     scope: SIGN_IN_SCOPES.join(' '),
     state: args.state,
@@ -445,7 +447,8 @@ export async function exchangeCodeForIdToken(args: {
       client_secret: env.MICROSOFT_CLIENT_SECRET!,
       grant_type: 'authorization_code',
       code: args.code,
-      redirect_uri: env.MICROSOFT_SSO_REDIRECT_URI!,
+      // Must byte-match the redirect_uri sent on the authorize request.
+      redirect_uri: microsoftSsoRedirectUri(),
       scope: SIGN_IN_SCOPES.join(' '),
       code_verifier: args.codeVerifier,
     }),

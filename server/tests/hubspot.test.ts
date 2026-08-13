@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '../lib/store';
 import {
   buildCompanyProperties,
   buildContactProperties,
   buildDealProperties,
+  HUBSPOT_OAUTH_SCOPES,
   hubspotService,
 } from '../services/hubspot';
 import { MockHubSpot } from './mocks/hubspot';
@@ -435,5 +436,66 @@ describe('founder contacts written to HubSpot', () => {
     expect(store.raw.mockHubSpot.some((o) => o.type === 'company')).toBe(true);
 
     __setHubSpotServiceForTests(null);
+  });
+});
+
+/**
+ * The permission audit, kept honest by a test.
+ *
+ * A scope list is the one part of an integration that grows quietly:
+ * somebody adds a call, adds the scope it needs, and the portal that
+ * re-authorizes months later grants more than anyone reviewed. So the
+ * set is pinned exactly, and both directions are asserted — nothing
+ * unused stays, nothing new arrives unnoticed.
+ *
+ * Each scope's justification lives next to the list itself in
+ * server/services/hubspot.ts.
+ */
+describe('HubSpot OAuth scopes', () => {
+  it('requests exactly the seven scopes the sync workflow uses', () => {
+    expect([...HUBSPOT_OAUTH_SCOPES].sort()).toEqual([
+      'crm.objects.companies.read',
+      'crm.objects.companies.write',
+      'crm.objects.contacts.read',
+      'crm.objects.contacts.write',
+      'crm.objects.deals.read',
+      'crm.objects.deals.write',
+      'crm.objects.notes.write',
+    ]);
+  });
+
+  it('asks for no permission beyond the reviewed company/contact/deal/note workflow', () => {
+    for (const scope of HUBSPOT_OAUTH_SCOPES) {
+      // Portal-wide and administrative grants: never.
+      expect(scope).not.toMatch(/\.All$/);
+      expect(scope).not.toMatch(/owners|settings|users|automation|timeline|forms|marketing/);
+      // Only these four object types are touched at all.
+      expect(scope).toMatch(/^crm\.objects\.(companies|contacts|deals|notes)\.(read|write)$/);
+    }
+    // Notes are written, never read back — so no read scope for them.
+    expect(HUBSPOT_OAUTH_SCOPES).not.toContain('crm.objects.notes.read');
+  });
+
+  it('sends that same list on the authorize request — no divergence', async () => {
+    // A fresh module registry: server/env.ts resolves credentials once
+    // at load, so the top-level import in this file was made before
+    // these variables existed.
+    process.env.HUBSPOT_CLIENT_ID = 'test-client-id-not-real';
+    process.env.HUBSPOT_CLIENT_SECRET = 'test-client-secret-not-real';
+    process.env.APP_BASE_URL = 'https://deal-radar-sbo8.onrender.com';
+    vi.resetModules();
+    try {
+      const hubspot = await import('../services/hubspot');
+      const storeMod = await import('../lib/store');
+      storeMod.store.resetForTests();
+      const { authUrl } = hubspot.beginHubSpotConnect();
+      const requested = new URL(authUrl!).searchParams.get('scope')!.split(' ');
+      expect(requested.sort()).toEqual([...hubspot.HUBSPOT_OAUTH_SCOPES].sort());
+    } finally {
+      delete process.env.HUBSPOT_CLIENT_ID;
+      delete process.env.HUBSPOT_CLIENT_SECRET;
+      delete process.env.APP_BASE_URL;
+      vi.resetModules();
+    }
   });
 });

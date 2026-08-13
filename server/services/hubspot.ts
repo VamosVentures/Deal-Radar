@@ -1,4 +1,4 @@
-import { env, hubspotOAuthConfigured, notConnected } from '../env';
+import { env, hubspotOAuthConfigured, hubspotRedirectUri, notConnected } from '../env';
 import { store, type TokenRecord } from '../lib/store';
 import { audit } from '../lib/guard';
 import { decrypt, encrypt, randomToken } from '../lib/crypto';
@@ -54,12 +54,62 @@ async function exchangeHubSpotToken(body: Record<string, string>) {
   return (await res.json()) as { access_token: string; refresh_token: string; expires_in: number };
 }
 
-const HUBSPOT_OAUTH_SCOPES = [
+/**
+ * Every HubSpot permission this app asks a portal to grant, and the
+ * feature each one pays for. Audited against the actual calls in this
+ * file — the list below is not aspirational, and nothing is requested
+ * "in case we need it later".
+ *
+ *   crm.objects.companies.read
+ *     The tiered duplicate check that runs BEFORE any create
+ *     (checkDuplicate: by vamos_deal_radar_id, then domain, then name),
+ *     the connection test (verifyConnection), and reading back the
+ *     properties a sync must preserve rather than overwrite.
+ *
+ *   crm.objects.companies.write
+ *     Creating the company record, updating an existing one when the
+ *     reviewer chooses "update existing", and associating it.
+ *
+ *   crm.objects.contacts.read
+ *     The founder-email tier of the duplicate check — the tier that
+ *     catches "this founder is already in the CRM under a different
+ *     company name" — plus contact search from the HubSpot panel, and
+ *     the lookup before creating a contact so an existing person is
+ *     updated instead of duplicated.
+ *
+ *   crm.objects.contacts.write
+ *     Creating and updating the founder contacts that the reviewer
+ *     approved as part of a sync, and associating them to the company
+ *     and deal. Without this, a synced deal has no people on it.
+ *
+ *   crm.objects.deals.read
+ *     Finding the deal previously created for a radar record, so a
+ *     re-sync updates that deal instead of creating a twin, and
+ *     reading the portal's deal pipelines and stages so the reviewer
+ *     picks a real stage rather than typing an id.
+ *
+ *   crm.objects.deals.write
+ *     Creating the deal, updating its stage/pipeline on re-sync, and
+ *     associating it to the company and contacts.
+ *
+ *   crm.objects.notes.write
+ *     Logging "an outreach draft was created, awaiting human review and
+ *     manual send" as a note on the company (logActivity). Write only —
+ *     this app never reads notes back, so no notes.read is requested.
+ *
+ * NOT requested, and deliberately so: any `.All`/owner/pipeline-admin
+ * scope, `crm.objects.notes.read`, marketing/forms/timeline scopes, or
+ * anything that would let this app act outside the reviewed sync
+ * workflow. Adding a scope here without a call in this file that needs
+ * it is a silent permission expansion; the scope test in
+ * server/tests/hubspot.test.ts fails on exactly that.
+ */
+export const HUBSPOT_OAUTH_SCOPES = [
   'crm.objects.companies.read', 'crm.objects.companies.write',
   'crm.objects.contacts.read', 'crm.objects.contacts.write',
   'crm.objects.deals.read', 'crm.objects.deals.write',
   'crm.objects.notes.write',
-];
+] as const;
 
 export function beginHubSpotConnect(): { authUrl: string | null; message: string } {
   if (!hubspotOAuthConfigured()) {
@@ -73,7 +123,8 @@ export function beginHubSpotConnect(): { authUrl: string | null; message: string
   store.save();
   const params = new URLSearchParams({
     client_id: env.HUBSPOT_CLIENT_ID!,
-    redirect_uri: env.HUBSPOT_REDIRECT_URI!,
+    // Derived from APP_BASE_URL unless explicitly overridden.
+    redirect_uri: hubspotRedirectUri(),
     scope: HUBSPOT_OAUTH_SCOPES.join(' '),
     state,
   });
@@ -90,14 +141,15 @@ export async function handleHubSpotCallback(code: string, state: string): Promis
   store.raw.oauthStates.splice(idx, 1);
   const tokens = await exchangeHubSpotToken({
     grant_type: 'authorization_code',
-    redirect_uri: env.HUBSPOT_REDIRECT_URI!,
+    // Must byte-match the redirect_uri sent on the authorize request.
+    redirect_uri: hubspotRedirectUri(),
     code,
   });
   store.raw.tokens = store.raw.tokens.filter((t) => t.provider !== 'hubspot');
   store.raw.tokens.push({
     provider: 'hubspot',
     account: env.HUBSPOT_PORTAL_ID ?? 'connected portal',
-    scopes: HUBSPOT_OAUTH_SCOPES,
+    scopes: [...HUBSPOT_OAUTH_SCOPES],
     cipher: encrypt(tokens.access_token),
     refreshCipher: encrypt(tokens.refresh_token),
     expiresAt: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),

@@ -9,24 +9,57 @@ import crypto from 'node:crypto';
  */
 const envSchema = z.object({
   PORT: z.coerce.number().default(8787),
-  FRONTEND_URL: z.string().default('http://localhost:5173'),
+  /**
+   * THE public origin this application is reached at — scheme, host,
+   * and port, no path and no trailing slash. This is the ONE place a
+   * deployment states where it lives:
+   *
+   *   local development   (unset)  -> http://localhost:<PORT>
+   *   Render production            -> https://deal-radar-sbo8.onrender.com
+   *   a future custom domain       -> https://dealradar.vamosventures.com
+   *
+   * Every OAuth callback this app hands to Microsoft and HubSpot, and
+   * the origin CORS allows, are derived from it (see callbackUrl()
+   * below). Moving to a custom domain is therefore a one-variable
+   * change here plus re-registering the same three paths with the two
+   * identity providers — never a code change and never a sweep through
+   * the repository for a hard-coded hostname.
+   *
+   * Left unset on purpose in development, where the Vite dev server
+   * (:5173) and this API (:8787) are genuinely two different origins.
+   */
+  APP_BASE_URL: z.string().url().optional(),
+  /**
+   * Where the browser-facing app is served from, when that is NOT the
+   * same origin as this API — i.e. local development, where Vite runs
+   * on :5173. In production the server serves the built bundle itself,
+   * so this is left unset and defaults to APP_BASE_URL. Setting it in
+   * production would defeat the point of having one base URL.
+   */
+  FRONTEND_URL: z.string().optional(),
 
   HUBSPOT_ACCESS_TOKEN: z.string().optional(),
   HUBSPOT_PORTAL_ID: z.string().optional(),
   HUBSPOT_CLIENT_ID: z.string().optional(),
   HUBSPOT_CLIENT_SECRET: z.string().optional(),
+  /** Optional override; defaults to APP_BASE_URL + /api/hubspot/callback. */
   HUBSPOT_REDIRECT_URI: z.string().optional(),
 
   MICROSOFT_CLIENT_ID: z.string().optional(),
   MICROSOFT_CLIENT_SECRET: z.string().optional(),
   MICROSOFT_TENANT_ID: z.string().default('common'),
-  /** Outlook mailbox consent callback — unchanged, kept separate from sign-in. */
+  /**
+   * Outlook mailbox consent callback — kept separate from sign-in.
+   * Optional override; defaults to APP_BASE_URL + /api/outlook/callback.
+   */
   MICROSOFT_REDIRECT_URI: z.string().optional(),
   /**
    * Sign-in (OpenID Connect) callback. Deliberately a DIFFERENT URI from
    * MICROSOFT_REDIRECT_URI: the two flows request different scopes and
    * mean different things, and a shared callback would let a mailbox
    * consent response be replayed into the sign-in handler.
+   *
+   * Optional override; defaults to APP_BASE_URL + /api/auth/microsoft/callback.
    */
   MICROSOFT_SSO_REDIRECT_URI: z.string().optional(),
   /**
@@ -119,7 +152,100 @@ if (!parsed.success) {
   throw new Error(`Invalid environment configuration for: ${fields}`);
 }
 
-export const env = parsed.data;
+// ── Public origin + OAuth callbacks ──────────────────────────────
+
+/** `https://host/` and `https://host` must resolve to the same callbacks. */
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+/**
+ * The origin an administrator ACTUALLY configured, or null.
+ *
+ * Kept separate from the resolved value below because the difference
+ * matters: "you told us where this app lives" is a precondition for
+ * offering an OAuth flow at all, while "we fell back to localhost" is
+ * not. The `*Configured()` predicates below therefore test THIS, so a
+ * deployment that never states its origin cannot silently hand
+ * Microsoft or HubSpot a localhost callback and dead-end its users.
+ */
+const configuredBaseUrl = parsed.data.APP_BASE_URL ? stripTrailingSlash(parsed.data.APP_BASE_URL) : null;
+
+/** Development fallbacks: this API, and the Vite dev server in front of it. */
+const LOCAL_API_ORIGIN = `http://localhost:${parsed.data.PORT}`;
+const LOCAL_WEB_ORIGIN = 'http://localhost:5173';
+
+export const env = {
+  ...parsed.data,
+  APP_BASE_URL: configuredBaseUrl ?? LOCAL_API_ORIGIN,
+  /**
+   * Same origin as the API in production (one process serves both), the
+   * Vite dev server locally. An explicit FRONTEND_URL still wins, which
+   * is what keeps a split-origin deployment possible without a code
+   * change.
+   */
+  FRONTEND_URL: parsed.data.FRONTEND_URL
+    ? stripTrailingSlash(parsed.data.FRONTEND_URL)
+    : (configuredBaseUrl ?? LOCAL_WEB_ORIGIN),
+};
+
+/** True when APP_BASE_URL was set, rather than defaulted to localhost. */
+export function appBaseUrlConfigured(): boolean {
+  return configuredBaseUrl !== null;
+}
+
+/**
+ * The exact callback paths registered with the identity providers.
+ *
+ * These are literals, not configuration, on purpose: they are the paths
+ * the routers actually serve (server/routes/auth.ts,
+ * server/routes/outlook.ts, server/routes/hubspot.ts) and the paths
+ * allow-listed as public in server/app.ts. A deployment changes its
+ * HOST via APP_BASE_URL; the paths are part of the application.
+ */
+export const CALLBACK_PATHS = {
+  microsoftSso: '/api/auth/microsoft/callback',
+  outlook: '/api/outlook/callback',
+  hubspot: '/api/hubspot/callback',
+} as const;
+
+export type CallbackKind = keyof typeof CALLBACK_PATHS;
+
+/** The absolute callback URL for `kind` on this deployment's origin. */
+export function callbackUrl(kind: CallbackKind): string {
+  return `${env.APP_BASE_URL}${CALLBACK_PATHS[kind]}`;
+}
+
+/**
+ * The three redirect URIs actually sent to the providers.
+ *
+ * An explicit *_REDIRECT_URI still wins — it is the escape hatch for a
+ * deployment sitting behind a proxy that rewrites paths — but nothing
+ * needs to set one, and production should not.
+ */
+export function microsoftSsoRedirectUri(): string {
+  return env.MICROSOFT_SSO_REDIRECT_URI ?? callbackUrl('microsoftSso');
+}
+export function outlookRedirectUri(): string {
+  return env.MICROSOFT_REDIRECT_URI ?? callbackUrl('outlook');
+}
+export function hubspotRedirectUri(): string {
+  return env.HUBSPOT_REDIRECT_URI ?? callbackUrl('hubspot');
+}
+
+/**
+ * Loud, non-fatal warning when a production process does not know its
+ * own address. Non-fatal deliberately: refusing to boot would take a
+ * running deployment down over configuration that only affects OAuth
+ * flows which are, in that state, already reported as not configured.
+ */
+if (process.env.NODE_ENV === 'production' && !configuredBaseUrl) {
+  console.warn(
+    '[config] APP_BASE_URL is not set. OAuth callbacks would be generated against '
+    + `${LOCAL_API_ORIGIN}, so Microsoft sign-in, Outlook consent, and HubSpot OAuth are `
+    + 'reported as not configured. Set APP_BASE_URL to this deployment’s public origin.',
+  );
+}
 
 /** Resolve the AI key: AI_API_KEY wins, else the provider-specific var. */
 export function aiKey(): string | undefined {
@@ -129,9 +255,17 @@ export function aiKey(): string | undefined {
   return undefined;
 }
 
-/** True when HubSpot OAuth is configured (connection still needs the user flow). */
+/**
+ * True when HubSpot OAuth is configured (connection still needs the
+ * user flow). The redirect URI counts as configured when EITHER it was
+ * set explicitly or APP_BASE_URL was — see appBaseUrlConfigured().
+ */
 export function hubspotOAuthConfigured(): boolean {
-  return !!(env.HUBSPOT_CLIENT_ID && env.HUBSPOT_CLIENT_SECRET && env.HUBSPOT_REDIRECT_URI);
+  return !!(
+    env.HUBSPOT_CLIENT_ID &&
+    env.HUBSPOT_CLIENT_SECRET &&
+    (env.HUBSPOT_REDIRECT_URI || appBaseUrlConfigured())
+  );
 }
 
 export function schedulerEnabled(): boolean {
@@ -143,7 +277,7 @@ export function outlookConfigured(): boolean {
   return !!(
     env.MICROSOFT_CLIENT_ID &&
     env.MICROSOFT_CLIENT_SECRET &&
-    env.MICROSOFT_REDIRECT_URI &&
+    (env.MICROSOFT_REDIRECT_URI || appBaseUrlConfigured()) &&
     env.SESSION_SECRET
   );
 }
@@ -170,20 +304,59 @@ export function microsoftTenantIsSingleTenant(): boolean {
 }
 
 /**
+ * Every precondition for Microsoft sign-in, split into the ones this
+ * process has and the ones it does not.
+ *
+ * This exists because of how the failure actually presents itself: the
+ * sign-in screen simply does not render a Microsoft button, and every
+ * status field reads like a deployment that was never meant to have
+ * one. Somebody then has to re-derive, from five `&&`ed conditions,
+ * which single variable is missing. Naming them instead turns a
+ * bisection into reading one line of the boot log.
+ *
+ * The strings are the EXACT variable names an operator types into a
+ * hosting dashboard, because that is the next thing they will do.
+ * Nothing here reads a value — only whether one is present and, for the
+ * tenant, well-formed — so this is safe to log and safe to show.
+ */
+export function microsoftSsoRequirements(): { met: string[]; unmet: string[] } {
+  const checks: Array<readonly [string, boolean]> = [
+    ['MICROSOFT_CLIENT_ID', !!env.MICROSOFT_CLIENT_ID],
+    ['MICROSOFT_CLIENT_SECRET', !!env.MICROSOFT_CLIENT_SECRET],
+    // Named with its constraint: `common` is *set*, and is still wrong.
+    // "MICROSOFT_TENANT_ID is missing" would send somebody to check a
+    // variable that is right there in the dashboard.
+    ['MICROSOFT_TENANT_ID (a single-tenant directory GUID, not "common")', microsoftTenantIsSingleTenant()],
+    // Either the callback was stated outright or the deployment stated
+    // its public origin, which is enough to derive it. Neither means
+    // nobody has said where this app lives, and a sign-in button would
+    // send people to a redirect_uri Entra has never seen.
+    [
+      'APP_BASE_URL (or an explicit MICROSOFT_SSO_REDIRECT_URI)',
+      !!(env.MICROSOFT_SSO_REDIRECT_URI || appBaseUrlConfigured()),
+    ],
+    ['SESSION_SECRET', !!env.SESSION_SECRET],
+  ];
+  return {
+    met: checks.filter(([, ok]) => ok).map(([name]) => name),
+    unmet: checks.filter(([, ok]) => !ok).map(([name]) => name),
+  };
+}
+
+/**
  * Microsoft SSO is configured when an Entra app, a single-tenant
  * directory id, a sign-in callback, and a durable SESSION_SECRET all
  * exist. Anything short of that and sign-in stays local — reported to
  * the UI as "Awaiting Microsoft administrator configuration" rather
  * than rendered as a button that cannot work.
+ *
+ * Derived from microsoftSsoRequirements() rather than repeating the
+ * conditions: the list and the gate cannot disagree if there is only
+ * one of them, so a requirement can never be added to the diagnostic
+ * without also being enforced.
  */
 export function microsoftSsoConfigured(): boolean {
-  return !!(
-    env.MICROSOFT_CLIENT_ID &&
-    env.MICROSOFT_CLIENT_SECRET &&
-    env.MICROSOFT_SSO_REDIRECT_URI &&
-    env.SESSION_SECRET &&
-    microsoftTenantIsSingleTenant()
-  );
+  return microsoftSsoRequirements().unmet.length === 0;
 }
 
 /**
@@ -236,6 +409,55 @@ export function localLoginAvailable(): boolean {
 /** The Microsoft button is offered only when the flow can actually complete. */
 export function microsoftLoginAvailable(): boolean {
   return effectiveAuthMode() !== 'local' && microsoftSsoConfigured();
+}
+
+/**
+ * Say at boot, in the hosting platform's log, whether Microsoft sign-in
+ * will be offered — and if not, exactly what is missing.
+ *
+ * Placed here rather than beside the APP_BASE_URL warning above because
+ * it calls microsoftTenantIsSingleTenant(), whose TENANT_GUID regex is a
+ * `const` declared further up this file: running it any earlier would
+ * hit the temporal dead zone.
+ *
+ * When SSO *is* live it logs the redirect URI it will send. That is the
+ * one string that has to byte-match a value registered in Entra, it is
+ * not a secret, and comparing two strings by eye beats debugging a
+ * consent screen that only ever says the request is invalid.
+ *
+ * Silent in the one case that is not actionable: a deployment with no
+ * Microsoft configuration at all and no explicit request for it is the
+ * documented default, and a warning that is always on is one nobody
+ * reads. A PARTIAL configuration is never silent — that is somebody
+ * halfway through a handover, which is exactly who needs the list.
+ */
+if (process.env.NODE_ENV === 'production') {
+  const { unmet } = microsoftSsoRequirements();
+  const requested = env.AUTH_MODE === 'microsoft' || env.AUTH_MODE === 'hybrid';
+  // "Somebody has started this" must be judged on MICROSOFT-specific
+  // variables only. Two of the five requirements — APP_BASE_URL and
+  // SESSION_SECRET — are set by every production deployment for
+  // unrelated reasons, so counting met requirements generally would
+  // make this warning fire on every local-only deployment forever.
+  const handoverStarted = !!(
+    env.MICROSOFT_CLIENT_ID
+    || env.MICROSOFT_CLIENT_SECRET
+    || env.MICROSOFT_SSO_REDIRECT_URI
+    || microsoftTenantIsSingleTenant()
+  );
+  if (unmet.length === 0) {
+    console.info(
+      `[config] Microsoft sign-in is configured (AUTH_MODE=${env.AUTH_MODE}, effective mode `
+      + `${effectiveAuthMode()}). Entra must have this EXACT redirect URI registered: `
+      + microsoftSsoRedirectUri(),
+    );
+  } else if (requested || handoverStarted) {
+    console.warn(
+      '[config] Microsoft sign-in is NOT available — the sign-in screen will not show the '
+      + `Microsoft button. Missing: ${unmet.join(', ')}. `
+      + 'Set these on this service and redeploy. Values are never read or logged here.',
+    );
+  }
 }
 
 /** AI is live when a provider and key are configured; otherwise the local template answers. */

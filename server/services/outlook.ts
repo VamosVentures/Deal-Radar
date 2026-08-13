@@ -1,4 +1,4 @@
-import { env, notConnected, outlookConfigured } from '../env';
+import { env, notConnected, outlookConfigured, outlookRedirectUri } from '../env';
 import { store, type TokenRecord } from '../lib/store';
 import { audit } from '../lib/guard';
 import { decrypt, encrypt } from '../lib/crypto';
@@ -177,7 +177,8 @@ class LiveOutlook implements OutlookService {
     const params = new URLSearchParams({
       client_id: env.MICROSOFT_CLIENT_ID!,
       response_type: 'code',
-      redirect_uri: env.MICROSOFT_REDIRECT_URI!,
+      // Derived from APP_BASE_URL unless explicitly overridden.
+      redirect_uri: outlookRedirectUri(),
       response_mode: 'query',
       scope: SCOPES.join(' '),
       state,
@@ -196,7 +197,8 @@ class LiveOutlook implements OutlookService {
     const tokens = await this.exchange({
       grant_type: 'authorization_code',
       code,
-      redirect_uri: env.MICROSOFT_REDIRECT_URI!,
+      // Must byte-match the redirect_uri sent on the authorize request.
+      redirect_uri: outlookRedirectUri(),
     });
     const me = await this.graph<{ mail?: string; userPrincipalName: string }>(
       '/me', tokens.access_token,

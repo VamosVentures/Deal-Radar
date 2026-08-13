@@ -169,7 +169,7 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     expect(JSON.stringify(auditRes.body)).not.toContain('P.S. Edited by a human');
   });
 
-  it('sync is idempotent: repeated clicks and re-submissions never create duplicate companies', async () => {
+  it('sync is idempotent: repeated clicks and re-submissions never create duplicate companies or deals', async () => {
     // Same Idempotency-Key (double-click) → blocked outright.
     const first = await agent.post('/api/hubspot/sync-company').set('Idempotency-Key', 'double-click').send(syncPayload());
     expect(first.status).toBe(200);
@@ -183,6 +183,32 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     expect(third.body.action).toBe('updated');
     expect(third.body.companyId).toBe(first.body.companyId);
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'company')).toHaveLength(1);
+    // The deal is idempotent too — the HubSpot deal id from the first
+    // sync is persisted against the radar record and reused, never
+    // re-created on later syncs.
+    expect(third.body.dealId).toBe(first.body.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
+  });
+
+  it('a later Radar-stage change updates the same HubSpot deal\'s stage rather than creating a new deal', async () => {
+    const first = await agent.post('/api/hubspot/sync-company')
+      .set('Idempotency-Key', 'stage-1')
+      .send({ ...syncPayload(), radarStage: 'Approved to Track' });
+    expect(first.status).toBe(200);
+
+    const second = await agent.post('/api/hubspot/sync-company')
+      .set('Idempotency-Key', 'stage-2')
+      .send({ ...syncPayload(), radarStage: 'Active Diligence' });
+    expect(second.status).toBe(200);
+
+    // Same company, same deal — only its stage moved.
+    expect(second.body.companyId).toBe(first.body.companyId);
+    expect(second.body.dealId).toBe(first.body.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'company')).toHaveLength(1);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
+
+    const dealObj = store.raw.mockHubSpot.find((o) => o.id === first.body.dealId)!;
+    expect(dealObj.properties.dealstage).toBe('test-active-diligence');
   });
 
   it('rejects a sync payload whose demographics lack a source (guardrail over HTTP)', async () => {
