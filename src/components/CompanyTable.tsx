@@ -22,7 +22,7 @@ import { DEMO_MODE } from '../lib/demoMode';
 import { confirmLeaveUnsavedNotes } from '../lib/unsavedNotes';
 import { useCompanies } from '../store/companies';
 import { btnGhost, btnPrimary } from './Modal';
-import { api, ApiError, type PossibleDuplicateEntry, type RefreshResearchResult } from '../lib/api';
+import { api, ApiError, type PossibleDuplicateEntry } from '../lib/api';
 import type { CompanyStatus } from '../../shared/integrations';
 import { meetsOperatingCompanyStandard } from '../../shared/qualification';
 
@@ -824,7 +824,6 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
   const [modal, setModal] = useState<'hubspot' | 'outreach' | null>(null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [statusNote, setStatusNote] = useState<string | null>(null);
-  const [refreshResult, setRefreshResult] = useState<RefreshResearchResult | null>(null);
 
   const setStatus = async (status: CompanyStatus, then?: () => void) => {
     setStatusBusy(status);
@@ -833,34 +832,6 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
       await api.imports.setStatus(c.id, status, 'team');
       await refresh();
       then?.();
-    } catch (e) {
-      setStatusNote(e instanceof ApiError ? e.message : (e as Error).message);
-    } finally {
-      setStatusBusy(null);
-    }
-  };
-
-  const markReviewed = async () => {
-    setStatusBusy('Mark reviewed');
-    setStatusNote(null);
-    try {
-      await api.imports.refresh(c.id, 'team');
-      await refresh();
-    } catch (e) {
-      setStatusNote(e instanceof ApiError ? e.message : (e as Error).message);
-    } finally {
-      setStatusBusy(null);
-    }
-  };
-
-  const refreshLiveResearch = async () => {
-    setStatusBusy('Refresh live research');
-    setStatusNote(null);
-    setRefreshResult(null);
-    try {
-      const result = await api.imports.refreshResearch(c.id, 'team');
-      setRefreshResult(result);
-      await refresh();
     } catch (e) {
       setStatusNote(e instanceof ApiError ? e.message : (e as Error).message);
     } finally {
@@ -928,7 +899,7 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
 
   const nextStep =
     fit.exceptions.length > 0 ? 'Route to partner review — a policy exception needs sign-off before anything else.'
-    : m?.stale ? 'Stale — this record has gone unreviewed too long. Refresh it, or move it to Monitor / Passed / Research Needed.'
+    : m?.stale ? 'Stale — this record has gone unreviewed too long. Select it in the queue and use a bulk action to move it to Monitor / Passed / Research Needed.'
     : m?.reviewStatus === 'New' || m?.reviewStatus === 'Awaiting Review' ? 'Complete the first review: verify the website and pitch, classify the subcategory, then decide whether to track.'
     : fit.score >= HOT_THRESHOLD ? 'Prioritize: assign an owner, approve outreach, and add to HubSpot.'
     : fit.score >= TRACK_THRESHOLD ? `Track actively and close the weakest evidence gap (${[...fit.components].sort((a, b) => a.points / a.max - b.points / b.max)[0].label.toLowerCase()}).`
@@ -939,49 +910,6 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
 
   return (
     <div>
-      {refreshResult && (
-        <div className="mb-4 border border-verde/40 border-l-[3px] border-l-verde bg-verde-soft/30 px-3 py-2.5 text-xs">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="font-mono uppercase tracking-wider text-slate-mid">
-              What changed — live research refresh ({refreshResult.refreshedAt})
-            </span>
-            <button className="text-slate-mid hover:text-ink" onClick={() => setRefreshResult(null)}>Dismiss ✕</button>
-          </div>
-          <div className="mb-1.5 font-semibold text-ink">
-            VamosVentures Fit Score: {refreshResult.oldScore ? `${refreshResult.oldScore.score.toFixed(1)} → ` : ''}{refreshResult.newScore.score.toFixed(1)}
-            {refreshResult.oldScore && refreshResult.oldScore.score === refreshResult.newScore.score ? ' (unchanged)' : ''}
-            <span className="ml-1.5 font-mono text-[10px] font-normal text-slate-mid">model {refreshResult.newScore.version}</span>
-          </div>
-          <ul className="space-y-1 text-ink/80">
-            <li><span className="font-semibold">{refreshResult.newEvidenceCount}</span> new evidence item(s){refreshResult.newEvidenceCount > 0 && ':'}</li>
-            {refreshResult.newEvidence.map((e, i) => (
-              <li key={i} className="pl-3">{e.claim} — {e.source} (<a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">source</a>)</li>
-            ))}
-            {refreshResult.updatedFields.length > 0 && (
-              <li><span className="font-semibold">{refreshResult.updatedFields.length}</span> field(s) updated:
-                <ul className="pl-3">
-                  {refreshResult.updatedFields.map((f, i) => <li key={i}>{f.field}: "{f.from}" → "{f.to}" (via {f.source})</li>)}
-                </ul>
-              </li>
-            )}
-            <li><span className="font-semibold">{refreshResult.unchangedFieldCount}</span> field(s) unchanged</li>
-            {refreshResult.conflictingFields.length > 0 && (
-              <li className="text-alerta"><span className="font-semibold">{refreshResult.conflictingFields.length}</span> conflicting field(s) — kept existing value, requires human review:
-                <ul className="pl-3">
-                  {refreshResult.conflictingFields.map((f, i) => <li key={i}>{f.field}: kept "{f.existing}", source said "{f.attempted}" (via {f.source})</li>)}
-                </ul>
-              </li>
-            )}
-            {refreshResult.sourcesRan.length > 0 && <li>Ran successfully: {refreshResult.sourcesRan.map((s) => `${s.sourceId} (${s.found} match${s.found === 1 ? '' : 'es'})`).join(', ')}</li>}
-            {refreshResult.sourcesFailed.length > 0 && <li className="text-alerta">Failed: {refreshResult.sourcesFailed.map((s) => s.sourceId).join(', ')}</li>}
-            {refreshResult.sourcesSkipped.length > 0 && <li className="text-slate-mid">Skipped: {refreshResult.sourcesSkipped.map((s) => `${s.sourceId} (${s.detail})`).join('; ')}</li>}
-            {refreshResult.fieldsRequiringHumanReview.length > 0 && (
-              <li className="text-alerta">Requires human review: {refreshResult.fieldsRequiringHumanReview.join('; ')}</li>
-            )}
-          </ul>
-        </div>
-      )}
-
       <div className="lg:flex lg:items-start lg:gap-6">
         {/* ── Inspector rail: score, status, and every action, always in view. ── */}
         <aside className="mb-5 lg:sticky lg:top-12 lg:mb-0 lg:w-60 lg:shrink-0">
@@ -1063,46 +991,6 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
                   onDone={refresh}
                 />
               </div>
-            </div>
-          </div>
-
-          <div className="mt-3 border border-line bg-panel px-3.5 py-3">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-mid">Review status</div>
-            <div className="mt-2 flex flex-col gap-1.5">
-              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={markReviewed} title="Stamps today as the date this record was last looked at, which clears the Stale flag. It does not change the queue status — use Send for research, Monitor, or Pass for that.">
-                {statusBusy === 'Mark reviewed' ? 'Stamping…' : 'Stamp reviewed today'}
-              </button>
-              {/*
-                Previously labelled "Mark reviewed", which read as a
-                decision. It only stamps the last-reviewed date (clearing
-                staleness) — the queue status is unchanged, so a reviewer
-                clicked it and saw the "Awaiting review" badge stay put
-                with nothing explaining why. The three buttons below are
-                the ones that actually move a company through the queue.
-              */}
-              <p className="text-[10px] leading-relaxed text-slate-mid">
-                Records the date only — clears Stale. To move this company through the queue, use one of the three below.
-              </p>
-              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={refreshLiveResearch} title="Re-query live sources for this company and report what changed">
-                {statusBusy === 'Refresh live research' ? 'Researching…' : 'Refresh live research'}
-              </button>
-              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={() => setStatus('Research Needed')}>
-                {statusBusy === 'Research Needed' ? 'Saving…' : 'Send for research'}
-              </button>
-              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={() => setStatus('Monitor')}>
-                {statusBusy === 'Monitor' ? 'Saving…' : 'Monitor'}
-              </button>
-              <button className={`${btnGhost} w-full`} disabled={!!statusBusy} onClick={() => setStatus('Passed')}>
-                {statusBusy === 'Passed' ? 'Saving…' : 'Pass'}
-              </button>
-              <button
-                className={`${btnGhost} w-full`}
-                disabled={!!statusBusy}
-                onClick={() => setStatus('Acquired / Inactive')}
-                title="The company itself is gone — acquired, shut down, or otherwise no longer operating independently. Distinct from Pass, which is Vamos's own decision to decline."
-              >
-                {statusBusy === 'Acquired / Inactive' ? 'Saving…' : 'Mark acquired / inactive'}
-              </button>
             </div>
           </div>
 
