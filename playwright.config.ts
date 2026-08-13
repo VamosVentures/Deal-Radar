@@ -28,7 +28,10 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'npx tsx server/index.ts',
+      // Wipes the isolated E2E data directory before the backend boots —
+      // see e2e/reset-data-dir.ts for why this has to happen here rather
+      // than in global-teardown.ts.
+      command: 'npx tsx e2e/reset-data-dir.ts && npx tsx server/index.ts',
       port: E2E_BACKEND_PORT,
       reuseExistingServer: false,
       timeout: 30_000,
