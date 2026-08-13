@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { aiConfigured, env } from '../env';
 import { store } from '../lib/store';
 import { wrap } from './helpers';
-import { hubspotAuthType, hubspotServiceIfAvailable } from '../services/hubspot';
+import { HUBSPOT_OAUTH_SCOPES, hubspotAuthType, hubspotServiceIfAvailable } from '../services/hubspot';
 import { outlookService } from '../services/outlook';
 import { verifyAiConnection } from '../services/analysis';
 import { refreshLog } from '../services/refresh';
@@ -99,7 +99,10 @@ statusRouter.get('/integrations/status', wrap(async (_req, res) => {
       connected: hsStatus === 'Connected',
       account: hsService ? (env.HUBSPOT_PORTAL_ID ?? hubspotAuthType()) : null,
       detail: hsDetail,
-      permissions: hsService ? ['crm.objects.companies', 'crm.objects.contacts', 'crm.objects.deals', 'crm.objects.notes'] : [],
+      // The scopes actually requested, read from the one list that
+      // builds the authorize URL — not a hand-maintained summary that
+      // can drift into understating what was granted.
+      permissions: hsService ? [...HUBSPOT_OAUTH_SCOPES] : [],
       lastConnectedAt: null,
     },
     outlook: {
