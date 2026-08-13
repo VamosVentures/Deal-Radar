@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createApp } from '../app';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
@@ -829,10 +830,22 @@ describe('persistence', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-notes-'));
     const dbPath = path.join(dir, 'notes-restart.db');
     const projectRoot = path.resolve(__dirname, '..', '..');
+    // Windows requires a file:// URL for a dynamic import() with an
+    // absolute path — a raw 'C:\...' string isn't a valid ESM specifier.
+    const projectRootUrl = pathToFileURL(projectRoot).href;
     const runScript = (body: string): string => {
       const file = path.join(dir, `step-${Math.random().toString(36).slice(2)}.mts`);
       fs.writeFileSync(file, body);
-      return execFileSync('npx', ['tsx', file], {
+      // Invoke tsx's own CLI script directly via the Node binary, rather
+      // than 'npx tsx' — 'npx' is a .cmd shim on Windows, not a .exe, and
+      // spawning it needs either shell: true (which Node now warns is
+      // unsafe with an args array — DEP0190) or a platform-specific
+      // 'npx.cmd' resolution (which Node refuses to run directly as a
+      // hardened-by-default guard against batch-file argument injection).
+      // Going straight to Node with tsx's CLI script avoids the shell
+      // entirely, on every OS.
+      const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+      return execFileSync(process.execPath, [tsxCli, file], {
         cwd: projectRoot,
         env: { ...process.env, DATABASE_FILE: dbPath, DATA_FILE: dbPath.replace('.db', '-kv.db'), NODE_ENV: 'restart-test' },
         encoding: 'utf8',
@@ -841,8 +854,8 @@ describe('persistence', () => {
 
     // Process 1: create a company, write a note and an archived note, exit.
     runScript(`
-      const { saveCompany } = await import('${projectRoot}/server/db/repos/companies');
-      const { createNote, archiveNote } = await import('${projectRoot}/server/db/repos/notes');
+      const { saveCompany } = await import('${projectRootUrl}/server/db/repos/companies');
+      const { createNote, archiveNote } = await import('${projectRootUrl}/server/db/repos/notes');
       saveCompany(${JSON.stringify(fixtureCompany({ id: 'restart-note-co' }))}, { origin: 'user-entered', source: 'notes-restart-test' });
       const reviewer = { id: 'local-admin', label: 'Local administrator', source: 'local-admin' };
       createNote('restart-note-co', 'Survives a restart.\\n\\nWith <markup> intact.', reviewer);
@@ -853,7 +866,7 @@ describe('persistence', () => {
 
     // Process 2: a completely new process reads them back off disk.
     const out = runScript(`
-      const { listNotes } = await import('${projectRoot}/server/db/repos/notes');
+      const { listNotes } = await import('${projectRootUrl}/server/db/repos/notes');
       const active = listNotes('restart-note-co');
       const all = listNotes('restart-note-co', { includeArchived: true });
       console.log(JSON.stringify({
@@ -877,10 +890,22 @@ describe('persistence', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'radar-notes-backup-'));
     const dbPath = path.join(dir, 'notes-backup.db');
     const projectRoot = path.resolve(__dirname, '..', '..');
+    // Windows requires a file:// URL for a dynamic import() with an
+    // absolute path — a raw 'C:\...' string isn't a valid ESM specifier.
+    const projectRootUrl = pathToFileURL(projectRoot).href;
     const runScript = (body: string): string => {
       const file = path.join(dir, `step-${Math.random().toString(36).slice(2)}.mts`);
       fs.writeFileSync(file, body);
-      return execFileSync('npx', ['tsx', file], {
+      // Invoke tsx's own CLI script directly via the Node binary, rather
+      // than 'npx tsx' — 'npx' is a .cmd shim on Windows, not a .exe, and
+      // spawning it needs either shell: true (which Node now warns is
+      // unsafe with an args array — DEP0190) or a platform-specific
+      // 'npx.cmd' resolution (which Node refuses to run directly as a
+      // hardened-by-default guard against batch-file argument injection).
+      // Going straight to Node with tsx's CLI script avoids the shell
+      // entirely, on every OS.
+      const tsxCli = path.join(projectRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+      return execFileSync(process.execPath, [tsxCli, file], {
         cwd: projectRoot,
         env: { ...process.env, DATABASE_FILE: dbPath, DATA_FILE: dbPath.replace('.db', '-kv.db'), NODE_ENV: 'restart-test' },
         encoding: 'utf8',
@@ -889,10 +914,10 @@ describe('persistence', () => {
 
     // Write notes, back up, then destroy the notes in the live database.
     const backupOut = runScript(`
-      const { saveCompany } = await import('${projectRoot}/server/db/repos/companies');
-      const { createNote, archiveNote, listNotes } = await import('${projectRoot}/server/db/repos/notes');
-      const { createBackup } = await import('${projectRoot}/server/services/backup');
-      const { getDb } = await import('${projectRoot}/server/db/client');
+      const { saveCompany } = await import('${projectRootUrl}/server/db/repos/companies');
+      const { createNote, archiveNote, listNotes } = await import('${projectRootUrl}/server/db/repos/notes');
+      const { createBackup } = await import('${projectRootUrl}/server/services/backup');
+      const { getDb } = await import('${projectRootUrl}/server/db/client');
       saveCompany(${JSON.stringify(fixtureCompany({ id: 'backup-note-co' }))}, { origin: 'user-entered', source: 'notes-backup-test' });
       const reviewer = { id: 'local-admin', label: 'Local administrator', source: 'local-admin' };
       createNote('backup-note-co', 'Present in the backup.', reviewer);
@@ -909,7 +934,7 @@ describe('persistence', () => {
 
     // Restore, then read the notes back in yet another process.
     const restoreOut = runScript(`
-      const { restoreBackup } = await import('${projectRoot}/server/services/backup');
+      const { restoreBackup } = await import('${projectRootUrl}/server/services/backup');
       const result = await restoreBackup(${JSON.stringify(file)}, 'notes-backup-test');
       if (!result.ok) throw new Error('restore failed: ' + result.error);
       console.log('RESTORED');
@@ -917,7 +942,7 @@ describe('persistence', () => {
     expect(restoreOut).toContain('RESTORED');
 
     const verifyOut = runScript(`
-      const { listNotes } = await import('${projectRoot}/server/db/repos/notes');
+      const { listNotes } = await import('${projectRootUrl}/server/db/repos/notes');
       const all = listNotes('backup-note-co', { includeArchived: true });
       console.log(JSON.stringify({
         total: all.length,
