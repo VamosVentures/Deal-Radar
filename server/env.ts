@@ -137,14 +137,47 @@ const envSchema = z.object({
 });
 
 /**
+ * Values that are COMPARED or used as key material, where trimming
+ * would silently change behaviour instead of fixing a typo:
+ *
+ *   SESSION_SECRET  derives the session-cookie signing key and the
+ *                   token-encryption key (scryptSync, bottom of this
+ *                   file). Trimming a deployed value that happens to
+ *                   carry stray whitespace would rotate both on the
+ *                   next deploy — every session invalidated and every
+ *                   stored Outlook token permanently undecryptable.
+ *   ADMIN_PASSWORD  compared against what somebody types. Trimming it
+ *                   changes which strings are accepted.
+ *
+ * Everything else is an identifier, a URL, or a credential handed
+ * verbatim to another service, where surrounding whitespace is only
+ * ever a paste artefact.
+ */
+const UNTRIMMED_KEYS = new Set(['SESSION_SECRET', 'ADMIN_PASSWORD']);
+
+/**
  * A freshly-copied .env.example ships every key present but blank
  * (e.g. `AI_PROVIDER=`) — once .env is actually loaded (via
  * --env-file-if-exists, see package.json), that arrives as an empty
  * string, which fails `.optional()` validation (undefined ≠ "").
  * Treat blank as unset so "boots fine with zero credentials" holds
  * for a literal copy of the example file, not just a hand-trimmed one.
+ *
+ * Values are trimmed first, which makes whitespace-only count as blank
+ * too, and — the reason this exists — stops a pasted value from being
+ * present-but-rejected. A hosting dashboard will happily store
+ * `MICROSOFT_TENANT_ID` with the trailing newline that came along with
+ * the copy, and TENANT_GUID below is anchored, so the tenant reads as
+ * set everywhere an operator can look while SSO reports itself
+ * unconfigured and never says why. Same class of failure for a client
+ * id, a client secret, or an API key with an invisible character on
+ * the end, which fails later and further away, at the provider.
  */
-const cleanedEnv = Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== ''));
+const cleanedEnv = Object.fromEntries(
+  Object.entries(process.env)
+    .map(([k, v]) => [k, typeof v === 'string' && !UNTRIMMED_KEYS.has(k) ? v.trim() : v])
+    .filter(([, v]) => v !== ''),
+);
 const parsed = envSchema.safeParse(cleanedEnv);
 if (!parsed.success) {
   // Fail loudly on malformed values; never print the values themselves.

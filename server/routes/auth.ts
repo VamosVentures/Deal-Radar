@@ -10,6 +10,7 @@ import {
   microsoftLoginAvailable,
   microsoftSsoConfigured,
   microsoftSsoPending,
+  microsoftSsoRequirements,
   awaitingSsoCutover,
 } from '../env';
 import { audit } from '../lib/guard';
@@ -112,6 +113,25 @@ authRouter.get('/auth/status', wrap(async (req, res) => {
      */
     microsoftPending: pending,
     microsoftPendingMessage: pending ? AWAITING_MICROSOFT_CONFIG : null,
+    /**
+     * WHICH preconditions are still unmet — the variable names an
+     * operator types into a hosting dashboard, and nothing else.
+     *
+     * Without this, every incomplete deployment reports itself
+     * identically: `microsoftLoginAvailable: false` and a pending
+     * message that names no cause. Diagnosing it then means bisecting
+     * five `&&`ed conditions against a dashboard that shows only
+     * whether a variable is set, not whether its VALUE satisfies the
+     * check — and `MICROSOFT_TENANT_ID` has to be a single-tenant GUID,
+     * so "set" and "accepted" are genuinely different states.
+     *
+     * The same list is already logged at boot and already returned, in
+     * full, by the 503 from /auth/microsoft/start below, so this adds
+     * no reach that an unauthenticated caller did not have. It reports
+     * presence and well-formedness only: no value is read here, so
+     * nothing secret can pass through it.
+     */
+    microsoftMissingRequirements: microsoftSsoRequirements().unmet,
     /**
      * True on the DEFAULT deployment while Entra is not configured yet:
      * the shared password is the way in today, and will stop being one

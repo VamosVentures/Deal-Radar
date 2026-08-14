@@ -101,6 +101,7 @@ function authStatus(): AuthStatus {
     microsoftLoginAvailable: false,
     microsoftPending: false,
     microsoftPendingMessage: null,
+    microsoftMissingRequirements: [],
     // Mirrors the real application's current honest state: the shared
     // password works today only because Entra is not registered yet.
     awaitingSsoCutover: true,

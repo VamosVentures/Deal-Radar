@@ -432,6 +432,50 @@ describe('Microsoft configuration gating', () => {
     expect(microsoftSsoPending()).toBe(false);
   });
 
+  /**
+   * Pasting into a hosting dashboard is how these values actually
+   * arrive, and a copy routinely brings a trailing newline or space
+   * with it. TENANT_GUID is anchored, so before values were trimmed
+   * this produced the worst possible symptom: the dashboard shows
+   * MICROSOFT_TENANT_ID as set, every operator check says it is set,
+   * and SSO still reports itself unconfigured.
+   */
+  it('accepts credentials that arrived with pasted whitespace', async () => {
+    for (const pad of ['\n', ' ', '\r\n', '  ']) {
+      configureMicrosoft({
+        MICROSOFT_TENANT_ID: `${TENANT}${pad}`,
+        MICROSOFT_CLIENT_ID: `${CLIENT_ID}${pad}`,
+        MICROSOFT_SSO_REDIRECT_URI: `${SSO_CALLBACK}${pad}`,
+      });
+      const { microsoftSsoConfigured, microsoftSsoRedirectUri, env } = await import('../env');
+      expect(microsoftSsoConfigured()).toBe(true);
+      // The redirect URI has to byte-match what Entra has registered,
+      // so a stray newline here would fail at the consent screen.
+      expect(microsoftSsoRedirectUri()).toBe(SSO_CALLBACK);
+      expect(env.MICROSOFT_TENANT_ID).toBe(TENANT);
+    }
+  });
+
+  it('treats a whitespace-only value as unset, not as present', async () => {
+    configureMicrosoft({ MICROSOFT_CLIENT_ID: '   ' });
+    const { microsoftSsoConfigured, microsoftSsoRequirements } = await import('../env');
+    expect(microsoftSsoConfigured()).toBe(false);
+    expect(microsoftSsoRequirements().unmet).toContain('MICROSOFT_CLIENT_ID');
+  });
+
+  /**
+   * SESSION_SECRET and ADMIN_PASSWORD are deliberately NOT trimmed:
+   * the first derives the cookie-signing and token-encryption keys, so
+   * trimming a deployed value would silently rotate both, and the
+   * second is compared against typed input.
+   */
+  it('does not trim key material or the compared password', async () => {
+    const padded = 'test-session-secret-at-least-16-chars  ';
+    configureMicrosoft({ SESSION_SECRET: padded });
+    const { env } = await import('../env');
+    expect(env.SESSION_SECRET).toBe(padded);
+  });
+
   it('falls back to local mode — never a lockout — when Entra config is incomplete', async () => {
     for (const missing of ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_SSO_REDIRECT_URI', 'SESSION_SECRET']) {
       configureMicrosoft({ AUTH_MODE: 'microsoft' });
@@ -527,6 +571,35 @@ describe('/api/auth/status', () => {
       microsoftPending: true,
       microsoftPendingMessage: 'Awaiting Microsoft administrator configuration',
     });
+    // The whole point: WHICH variable, not just "something".
+    expect(res.body.microsoftMissingRequirements).toEqual(['MICROSOFT_CLIENT_ID']);
+  });
+
+  /**
+   * The production symptom this endpoint exists to answer. Everything
+   * Microsoft-specific is present, so an operator reading the hosting
+   * dashboard sees three variables set and no reason for the button to
+   * be missing — the unmet requirement is a value constraint on the
+   * tenant, which no "is it set?" check can reveal.
+   */
+  it('names the tenant constraint when every Microsoft variable is set but the tenant is an alias', async () => {
+    configureMicrosoft({ AUTH_MODE: 'hybrid', MICROSOFT_TENANT_ID: 'common' });
+    const { createApp } = await loadServer();
+    const res = await request(createApp()).get('/api/auth/status');
+    expect(res.body.microsoftLoginAvailable).toBe(false);
+    expect(res.body.microsoftMissingRequirements).toEqual([
+      'MICROSOFT_TENANT_ID (a single-tenant directory GUID, not "common")',
+    ]);
+  });
+
+  it('reports nothing missing, and never a value, once SSO is configured', async () => {
+    configureMicrosoft({ AUTH_MODE: 'hybrid' });
+    const { createApp } = await loadServer();
+    const res = await request(createApp()).get('/api/auth/status');
+    expect(res.body.microsoftMissingRequirements).toEqual([]);
+    // Names only. No secret can reach this payload.
+    expect(JSON.stringify(res.body)).not.toContain('test-client-secret-not-real');
+    expect(JSON.stringify(res.body)).not.toContain(TENANT);
   });
 
   it('offers both providers in hybrid mode', async () => {
