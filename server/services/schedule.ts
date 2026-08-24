@@ -4,9 +4,28 @@ import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { getConfig, setConfig } from '../db/repos/operations';
 import { scheduledJobSchema, type DiscoveryRun, type ScheduledJob } from '../../shared/discovery';
-import { runDiscovery } from './discovery';
+import { runDiscovery, importCandidates } from './discovery';
+import { existingCandidates } from '../sourcing/dedupe';
 
 const JOBS_KEY = 'scheduled-jobs';
+
+/**
+ * Scheduled runs auto-import their own new candidates — by explicit
+ * request, this is the one path in the app where import is NOT a
+ * separate human action (contrast server/services/discovery.ts's
+ * importCandidates, which every other caller treats as such). Scoped
+ * to exactly the candidates THIS run produced (matched by runId), so a
+ * human's still-pending candidates from an earlier manual run are never
+ * swept in. Duplicates are skipped rather than merged or force-imported,
+ * matching the UI's own default policy.
+ */
+function autoImportRun(run: DiscoveryRun): void {
+  const ids = existingCandidates()
+    .filter((c) => c.runId === run.id && c.status === 'pending')
+    .map((c) => c.id);
+  if (ids.length === 0) return;
+  importCandidates({ candidateIds: ids, actor: 'scheduler', duplicateAction: 'skip' });
+}
 
 function saveJobs(jobs: ScheduledJob[]): void {
   setConfig(JOBS_KEY, jobs);
@@ -19,8 +38,12 @@ function saveJobs(jobs: ScheduledJob[]): void {
  * nothing pretends jobs will run. Scheduled runs reuse the discovery
  * pipeline — same budgets, same guardrails, and the same hard rule:
  * they never contact founders, send email, approve/reject deals, or
- * change HubSpot stages. Discovered candidates wait for human review
- * exactly like manual runs.
+ * change HubSpot stages. UNLIKE a manual run, a scheduled run's new
+ * candidates are auto-imported (see autoImportRun above) rather than
+ * left for a human to import from the candidate preview — by explicit
+ * request, since the firm wants the weekly cadence fully unattended.
+ * They still land in Awaiting Review, same as any import; nothing
+ * about disposition, HubSpot, or outreach becomes automatic.
  */
 
 export function listJobs(): ScheduledJob[] {
@@ -65,6 +88,7 @@ export async function runJobNow(jobId: string, actor: string): Promise<Discovery
   if (!job) throw Object.assign(new Error('Scheduled job not found.'), { status: 404 });
   if (!job.query) throw Object.assign(new Error('This job has no saved search configuration to run.'), { status: 422 });
   const run = await runDiscovery(job.query, actor, job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly');
+  autoImportRun(run);
   saveJobs(jobs.map((j) => (j.id === jobId ? { ...j, lastRunAt: new Date().toISOString() } : j)));
   audit({
     provider: 'system', mode: 'local', action: 'schedule-run-now', subject: jobId, outcome: 'ok',
@@ -90,11 +114,11 @@ export async function tickScheduler(now = Date.now()): Promise<number> {
       const due = !job.lastRunAt || now - new Date(job.lastRunAt).getTime() >= CADENCE_MS[job.cadence];
       if (!due) continue;
       try {
-        await runDiscovery(job.query, 'scheduler', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly');
+        autoImportRun(await runDiscovery(job.query, 'scheduler', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'));
       } catch {
         // one retry with the same budgets; failures land in the run history
         try {
-          await runDiscovery(job.query, 'scheduler (retry)', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly');
+          autoImportRun(await runDiscovery(job.query, 'scheduler (retry)', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'));
         } catch (e2) {
           audit({ provider: 'system', mode: 'local', action: 'schedule-run', subject: job.id, outcome: 'error', detail: (e2 as Error).message });
         }
