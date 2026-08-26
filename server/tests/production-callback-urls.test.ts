@@ -26,7 +26,7 @@ import request from 'supertest';
  */
 
 /** The single canonical production deployment. */
-const PROD_BASE = 'https://deal-radar-sbo8.onrender.com';
+const PROD_BASE = 'https://deal-radar-1vva.onrender.com';
 
 /** The exact paths registered with Microsoft Entra and HubSpot. */
 const SSO_PATH = '/api/auth/microsoft/callback';
