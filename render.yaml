@@ -40,7 +40,7 @@ services:
       # dashboard from an earlier deploy, DELETE it — two sources of
       # truth is exactly what this variable exists to remove.
       - key: APP_BASE_URL
-        value: https://deal-radar-sbo8.onrender.com
+        value: https://deal-radar-1vva.onrender.com
 
       # ── Microsoft Entra sign-in ────────────────────────────────
       # Declared here — with NO values — so the three variables exist
@@ -71,8 +71,8 @@ services:
       # Both Entra callbacks are DERIVED from APP_BASE_URL above, so
       # MICROSOFT_SSO_REDIRECT_URI and MICROSOFT_REDIRECT_URI are
       # deliberately absent. Register these exact URIs in Entra:
-      #   https://deal-radar-sbo8.onrender.com/api/auth/microsoft/callback
-      #   https://deal-radar-sbo8.onrender.com/api/outlook/callback
+      #   https://deal-radar-1vva.onrender.com/api/auth/microsoft/callback
+      #   https://deal-radar-1vva.onrender.com/api/outlook/callback
 
       # `hybrid` = Microsoft sign-in AND the shared password, both live.
       #
