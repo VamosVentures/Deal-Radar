@@ -299,6 +299,7 @@ export const demoApi: Api = {
     candidates: () => Promise.resolve({ candidates: DEMO_DISCOVERY_CANDIDATES }),
     import: () => disabled(),
     runs: () => Promise.resolve({ runs: DEMO_DISCOVERY_RUNS }),
+    setVertical: () => disabled(),
   },
 
   stealth: {

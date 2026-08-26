@@ -4,6 +4,7 @@ import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
 import {
   cancelDiscovery, detectDuplicate, discoveryRuns, existingCandidates, importCandidates, runDiscovery,
+  setCandidateVertical,
 } from '../services/discovery';
 import { discoveryCandidateSchema } from '../../shared/discovery';
 import { generateHypothesis, listSignals, patchSignal } from '../services/stealth';
@@ -308,6 +309,85 @@ describe('selective import → Awaiting Review (human gates intact)', () => {
     expect(outcome.imported).toHaveLength(0);
     expect(outcome.skipped[0].code).toBe('unclassifiable-sector');
     expect(outcome.skipped[0].reason).toMatch(/no sector signal/i);
+  });
+
+  describe('manual vertical assignment (the only way an unclassifiable candidate becomes importable)', () => {
+    it('a human assigning a vertical unlocks import for a candidate the classifier refused', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.vertical = 'Unknown';
+      cand.companyName = 'Generic Holdings';
+      cand.pitch = 'Unknown';
+      cand.subcategory = 'Unknown';
+      store.raw.discoveryCandidates = [cand];
+
+      // Confirm it's genuinely refused first.
+      expect(importCandidates({ candidateIds: [cand.id] }).skipped[0].code).toBe('unclassifiable-sector');
+
+      const set = setCandidateVertical(cand.id, 'fintech', 'andrew');
+      expect(set.vertical).toBe('fintech');
+
+      const outcome = importCandidates({ candidateIds: [cand.id] });
+      expect(outcome.imported).toHaveLength(1);
+      expect(outcome.skipped).toHaveLength(0);
+    });
+
+    it('refuses to reclassify a candidate that already imported or merged', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.pitch = 'Robots that install solar panels.';
+      store.raw.discoveryCandidates = [cand];
+      importCandidates({ candidateIds: [cand.id] });
+      expect(existingCandidates()[0].status).toBe('imported');
+
+      expect(() => setCandidateVertical(cand.id, 'health', 'andrew')).toThrow(/already imported/i);
+    });
+
+    it('rejects an unknown candidate id', () => {
+      expect(() => setCandidateVertical('does-not-exist', 'health', 'andrew')).toThrow(/not found/i);
+    });
+
+    it('is audited as a human decision, distinct from the automated classifier', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.vertical = 'Unknown';
+      store.raw.discoveryCandidates = [cand];
+      setCandidateVertical(cand.id, 'sustainability', 'andrew');
+
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const audit = await agent.get('/api/audit');
+      const entry = audit.body.find((e: { action: string }) => e.action === 'candidate-set-vertical');
+      expect(entry.detail).toMatch(/andrew/);
+      expect(entry.detail).toMatch(/human decision/i);
+    });
+
+    it('HTTP: PUT /discovery/candidates/:id/vertical rejects a value outside the five approved verticals', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const res = await agent.put(`/api/discovery/candidates/${cand.id}/vertical`).send({ vertical: 'not-a-real-vertical' });
+      expect(res.status).toBe(400);
+    });
+
+    it('HTTP: a full round trip through the route makes the candidate importable', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.vertical = 'Unknown';
+      cand.pitch = 'Unknown';
+      cand.subcategory = 'Unknown';
+      store.raw.discoveryCandidates = [cand];
+
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const setRes = await agent.put(`/api/discovery/candidates/${cand.id}/vertical`).send({ vertical: 'frontier', actor: 'andrew' });
+      expect(setRes.status).toBe(200);
+      expect(setRes.body.candidate.vertical).toBe('frontier');
+
+      const importRes = await agent.post('/api/discovery/import').send({ candidateIds: [cand.id], actor: 'andrew' });
+      expect(importRes.body.imported).toHaveLength(1);
+    });
   });
 
   it('DOES import a candidate whose published text plainly states its sector', async () => {

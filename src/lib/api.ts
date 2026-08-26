@@ -281,6 +281,11 @@ const liveApi = {
         body: JSON.stringify({ candidateIds, actor, duplicateAction }),
       }),
     runs: () => call<{ runs: DiscoveryRun[] }>('/api/discovery/runs'),
+    setVertical: (candidateId: string, vertical: string, actor: string) =>
+      call<{ candidate: DiscoveryCandidate }>(`/api/discovery/candidates/${candidateId}/vertical`, {
+        method: 'PUT',
+        body: JSON.stringify({ vertical, actor }),
+      }),
   },
 
   stealth: {

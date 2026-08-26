@@ -584,6 +584,33 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
 }
 
 /**
+ * A human classifying a candidate the deterministic classifier refused
+ * (no sector signal in the published text). This is the only way such
+ * a candidate can ever become importable — the classifier's refusal is
+ * never overridden automatically, by a looser threshold or otherwise;
+ * a person has to make and own the call. Only 'pending' candidates can
+ * be reclassified: once imported/merged, its vertical lives on the
+ * saved company record instead.
+ */
+export function setCandidateVertical(id: string, vertical: VerticalId, actor: string): DiscoveryCandidate {
+  const all = existingCandidates();
+  const cand = all.find((c) => c.id === id);
+  if (!cand) throw Object.assign(new Error('Candidate not found.'), { status: 404 });
+  if (cand.status !== 'pending') {
+    throw Object.assign(new Error(`Candidate is already ${cand.status} — its vertical cannot be changed here.`), { status: 409 });
+  }
+  const previous = cand.vertical;
+  cand.vertical = vertical;
+  store.raw.discoveryCandidates = all;
+  store.save();
+  audit({
+    provider: 'system', mode: 'local', action: 'candidate-set-vertical', subject: id, outcome: 'ok',
+    detail: `${cand.companyName}: ${previous} → ${vertical}, set by ${actor} — a human decision, not the automated classifier.`,
+  });
+  return cand;
+}
+
+/**
  * Decide a candidate's sector.
  *
  * Adapters never populate `vertical` — every candidate arrives
@@ -593,10 +620,16 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
  * that refusal is preserved: an unclassifiable candidate is still not
  * imported. What changed is that a candidate whose own text plainly says
  * "robotics" is no longer thrown away.
+ *
+ * A vertical set by setCandidateVertical() above takes this same path:
+ * it is no longer 'Unknown', so it is honored here exactly as a
+ * source-supplied one would be — the reason string says "assigned"
+ * instead of "supplied by the source" so the distinction stays visible
+ * downstream.
  */
 export function resolveVertical(c: DiscoveryCandidate): { vertical: VerticalId | null; reason: string; matched: string[] } {
   if (c.vertical !== 'Unknown') {
-    return { vertical: c.vertical as VerticalId, reason: 'Sector supplied by the source.', matched: [] };
+    return { vertical: c.vertical as VerticalId, reason: 'Sector supplied by the source or assigned by a reviewer.', matched: [] };
   }
   const cls = classifyCandidate({
     companyName: c.companyName,

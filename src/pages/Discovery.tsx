@@ -153,6 +153,24 @@ export function Discovery() {
     return next;
   });
 
+  /**
+   * A human classifying a candidate the deterministic classifier
+   * refused (vertical stayed 'Unknown' — no sector signal in the
+   * published text). This is the ONLY way such a candidate ever
+   * becomes importable: the refusal itself is never loosened or
+   * bypassed automatically, a person has to make and own the call.
+   */
+  const assignVertical = async (id: string, v: string) => {
+    if (!v) return;
+    setError(null);
+    try {
+      await api.discovery.setVertical(id, v, 'team');
+      await loadLists();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const input = 'w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 text-sm transition-colors focus:border-marigold';
   const label = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-mid';
   const card = 'mb-5 border border-line bg-panel p-4';
@@ -429,7 +447,21 @@ export function Discovery() {
                         <span className="rounded-[2px] bg-marigold-soft px-1 text-[10px] text-marigold">{c.verificationStatus}</span>
                       </div>
                     </td>
-                    <td className="py-1.5 pr-3">{c.vertical}</td>
+                    <td className="py-1.5 pr-3">
+                      {c.vertical === 'Unknown' ? (
+                        <select
+                          className="rounded-[2px] border border-marigold bg-marigold-soft px-1 py-0.5 text-[11px] text-ink"
+                          value=""
+                          onChange={(e) => assignVertical(c.id, e.target.value)}
+                          title="Not enough published text for the classifier to assign a sector on its own — pick one to make this importable."
+                        >
+                          <option value="" disabled>Unclassified — assign</option>
+                          {VERTICAL_OPTIONS.map((v) => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                          ))}
+                        </select>
+                      ) : c.vertical}
+                    </td>
                     <td className="py-1.5 pr-3">{c.stage}</td>
                     <td className="py-1.5 pr-3">{c.hqState}</td>
                     <td className="py-1.5 pr-3 tabular-nums">{(c.confidence * 100).toFixed(0)}%</td>
