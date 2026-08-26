@@ -77,6 +77,13 @@ export interface AuthStatus {
   /** Microsoft was requested but its variables are incomplete. */
   microsoftPending: boolean;
   microsoftPendingMessage: string | null;
+  /**
+   * The names of the environment variables Microsoft sign-in is still
+   * waiting on — empty once SSO is fully configured. Names only, never
+   * values: this is what turns "the button is missing" into a list of
+   * what to go and set.
+   */
+  microsoftMissingRequirements: string[];
   /** True while the shared password is still the way in, pending the Entra registration. */
   awaitingSsoCutover: boolean;
   awaitingSsoCutoverMessage: string | null;
