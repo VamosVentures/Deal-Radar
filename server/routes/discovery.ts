@@ -7,6 +7,7 @@ import {
 } from '../services/discovery';
 import { getSourceMeta } from '../services/sources';
 import { discoveryRequestSchema } from '../../shared/discovery';
+import { autoImportRun } from '../services/schedule';
 
 export const discoveryRouter = Router();
 
@@ -24,6 +25,11 @@ discoveryRouter.post('/discovery/estimate', wrap(async (req, res) => {
 discoveryRouter.post('/discovery/run', wrap(async (req, res) => {
   const actor = z.object({ actor: z.string().default('team') }).parse({ actor: req.body?.actor }).actor;
   const run = await runDiscovery(req.body?.query ?? req.body, actor);
+  // By explicit request: every discovery run auto-imports its new,
+  // non-duplicate candidates straight to Awaiting Review — a manual
+  // search from the Discovery page no longer requires a separate
+  // human "import" click, matching what scheduled runs already do.
+  autoImportRun(run, actor);
   res.json(run);
 }));
 

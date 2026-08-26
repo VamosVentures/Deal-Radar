@@ -179,6 +179,33 @@ describe('discovery pipeline (fixture sources injected — no network in tests)'
     expect(res.body.sourceResults.length).toBe(BASE_QUERY.sources.length);
     expect(res.body.errors).toBeInstanceOf(Array);
   });
+
+  /**
+   * By explicit request: a manual run from the Discovery page (the HTTP
+   * route, not the runDiscovery() service call other tests use directly)
+   * no longer waits on a human import click — it auto-imports its own
+   * new, non-duplicate candidates the same way a scheduled run already
+   * did. Contrast the very first test in this file, which calls
+   * runDiscovery() directly and still asserts nothing auto-imports —
+   * that invariant is unchanged; only the HTTP route gained this step.
+   */
+  it('a manual run via the HTTP route auto-imports its own new candidates to Awaiting Review', async () => {
+    const app = createApp();
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/run').send({ ...BASE_QUERY, actor: 'andrew' });
+    expect(res.status).toBe(200);
+    const runId = res.body.id;
+
+    const stillPending = existingCandidates().filter((c) => c.runId === runId && c.status === 'pending');
+    // Anything left pending must be a duplicate awaiting a human decision
+    // (merge / import-anyway) — never a plain new candidate.
+    expect(stillPending.every((c) => c.duplicateStatus !== 'none')).toBe(true);
+
+    const meta = Object.values(companyMetaView());
+    const imported = existingCandidates().filter((c) => c.runId === runId && c.status === 'imported');
+    expect(imported.length).toBeGreaterThan(0);
+    expect(meta.filter((m) => m.reviewStatus === 'Awaiting Review').length).toBeGreaterThanOrEqual(imported.length);
+  });
 });
 
 describe('duplicate detection & evidence merge', () => {

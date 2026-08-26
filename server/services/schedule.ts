@@ -10,21 +10,33 @@ import { existingCandidates } from '../sourcing/dedupe';
 const JOBS_KEY = 'scheduled-jobs';
 
 /**
- * Scheduled runs auto-import their own new candidates — by explicit
- * request, this is the one path in the app where import is NOT a
- * separate human action (contrast server/services/discovery.ts's
- * importCandidates, which every other caller treats as such). Scoped
- * to exactly the candidates THIS run produced (matched by runId), so a
- * human's still-pending candidates from an earlier manual run are never
- * swept in. Duplicates are skipped rather than merged or force-imported,
- * matching the UI's own default policy.
+ * Auto-imports a run's own new candidates instead of leaving them for a
+ * human to import from the candidate preview — by explicit request, now
+ * every discovery run (scheduled or manually triggered from the
+ * Discovery page) does this; contrast server/services/discovery.ts's
+ * importCandidates, which every OTHER caller (selective import, CSV,
+ * etc.) still treats as a distinct human action. Scoped to exactly the
+ * candidates THIS run produced (matched by runId), so a human's
+ * still-pending candidates from a DIFFERENT run are never swept in.
+ * Duplicates are skipped rather than merged or force-imported, matching
+ * the UI's own default policy.
+ *
+ * Skip reasons are audited rather than discarded: with no human import
+ * click to notice a candidate went missing, a duplicate/unclassifiable/
+ * validation skip here would otherwise be silently unrecoverable.
  */
-function autoImportRun(run: DiscoveryRun): void {
+export function autoImportRun(run: DiscoveryRun, actor: string): void {
   const ids = existingCandidates()
     .filter((c) => c.runId === run.id && c.status === 'pending')
     .map((c) => c.id);
   if (ids.length === 0) return;
-  importCandidates({ candidateIds: ids, actor: 'scheduler', duplicateAction: 'skip' });
+  const outcome = importCandidates({ candidateIds: ids, actor, duplicateAction: 'skip' });
+  for (const s of outcome.skipped) {
+    audit({
+      provider: 'system', mode: 'local', action: 'auto-import-skip', subject: s.id, outcome: 'blocked',
+      detail: `${s.companyName ?? s.id} — ${s.code}: ${s.reason}`,
+    });
+  }
 }
 
 function saveJobs(jobs: ScheduledJob[]): void {
@@ -88,7 +100,7 @@ export async function runJobNow(jobId: string, actor: string): Promise<Discovery
   if (!job) throw Object.assign(new Error('Scheduled job not found.'), { status: 404 });
   if (!job.query) throw Object.assign(new Error('This job has no saved search configuration to run.'), { status: 422 });
   const run = await runDiscovery(job.query, actor, job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly');
-  autoImportRun(run);
+  autoImportRun(run, actor);
   saveJobs(jobs.map((j) => (j.id === jobId ? { ...j, lastRunAt: new Date().toISOString() } : j)));
   audit({
     provider: 'system', mode: 'local', action: 'schedule-run-now', subject: jobId, outcome: 'ok',
@@ -114,11 +126,11 @@ export async function tickScheduler(now = Date.now()): Promise<number> {
       const due = !job.lastRunAt || now - new Date(job.lastRunAt).getTime() >= CADENCE_MS[job.cadence];
       if (!due) continue;
       try {
-        autoImportRun(await runDiscovery(job.query, 'scheduler', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'));
+        autoImportRun(await runDiscovery(job.query, 'scheduler', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'), 'scheduler');
       } catch {
         // one retry with the same budgets; failures land in the run history
         try {
-          autoImportRun(await runDiscovery(job.query, 'scheduler (retry)', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'));
+          autoImportRun(await runDiscovery(job.query, 'scheduler (retry)', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'), 'scheduler');
         } catch (e2) {
           audit({ provider: 'system', mode: 'local', action: 'schedule-run', subject: job.id, outcome: 'error', detail: (e2 as Error).message });
         }
