@@ -286,6 +286,11 @@ const liveApi = {
         method: 'PUT',
         body: JSON.stringify({ vertical, actor }),
       }),
+    dismiss: (candidateId: string, actor: string) =>
+      call<{ candidate: DiscoveryCandidate }>(`/api/discovery/candidates/${candidateId}/dismiss`, {
+        method: 'POST',
+        body: JSON.stringify({ actor }),
+      }),
   },
 
   stealth: {

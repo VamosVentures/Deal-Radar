@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { wrap } from './helpers';
 import {
-  cancelDiscovery, discoveryRuns, estimateCost, existingCandidates,
+  cancelDiscovery, discoveryRuns, dismissCandidate, estimateCost, existingCandidates,
   importCandidates, runDiscovery, setCandidateVertical,
 } from '../services/discovery';
 import { getSourceMeta } from '../services/sources';
@@ -57,6 +57,12 @@ discoveryRouter.put('/discovery/candidates/:id/vertical', wrap(async (req, res) 
     actor: z.string().default('team'),
   }).parse(req.body);
   const candidate = setCandidateVertical(req.params.id as string, body.vertical, body.actor);
+  res.json({ candidate });
+}));
+
+discoveryRouter.post('/discovery/candidates/:id/dismiss', wrap(async (req, res) => {
+  const { actor } = z.object({ actor: z.string().default('team') }).parse({ actor: req.body?.actor });
+  const candidate = dismissCandidate(req.params.id as string, actor);
   res.json({ candidate });
 }));
 

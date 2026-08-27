@@ -300,6 +300,7 @@ export const demoApi: Api = {
     import: () => disabled(),
     runs: () => Promise.resolve({ runs: DEMO_DISCOVERY_RUNS }),
     setVertical: () => disabled(),
+    dismiss: () => disabled(),
   },
 
   stealth: {

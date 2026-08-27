@@ -3,8 +3,8 @@ import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
 import {
-  cancelDiscovery, detectDuplicate, discoveryRuns, existingCandidates, importCandidates, runDiscovery,
-  setCandidateVertical,
+  cancelDiscovery, detectDuplicate, discoveryRuns, dismissCandidate, existingCandidates, importCandidates,
+  runDiscovery, setCandidateVertical,
 } from '../services/discovery';
 import { discoveryCandidateSchema } from '../../shared/discovery';
 import { generateHypothesis, listSignals, patchSignal } from '../services/stealth';
@@ -387,6 +387,87 @@ describe('selective import → Awaiting Review (human gates intact)', () => {
 
       const importRes = await agent.post('/api/discovery/import').send({ candidateIds: [cand.id], actor: 'andrew' });
       expect(importRes.body.imported).toHaveLength(1);
+    });
+  });
+
+  describe('dismissing a candidate (removes it from Candidate Preview without importing)', () => {
+    it('sets status to dismissed, records a review decision, and audits it as a human action', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      store.raw.discoveryCandidates = [cand];
+
+      const dismissed = dismissCandidate(cand.id, 'andrew');
+      expect(dismissed.status).toBe('dismissed');
+
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const audit = await agent.get('/api/audit');
+      const entry = audit.body.find((e: { action: string }) => e.action === 'candidate-dismiss');
+      expect(entry.detail).toMatch(/andrew/);
+      expect(entry.detail).toMatch(/no company record was ever created/i);
+    });
+
+    it('drops out of the pending list, so it no longer shows in Candidate Preview', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      store.raw.discoveryCandidates = [cand];
+      dismissCandidate(cand.id, 'andrew');
+      expect(existingCandidates().filter((c) => c.status === 'pending')).toHaveLength(0);
+    });
+
+    it('a dismissed candidate can never be imported afterward', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.pitch = 'Robots that install solar panels.'; // would otherwise classify and import cleanly
+      store.raw.discoveryCandidates = [cand];
+      dismissCandidate(cand.id, 'andrew');
+
+      const outcome = importCandidates({ candidateIds: [cand.id], actor: 'andrew' });
+      expect(outcome.imported).toHaveLength(0);
+      expect(outcome.skipped[0].code).toBe('terminal-status');
+    });
+
+    it('refuses to dismiss a candidate that already imported', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.pitch = 'Robots that install solar panels.';
+      store.raw.discoveryCandidates = [cand];
+      importCandidates({ candidateIds: [cand.id] });
+
+      expect(() => dismissCandidate(cand.id, 'andrew')).toThrow(/already imported/i);
+    });
+
+    it('rejects an unknown candidate id', () => {
+      expect(() => dismissCandidate('does-not-exist', 'andrew')).toThrow(/not found/i);
+    });
+
+    it('a dismissed candidate is excluded from future duplicate-matching', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      store.raw.discoveryCandidates = [cand];
+      dismissCandidate(cand.id, 'andrew');
+
+      // A separately-discovered candidate with the SAME company name.
+      // detectDuplicate builds its pool from candidateRecords(), which
+      // filters out dismissed ones (server/sourcing/dedupe.ts) — the
+      // exact behavior the schema and dedupe pool anticipated before
+      // this function ever existed to actually produce one.
+      const rediscovered = { ...cand, id: 'cand-rediscovered', status: 'pending' as const };
+      const hit = detectDuplicate(rediscovered);
+      expect(hit.duplicateStatus).toBe('none');
+    });
+
+    it('HTTP: POST /discovery/candidates/:id/dismiss removes it from the pending list', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const res = await agent.post(`/api/discovery/candidates/${cand.id}/dismiss`).send({ actor: 'andrew' });
+      expect(res.status).toBe(200);
+      expect(res.body.candidate.status).toBe('dismissed');
+
+      const list = await agent.get('/api/discovery/candidates?status=pending');
+      expect(list.body.candidates.find((c: { id: string }) => c.id === cand.id)).toBeUndefined();
     });
   });
 

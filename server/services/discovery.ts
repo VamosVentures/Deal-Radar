@@ -611,6 +611,34 @@ export function setCandidateVertical(id: string, vertical: VerticalId, actor: st
 }
 
 /**
+ * Remove a candidate from Candidate Preview without importing it — the
+ * schema and the dedupe pool (server/sourcing/dedupe.ts's
+ * candidateRecords) already anticipated a 'dismissed' status, but
+ * nothing ever actually set one. Terminal, like import/merge: a
+ * dismissed candidate stays on record for the audit trail rather than
+ * being deleted outright, and drops out of future duplicate-matching
+ * exactly as an imported one does, so it can't come back as a
+ * "possible duplicate of a candidate we already looked at and passed on".
+ */
+export function dismissCandidate(id: string, actor: string): DiscoveryCandidate {
+  const all = existingCandidates();
+  const cand = all.find((c) => c.id === id);
+  if (!cand) throw Object.assign(new Error('Candidate not found.'), { status: 404 });
+  if (cand.status !== 'pending') {
+    throw Object.assign(new Error(`Candidate is already ${cand.status} — it cannot be dismissed.`), { status: 409 });
+  }
+  cand.status = 'dismissed';
+  store.raw.discoveryCandidates = all;
+  store.save();
+  recordReviewDecision({ subjectType: 'candidate', subjectId: id, decision: 'dismissed', actor });
+  audit({
+    provider: 'system', mode: 'local', action: 'candidate-dismiss', subject: id, outcome: 'ok',
+    detail: `${cand.companyName} dismissed by ${actor}. Removed from Candidate Preview; no company record was ever created.`,
+  });
+  return cand;
+}
+
+/**
  * Decide a candidate's sector.
  *
  * Adapters never populate `vertical` — every candidate arrives

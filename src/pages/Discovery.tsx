@@ -171,6 +171,23 @@ export function Discovery() {
     }
   };
 
+  /** Removes a candidate from the preview without importing it. Never deletes the record outright — it stays on the audit trail, just no longer pending. */
+  const dismiss = async (id: string) => {
+    setError(null);
+    setSelected((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+    try {
+      await api.discovery.dismiss(id, 'team');
+      await loadLists();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const input = 'w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 text-sm transition-colors focus:border-marigold';
   const label = 'mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-mid';
   const card = 'mb-5 border border-line bg-panel p-4';
@@ -430,6 +447,7 @@ export function Discovery() {
                   <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Confidence</th>
                   <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Duplicate</th>
                   <th className="py-2 pr-3 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70">Evidence</th>
+                  <th className="py-2 pr-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-white/70"></th>
                 </tr>
               </thead>
               <tbody>
@@ -475,6 +493,15 @@ export function Discovery() {
                     <td className="py-1.5 pr-3">
                       <button onClick={() => setDrawer(c)} className="text-verde underline decoration-dotted">
                         {c.evidence.length} item{c.evidence.length === 1 ? '' : 's'}
+                      </button>
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      <button
+                        onClick={() => dismiss(c.id)}
+                        title="Remove from Candidate Preview without importing. Not deleted outright — stays on the audit trail and can't come back as a duplicate of itself."
+                        className="text-[11px] text-slate-mid underline decoration-dotted hover:text-alerta"
+                      >
+                        Dismiss
                       </button>
                     </td>
                   </tr>
