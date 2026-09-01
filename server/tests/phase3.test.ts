@@ -164,7 +164,7 @@ describe('HubSpot search + OAuth (fixtures / offline)', () => {
         nextAction: 'Review', relationshipOwner: null, dealRadarId: 'c-solcare',
         dealRadarUrl: 'http://localhost:5173',
       },
-      radarStage: 'Surfaced', duplicateResolution: 'create-new', existingRecordId: null,
+      radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,
     });
     const companies = await agent.post('/api/hubspot/search').send({ query: 'solcare', type: 'companies' });
     expect(companies.body.demo).toBe(true);

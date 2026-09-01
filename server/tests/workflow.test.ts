@@ -99,7 +99,7 @@ const genContext = {
 
 const syncPayload = () => ({
   company, contacts: [contactMariana], deal,
-  radarStage: 'Approved to Track', duplicateResolution: 'create-new', existingRecordId: null,
+  radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,
 });
 
 describe('screening workflow (fixture integrations, end to end over HTTP)', () => {
@@ -215,12 +215,12 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
   it('a later Radar-stage change updates the same HubSpot deal\'s stage rather than creating a new deal', async () => {
     const first = await agent.post('/api/hubspot/sync-company')
       .set('Idempotency-Key', 'stage-1')
-      .send({ ...syncPayload(), radarStage: 'Approved to Track' });
+      .send({ ...syncPayload(), radarStage: 'To Be Reviewed' });
     expect(first.status).toBe(200);
 
     const second = await agent.post('/api/hubspot/sync-company')
       .set('Idempotency-Key', 'stage-2')
-      .send({ ...syncPayload(), radarStage: 'Active Diligence' });
+      .send({ ...syncPayload(), radarStage: 'Company Dilligence' });
     expect(second.status).toBe(200);
 
     // Same company, same deal — only its stage moved.
@@ -230,7 +230,7 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
 
     const dealObj = store.raw.mockHubSpot.find((o) => o.id === first.body.dealId)!;
-    expect(dealObj.properties.dealstage).toBe('test-active-diligence');
+    expect(dealObj.properties.dealstage).toBe('test-company-dilligence');
   });
 
   it('rejects a sync payload whose demographics lack a source (guardrail over HTTP)', async () => {

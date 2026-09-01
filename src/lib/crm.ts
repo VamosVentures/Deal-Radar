@@ -10,6 +10,7 @@ import {
   isSyncableContactName,
   mapDiverseGroup,
   mapStageToRound,
+  mapStateToHubSpot,
   matchAcceleratorOption,
   normalizeDomain,
   type EmailGenContext,
@@ -54,7 +55,7 @@ export function companyToHubSpot(c: Company): HubSpotCompanyRecord {
     domain: normalizeDomain(c.website ?? null),
     website: c.website ?? null,
     city: c.city,
-    state: c.state,
+    state: mapStateToHubSpot(c.state),
     country: 'United States',
     description: c.oneLiner,
     industry: verticalById(c.vertical).name,
@@ -111,7 +112,7 @@ export function isSyncableFounder(f: Founder): boolean {
   return isSyncableContactName(f.name);
 }
 
-export function founderToHubSpot(c: Company, f: Founder, owner: string | null): HubSpotContactRecord {
+export function founderToHubSpot(c: Company, f: Founder): HubSpotContactRecord {
   const [firstName, ...rest] = f.name.split(' ');
   return {
     firstName,
@@ -122,13 +123,12 @@ export function founderToHubSpot(c: Company, f: Founder, owner: string | null): 
     companyName: c.name,
     infoSource: f.emailSource ?? c.evidence[0]?.source ?? 'Deal Radar',
     verificationStatus: f.email ? 'Verified' : 'Unverified',
-    relationshipOwner: owner,
     lastOutreachDate: null,
     demographics: founderDemographics(f),
   };
 }
 
-export function dealToHubSpot(c: Company, owner: string | null, nextAction: string, reviewer?: string | null): HubSpotDealRecord {
+export function dealToHubSpot(c: Company, approvedBy: string | null, nextAction: string): HubSpotDealRecord {
   const fit = scoreCompany(c);
   const evidenceQuality = fit.components.find((x) => x.key === 'evidence')?.points ?? 0;
   const risks = [
@@ -149,11 +149,10 @@ export function dealToHubSpot(c: Company, owner: string | null, nextAction: stri
     sourcingStatus: 'Surfaced by Deal Radar',
     dateSurfaced: c.dateFirstSurfaced ?? TODAY(),
     nextAction,
-    relationshipOwner: owner,
     dealRadarId: c.id,
     dealRadarUrl: `${window.location.origin}/?company=${c.id}`,
     scoreExplanation: fit.explanation,
-    approvedBy: reviewer ?? owner,
+    approvedBy,
     approvalDate: TODAY(),
     sourceUrls: c.evidence.map((e) => e.url),
   };

@@ -14,13 +14,20 @@ import {
   HUBSPOT_RAISE_RANGE_OPTIONS,
   HUBSPOT_ROUND_OPTIONS,
   normalizeDomain,
-  RADAR_HUBSPOT_STAGES,
+  RADAR_HUBSPOT_STAGE_GROUPS,
   type DuplicateMatch,
   type RadarHubSpotStage,
   type SyncResult,
 } from '../../shared/integrations';
 
-const OWNERS = ['DR', 'MG', 'AL', 'Unassigned'];
+/**
+ * Who may sign off on a HubSpot sync — recorded on the sync Note
+ * ("Approved by X on <date>"), not to be confused with HubSpot's actual
+ * Company/Deal owner, which is assigned automatically by industry (see
+ * OWNER_ID_BY_INDUSTRY in server/services/hubspot.ts). The same 5 people
+ * that mapping already names, confirmed by Andrew 2026-09-01.
+ */
+const APPROVERS = ['Andrew Gonzalez', 'Andres Morin', 'Ashley Ryder', 'Maya Trujillo', 'Valeria Martinez'];
 
 type Step = 'review' | 'duplicates' | 'done';
 
@@ -35,10 +42,10 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
   const fit = useMemo(() => scoreCompany(c), [c]);
 
   const [company, setCompany] = useState(() => companyToHubSpot(c));
-  const [owner, setOwner] = useState('DR');
+  const [approvedBy, setApprovedBy] = useState(APPROVERS[0]);
   const [nextAction, setNextAction] = useState('Review evidence and approve outreach');
   const [notes, setNotes] = useState('');
-  const [radarStage, setRadarStage] = useState<RadarHubSpotStage>('Approved to Track');
+  const [radarStage, setRadarStage] = useState<RadarHubSpotStage>('To Be Reviewed');
   /**
    * Contacts come from the ENRICHED founder when research verified one,
    * and otherwise from any imported founder row that is a real person.
@@ -60,10 +67,9 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           role: verified.title ?? '',
           background: enrichment.founder.summary,
         },
-        'DR',
       )];
     }
-    return c.founders.filter(isSyncableFounder).map((f) => founderToHubSpot(c, f, 'DR'));
+    return c.founders.filter(isSyncableFounder).map((f) => founderToHubSpot(c, f));
   });
 
   const [step, setStep] = useState<Step>('review');
@@ -103,15 +109,14 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
     setBusy(true);
     setError(null);
     try {
-      const reviewer = owner === 'Unassigned' ? null : owner;
-      const base = dealToHubSpot(c, reviewer, nextAction, reviewer);
+      const base = dealToHubSpot(c, approvedBy, nextAction);
       const deal = {
         ...base,
         rationale: notes ? `${notes} — ${base.rationale}` : base.rationale,
       };
       const res = await api.hubspot.syncCompany({
         company: { ...company, domain: normalizeDomain(company.website) },
-        contacts: contacts.map((ct) => ({ ...ct, relationshipOwner: owner === 'Unassigned' ? null : owner })),
+        contacts,
         deal,
         radarStage,
         duplicateResolution: resolution,
@@ -171,9 +176,9 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                 {HUBSPOT_INDUSTRY_OPTIONS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </label>
-            <Field label="Headquarters" value={`${company.city}, ${company.state}`} onChange={(v) => {
+            <Field label="Headquarters" value={`${company.city}, ${company.state ?? ''}`} onChange={(v) => {
               const [city, state = ''] = v.split(',');
-              setCompany((p) => ({ ...p, city: city.trim(), state: state.trim() }));
+              setCompany((p) => ({ ...p, city: city.trim(), state: state.trim() || null }));
             }} />
             <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
               Round currently raising
@@ -214,13 +219,17 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
             <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
               Suggested HubSpot stage
               <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
-                {RADAR_HUBSPOT_STAGES.map((s) => <option key={s}>{s}</option>)}
+                {RADAR_HUBSPOT_STAGE_GROUPS.map((g) => (
+                  <optgroup key={g.pipelineLabel} label={g.pipelineLabel}>
+                    {g.stages.map((s) => <option key={s}>{s}</option>)}
+                  </optgroup>
+                ))}
               </select>
             </label>
-            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid" title="The actual HubSpot Company/Deal owner is assigned automatically by industry (e.g. Health & Wellness → Ashley Ryder) — this picker only sets the approver recorded on the sync note.">
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid" title="Recorded on the sync note as the approver, e.g. &quot;Approved by Andrew Gonzalez on 2026-09-01&quot;. HubSpot's actual Company/Deal owner is assigned automatically by industry (e.g. Health & Wellness → Ashley Ryder) — a separate thing from this picker.">
               Approved by
-              <select value={owner} onChange={(e) => setOwner(e.target.value)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
-                {OWNERS.map((o) => <option key={o}>{o}</option>)}
+              <select value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                {APPROVERS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </label>
             <Field label="Next action" value={nextAction} onChange={setNextAction} />

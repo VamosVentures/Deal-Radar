@@ -257,7 +257,7 @@ describe('sync failure recording and retry', () => {
         sourcingStatus: 'Surfaced', dateSurfaced: '2026-07-01', nextAction: 'Review', relationshipOwner: null,
         dealRadarId: 'c-retry', dealRadarUrl: 'http://localhost:5173',
       },
-      radarStage: 'Surfaced', duplicateResolution: 'create-new', existingRecordId: null,
+      radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,
     };
 
     const agent = await adminAgent(app);

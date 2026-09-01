@@ -43,7 +43,7 @@ const contact = (over: Partial<HubSpotContactRecord> = {}): HubSpotContactRecord
   email: 'mariana@solcarehealth.example.com',
   jobTitle: 'CEO', linkedinUrl: null, companyName: 'SolCare Health',
   infoSource: 'Company press-release media contact',
-  verificationStatus: 'Verified', relationshipOwner: 'DR', lastOutreachDate: null,
+  verificationStatus: 'Verified', lastOutreachDate: null,
   demographics: [],
   ...over,
 });
@@ -56,7 +56,7 @@ const deal = (over: Partial<HubSpotDealRecord> = {}): HubSpotDealRecord => ({
   rationale: 'Direct thesis match.', risks: 'None flagged.',
   evidenceQualityScore: 8, policyException: null,
   sourcingStatus: 'Surfaced by Deal Radar', dateSurfaced: '2026-04-12',
-  nextAction: 'Approve outreach', relationshipOwner: 'DR',
+  nextAction: 'Approve outreach',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
   scoreExplanation: 'VamosVentures Fit Score 8.7/10 (test fixture explanation).',
   approvedBy: 'DR', approvalDate: '2026-07-18',
@@ -404,9 +404,7 @@ describe('founder contacts written to HubSpot', () => {
     // mapping is seeded directly rather than driven through the portal.
     const { setConfig } = await import('../db/repos/operations');
     setConfig('hubspot-pipeline-mapping', {
-      pipelineId: 'p-1',
-      pipelineLabel: 'Test pipeline',
-      stages: Object.fromEntries(RADAR_HUBSPOT_STAGES.map((st) => [st, 's-1'])),
+      stages: Object.fromEntries(RADAR_HUBSPOT_STAGES.map((st) => [st, { pipelineId: 'p-1', stageId: 's-1' }])),
     });
 
     const res = await agent.post('/api/hubspot/sync-company').send({
@@ -436,7 +434,7 @@ describe('founder contacts written to HubSpot', () => {
         dateSurfaced: '2026-07-01', relationshipOwner: '', dealRadarId: 'c-guard-1',
         dealRadarUrl: 'https://radar.local/c-guard-1',
       },
-      radarStage: 'Approved to Track',
+      radarStage: 'To Be Reviewed',
       duplicateResolution: 'create-new',
       existingRecordId: null,
     });

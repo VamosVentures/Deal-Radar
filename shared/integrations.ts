@@ -101,7 +101,8 @@ export const hubspotCompanyRecordSchema = z.object({
   domain: z.string().nullable(),
   website: z.string().nullable(),
   city: z.string(),
-  state: z.string(),
+  /** HubSpot's `state_` is a fixed dropdown of full state names, not two-letter codes — see mapStateToHubSpot. Null when Deal Radar's state code isn't a recognized US state (e.g. a non-US HQ) — left unset rather than sent as an invalid value. */
+  state: z.string().nullable(),
   country: z.string().default('United States'),
   description: z.string(),
   /** One of HUBSPOT_INDUSTRY_OPTIONS. */
@@ -127,6 +128,27 @@ export const hubspotCompanyRecordSchema = z.object({
   dealRadarUrl: z.string(),
 });
 export type HubSpotCompanyRecord = z.infer<typeof hubspotCompanyRecordSchema>;
+
+/** HubSpot's `state_` (Company) is a fixed dropdown of full state names — confirmed 2026-09-01 after a live sync attempt with a raw two-letter code ("CA") was rejected by HubSpot's API. */
+const US_STATE_NAMES: Record<string, string> = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
+  CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia',
+  HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa',
+  KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri',
+  MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey',
+  NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio',
+  OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+  VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  DC: 'Washington, D.C.',
+};
+
+/** Convert Deal Radar's two-letter state code to the full name HubSpot's `state_` dropdown requires. Returns null for anything not a recognized US state/DC (a non-US HQ, or bad data like "??") — never guessed, the field is simply left unset. */
+export function mapStateToHubSpot(state: string | null | undefined): string | null {
+  if (!state) return null;
+  return US_STATE_NAMES[state.trim().toUpperCase()] ?? null;
+}
 
 /**
  * Bucket a free-text stage into one of HubSpot's fixed
@@ -211,7 +233,6 @@ export const hubspotContactRecordSchema = z.object({
   companyName: z.string(),
   infoSource: z.string(),
   verificationStatus: z.enum(['Verified', 'Unverified']),
-  relationshipOwner: z.string().nullable(),
   lastOutreachDate: z.string().nullable(),
   /** Optional; every entry must independently satisfy the guardrail schema. */
   demographics: z.array(verifiedDemographicSchema).default([]),
@@ -270,7 +291,6 @@ export const hubspotDealRecordSchema = z.object({
   sourcingStatus: z.string(),
   dateSurfaced: z.string(),
   nextAction: z.string(),
-  relationshipOwner: z.string().nullable(),
   dealRadarId: z.string(),
   dealRadarUrl: z.string(),
   /** Plain-language scoring explanation (model version + strongest/weakest components). */
@@ -284,25 +304,53 @@ export const hubspotDealRecordSchema = z.object({
 export type HubSpotDealRecord = z.infer<typeof hubspotDealRecordSchema>;
 
 // ── Radar → HubSpot pipeline mapping ─────────────────────────────
-
+//
+// These are Vamos's own real HubSpot deal-stage names (confirmed
+// 2026-09-01), not Deal Radar's invention — the whole point of naming
+// them identically is that there is nothing left to "translate" when
+// picking a sync target. They span TWO real pipelines: most of a deal's
+// life happens in Live Deals Pipeline, but a deal that doesn't fit
+// moves to Passed/Revisit Deals Pipeline — a real, common outcome, so
+// both pipelines' stages are valid sync targets, not just the first one.
 export const RADAR_HUBSPOT_STAGES = [
-  'Surfaced',
-  'Needs Review',
-  'Approved to Track',
-  'Outreach Approved',
-  'Outreach Drafted',
-  'Founder Contacted',
-  'Meeting Scheduled',
-  'Active Diligence',
-  'Monitor',
-  'Passed',
+  // Live Deals Pipeline
+  'To Be Reviewed',
+  'Intro Meeting',
+  'Company Dilligence',
+  'Negotiations',
+  'Legal Dilligence',
+  'Fund Onboarding',
+  'Portfolio Company',
+  // Passed/Revisit Deals Pipeline
+  'Not A Fit',
+  'Revisit in 6 months',
+  'Revisit in 1 year',
+  'Revisit in + 1 year',
 ] as const;
 export type RadarHubSpotStage = (typeof RADAR_HUBSPOT_STAGES)[number];
 
-export const hubspotPipelineMappingSchema = z.object({
+/** Display grouping only (which real pipeline each stage name belongs to) — for rendering `<optgroup>`s so a reviewer never mistakes a Passed/Revisit stage for one in the active deal pipeline. */
+export const RADAR_HUBSPOT_STAGE_GROUPS = [
+  { pipelineLabel: 'Live Deals Pipeline', stages: ['To Be Reviewed', 'Intro Meeting', 'Company Dilligence', 'Negotiations', 'Legal Dilligence', 'Fund Onboarding', 'Portfolio Company'] as const },
+  { pipelineLabel: 'Passed/Revisit Deals Pipeline', stages: ['Not A Fit', 'Revisit in 6 months', 'Revisit in 1 year', 'Revisit in + 1 year'] as const },
+] as const;
+
+/**
+ * Each stage name maps to its own {pipelineId, stageId} — deliberately
+ * NOT one shared pipeline for the whole mapping, since Vamos's real
+ * stages span two different pipelines. Moving a HubSpot deal to a stage
+ * in a different pipeline requires setting both dealstage AND pipeline
+ * together (see buildDealProperties) — carrying the pipelineId
+ * per-stage is what makes that possible.
+ */
+export const hubspotStageTargetSchema = z.object({
   pipelineId: z.string().min(1),
-  pipelineLabel: z.string(),
-  stages: z.record(z.string(), z.string()), // RadarHubSpotStage -> HubSpot stage id
+  stageId: z.string().min(1),
+});
+export type HubSpotStageTarget = z.infer<typeof hubspotStageTargetSchema>;
+
+export const hubspotPipelineMappingSchema = z.object({
+  stages: z.record(z.string(), hubspotStageTargetSchema), // RadarHubSpotStage -> {pipelineId, stageId}
 });
 export type HubSpotPipelineMapping = z.infer<typeof hubspotPipelineMappingSchema>;
 

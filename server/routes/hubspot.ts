@@ -31,9 +31,8 @@ function storedMapping() {
 
 function resolveStage(radarStage: string): { pipelineId: string; stageId: string } {
   const mapping = storedMapping();
-  if (mapping?.stages[radarStage]) {
-    return { pipelineId: mapping.pipelineId, stageId: mapping.stages[radarStage] };
-  }
+  const target = mapping?.stages[radarStage];
+  if (target) return target;
   throw Object.assign(
     new Error(`No HubSpot stage is mapped for "${radarStage}".`),
     {
@@ -96,7 +95,7 @@ hubspotRouter.get('/hubspot/pipeline-mapping', requireAdmin, wrap(async (_req, r
 hubspotRouter.put('/hubspot/pipeline-mapping', requireAdmin, wrap(async (req, res) => {
   const mapping = hubspotPipelineMappingSchema.parse(req.body);
   setConfig(MAPPING_KEY, mapping);
-  audit({ provider: 'hubspot', mode: hubspotConnected() ? 'live' : 'local', action: 'save-pipeline-mapping', subject: mapping.pipelineId, outcome: 'ok', detail: `${Object.keys(mapping.stages).length} stages mapped` });
+  audit({ provider: 'hubspot', mode: hubspotConnected() ? 'live' : 'local', action: 'save-pipeline-mapping', subject: 'hubspot-pipeline-mapping', outcome: 'ok', detail: `${Object.keys(mapping.stages).length} stages mapped` });
   res.json({ ok: true, mapping });
 }));
 
@@ -131,7 +130,7 @@ hubspotRouter.post('/hubspot/search', wrap(async (req, res) => {
   res.json({ hits: await svc.search(query, type), demo: svc.mode !== 'live' });
 }));
 
-const singleCompany = z.object({ record: z.unknown(), radarStage: z.enum(RADAR_HUBSPOT_STAGES).default('Surfaced') });
+const singleCompany = z.object({ record: z.unknown(), radarStage: z.enum(RADAR_HUBSPOT_STAGES).default('To Be Reviewed') });
 
 hubspotRouter.post('/hubspot/company', wrap(async (req, res) => {
   const { record } = singleCompany.parse(req.body);
@@ -140,7 +139,7 @@ hubspotRouter.post('/hubspot/company', wrap(async (req, res) => {
   const result = await svc.syncCompany({
     company, contacts: [],
     deal: minimalDeal(company.name, company.dealRadarId, company.dealRadarUrl),
-    ...resolveStage('Surfaced'),
+    ...resolveStage('To Be Reviewed'),
     resolution: 'create-new', existingRecordId: null, existingDealId: null,
   });
   res.json(result);
@@ -260,14 +259,14 @@ hubspotRouter.post('/hubspot/contact', wrap(async (req, res) => {
     },
     contacts: [contact],
     deal: minimalDeal(contact.companyName, `contact-only-${Date.now()}`, env.FRONTEND_URL),
-    ...resolveStage('Surfaced'),
+    ...resolveStage('To Be Reviewed'),
     resolution: 'create-new', existingRecordId: null, existingDealId: null,
   });
   res.json({ contactIds: result.contactIds, demo: result.demo });
 }));
 
 hubspotRouter.post('/hubspot/deal', wrap(async (req, res) => {
-  const body = z.object({ deal: z.unknown(), radarStage: z.enum(RADAR_HUBSPOT_STAGES).default('Surfaced') }).parse(req.body);
+  const body = z.object({ deal: z.unknown(), radarStage: z.enum(RADAR_HUBSPOT_STAGES).default('To Be Reviewed') }).parse(req.body);
   const deal = companySyncRequestSchema.shape.deal.parse(body.deal);
   const svc = hubspotService();
   const { pipelineId, stageId } = resolveStage(body.radarStage);

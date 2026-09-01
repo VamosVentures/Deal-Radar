@@ -22,7 +22,7 @@ function syncPayload() {
       nextAction: 'Review', relationshipOwner: 'MG',
       dealRadarId: 'c-cuadrilla', dealRadarUrl: 'http://localhost:5173/?company=c-cuadrilla',
     },
-    radarStage: 'Approved to Track',
+    radarStage: 'To Be Reviewed',
     duplicateResolution: 'create-new',
     existingRecordId: null,
   };
@@ -52,9 +52,7 @@ describe('pipeline-stage mapping', () => {
     const app = createApp();
     const agent = await adminAgent(app);
     const put = await agent.put('/api/hubspot/pipeline-mapping').send({
-      pipelineId: 'test-pipeline',
-      pipelineLabel: 'Test',
-      stages: { 'Approved to Track': 'custom-stage-42' },
+      stages: { 'To Be Reviewed': { pipelineId: 'test-pipeline', stageId: 'custom-stage-42' } },
     });
     expect(put.status).toBe(200);
     const res = await agent.post('/api/hubspot/sync-company').send(syncPayload());
@@ -67,7 +65,7 @@ describe('pipeline-stage mapping', () => {
   it('rejects an invalid mapping payload', async () => {
     const app = createApp();
     const agent = await adminAgent(app);
-    const res = await agent.put('/api/hubspot/pipeline-mapping').send({ pipelineId: '', stages: 'nope' });
+    const res = await agent.put('/api/hubspot/pipeline-mapping').send({ stages: 'nope' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_failed');
   });

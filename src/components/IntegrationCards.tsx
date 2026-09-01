@@ -8,6 +8,7 @@ import {
   RADAR_HUBSPOT_STAGES,
   type HubSpotPipelineInfo,
   type HubSpotPipelineMapping,
+  type HubSpotStageTarget,
   type IntegrationConnection,
 } from '../../shared/integrations';
 
@@ -256,6 +257,31 @@ function SyncHistory({ provider }: { provider: string }) {
   );
 }
 
+/** Composite <option> value, since a stage id alone isn't unique across pipelines. */
+const optionValue = (pipelineId: string, stageId: string) => `${pipelineId}::${stageId}`;
+function parseOptionValue(v: string): HubSpotStageTarget | null {
+  const [pipelineId, stageId] = v.split('::');
+  return pipelineId && stageId ? { pipelineId, stageId } : null;
+}
+
+/**
+ * First-load convenience only: since Deal Radar's stage names are now
+ * literally Vamos's real HubSpot stage names (confirmed 2026-09-01),
+ * a stage whose label matches exactly can be pre-filled automatically.
+ * Never overwrites a mapping that already exists, and a mismatch is
+ * just left unmapped — never guessed.
+ */
+function autoMapByName(pipelines: HubSpotPipelineInfo[]): Record<string, HubSpotStageTarget> {
+  const stages: Record<string, HubSpotStageTarget> = {};
+  for (const radarStage of RADAR_HUBSPOT_STAGES) {
+    for (const p of pipelines) {
+      const match = p.stages.find((s) => s.label === radarStage);
+      if (match) { stages[radarStage] = { pipelineId: p.id, stageId: match.id }; break; }
+    }
+  }
+  return stages;
+}
+
 function PipelineMappingEditor() {
   const [pipelines, setPipelines] = useState<HubSpotPipelineInfo[]>([]);
   const [mapping, setMapping] = useState<HubSpotPipelineMapping | null>(null);
@@ -270,13 +296,7 @@ function PipelineMappingEditor() {
         api.hubspot.getMapping(),
       ]);
       setPipelines(pipelines);
-      setMapping(
-        mapping ?? {
-          pipelineId: pipelines[0]?.id ?? '',
-          pipelineLabel: pipelines[0]?.label ?? '',
-          stages: {},
-        },
-      );
+      setMapping(mapping ?? { stages: autoMapByName(pipelines) });
     } catch (e) {
       setError(e as ApiError);
     }
@@ -286,54 +306,50 @@ function PipelineMappingEditor() {
   if (error) return <ErrorNote message={error.message} hint={error.hint} />;
   if (!mapping) return <p>Loading pipelines…</p>;
 
-  const pipeline = pipelines.find((p) => p.id === mapping.pipelineId);
-
   return (
     <div className="rounded-[2px] border border-line bg-paper p-3">
       <p className="mb-2 leading-relaxed">
-        Map each Deal Radar status to an existing HubSpot stage. Submissions are blocked for any status without a
-        mapping — the app never guesses stage IDs.
+        Map each Deal Radar stage to an existing HubSpot stage. Submissions are blocked for any stage without a
+        mapping — the app never guesses stage IDs. Stages from every loaded pipeline are offered, not just one —
+        a deal that's a pass moves to the Passed/Revisit pipeline just as validly as an active one moves within
+        Live Deals.
       </p>
-      <label className="block font-mono text-[10px] uppercase tracking-wider">
-        HubSpot deal pipeline
-        <select
-          value={mapping.pipelineId}
-          onChange={(e) => {
-            const p = pipelines.find((x) => x.id === e.target.value);
-            setMapping({ pipelineId: e.target.value, pipelineLabel: p?.label ?? '', stages: {} });
-          }}
-          className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case"
-        >
-          {pipelines.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
-      </label>
       <div className="mt-2 grid gap-1.5">
-        {RADAR_HUBSPOT_STAGES.map((rs) => (
-          <label key={rs} className="grid grid-cols-2 items-center gap-2">
-            <span className="text-xs text-ink">{rs}</span>
-            <select
-              value={mapping.stages[rs] ?? ''}
-              onChange={(e) =>
-                setMapping({
-                  ...mapping,
-                  stages: e.target.value
-                    ? { ...mapping.stages, [rs]: e.target.value }
-                    : Object.fromEntries(Object.entries(mapping.stages).filter(([k]) => k !== rs)),
-                })
-              }
-              className="rounded-[2px] border border-line bg-panel px-2 py-1 text-xs"
-              aria-label={`HubSpot stage for ${rs}`}
-            >
-              <option value="">— not mapped —</option>
-              {pipeline?.stages.map((s) => <option key={s.id} value={s.id}>{s.label} ({s.id})</option>)}
-            </select>
-          </label>
-        ))}
+        {RADAR_HUBSPOT_STAGES.map((rs) => {
+          const target = mapping.stages[rs];
+          return (
+            <label key={rs} className="grid grid-cols-2 items-center gap-2">
+              <span className="text-xs text-ink">{rs}</span>
+              <select
+                value={target ? optionValue(target.pipelineId, target.stageId) : ''}
+                onChange={(e) => {
+                  const parsed = parseOptionValue(e.target.value);
+                  setMapping({
+                    stages: parsed
+                      ? { ...mapping.stages, [rs]: parsed }
+                      : Object.fromEntries(Object.entries(mapping.stages).filter(([k]) => k !== rs)),
+                  });
+                }}
+                className="rounded-[2px] border border-line bg-panel px-2 py-1 text-xs"
+                aria-label={`HubSpot stage for ${rs}`}
+              >
+                <option value="">— not mapped —</option>
+                {pipelines.map((p) => (
+                  <optgroup key={p.id} label={p.label}>
+                    {p.stages.map((s) => (
+                      <option key={s.id} value={optionValue(p.id, s.id)}>{s.label} ({s.id})</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+          );
+        })}
       </div>
       <div className="mt-2 flex items-center gap-2">
         <button
           className={btnPrimary}
-          disabled={busy || !mapping.pipelineId}
+          disabled={busy}
           onClick={async () => {
             setBusy(true);
             setError(null);

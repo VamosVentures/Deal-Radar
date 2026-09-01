@@ -281,7 +281,7 @@ describe('company status lifecycle', () => {
         sourcingStatus: 'Surfaced', dateSurfaced: '2026-06-01', nextAction: 'Review', relationshipOwner: 'team',
         dealRadarId: 'sync-me', dealRadarUrl: 'http://localhost:5173/?company=sync-me',
       },
-      radarStage: 'Approved to Track', duplicateResolution: 'create-new', existingRecordId: null,
+      radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,
     });
     expect(res.status).toBe(200);
     expect(companyMetaView()['sync-me'].reviewStatus).toBe('Synced to HubSpot');
