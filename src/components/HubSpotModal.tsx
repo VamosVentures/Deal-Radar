@@ -8,6 +8,11 @@ import { useCompanies } from '../store/companies';
 import { ExceptionBadge, ScoreGauge } from './ui';
 import { btnGhost, btnPrimary, ErrorNote, Field, Modal } from './Modal';
 import {
+  HUBSPOT_ACCELERATOR_OPTIONS,
+  HUBSPOT_DIVERSE_GROUP_OPTIONS,
+  HUBSPOT_INDUSTRY_OPTIONS,
+  HUBSPOT_RAISE_RANGE_OPTIONS,
+  HUBSPOT_ROUND_OPTIONS,
   normalizeDomain,
   RADAR_HUBSPOT_STAGES,
   type DuplicateMatch,
@@ -80,7 +85,6 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
         name: company.name,
         domain: company.domain,
         founderEmails: contacts.map((ct) => ct.email).filter((e): e is string => !!e),
-        dealRadarId: c.id,
       });
       setMatches(matches);
       if (matches.length === 0) {
@@ -161,15 +165,47 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Company name" value={company.name} onChange={setCompanyField('name')} />
             <Field label="Website" value={company.website ?? ''} onChange={setCompanyField('website')} placeholder="https:// — leave empty if unknown" />
-            <Field label="Vertical" value={company.vertical} onChange={setCompanyField('vertical')} />
-            <Field label="Subcategory" value={company.subcategory} onChange={setCompanyField('subcategory')} />
-            <Field label="Stage" value={company.stage} onChange={setCompanyField('stage')} />
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              Industry
+              <select value={company.industry} onChange={(e) => setCompany((p) => ({ ...p, industry: e.target.value }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                {HUBSPOT_INDUSTRY_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
             <Field label="Headquarters" value={`${company.city}, ${company.state}`} onChange={(v) => {
               const [city, state = ''] = v.split(',');
               setCompany((p) => ({ ...p, city: city.trim(), state: state.trim() }));
             }} />
-            <Field label="Accelerator" value={company.accelerator ?? ''} onChange={setCompanyField('accelerator')} placeholder="Only if verified" />
-            <Field label="Funding raised" value={company.fundingRaised ?? ''} onChange={setCompanyField('fundingRaised')} placeholder="e.g. $3.5M seed" />
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              Round currently raising
+              <select value={company.roundCurrentlyRaising ?? ''} onChange={(e) => setCompany((p) => ({ ...p, roundCurrentlyRaising: e.target.value || null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                <option value="">— not set —</option>
+                {HUBSPOT_ROUND_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              Total raising for round
+              <select value={company.totalRaisingForRound ?? ''} onChange={(e) => setCompany((p) => ({ ...p, totalRaisingForRound: e.target.value || null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                <option value="">— not set —</option>
+                {HUBSPOT_RAISE_RANGE_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              Accelerator participation
+              <select value={company.acceleratorParticipation ?? ''} onChange={(e) => setCompany((p) => ({ ...p, acceleratorParticipation: e.target.value || null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                <option value="">— not set —</option>
+                {HUBSPOT_ACCELERATOR_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              Diverse group
+              <select value={company.diverseGroup ?? ''} onChange={(e) => setCompany((p) => ({ ...p, diverseGroup: e.target.value || null, diverseGroupOther: e.target.value === 'Other' ? p.diverseGroupOther : null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                <option value="">— not set —</option>
+                {HUBSPOT_DIVERSE_GROUP_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+            {company.diverseGroup === 'Other' && (
+              <Field label="Diverse group — specify" value={company.diverseGroupOther ?? ''} onChange={setCompanyField('diverseGroupOther')} />
+            )}
           </div>
           <Field label="Company description" value={company.description} onChange={setCompanyField('description')} textarea />
           <Field label="Sourcing notes (added to the deal rationale)" value={notes} onChange={setNotes} textarea placeholder="Optional analyst notes" />
@@ -181,8 +217,8 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                 {RADAR_HUBSPOT_STAGES.map((s) => <option key={s}>{s}</option>)}
               </select>
             </label>
-            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
-              Relationship owner
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid" title="The actual HubSpot Company/Deal owner is assigned automatically by industry (e.g. Health & Wellness → Ashley Ryder) — this picker only sets the approver recorded on the sync note.">
+              Approved by
               <select value={owner} onChange={(e) => setOwner(e.target.value)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
                 {OWNERS.map((o) => <option key={o}>{o}</option>)}
               </select>

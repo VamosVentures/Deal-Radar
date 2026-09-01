@@ -10,10 +10,7 @@ function syncPayload() {
     company: {
       name: 'Cuadrilla', domain: 'cuadrilla.example.com', website: 'https://cuadrilla.example.com',
       city: 'San Antonio', state: 'TX', country: 'United States',
-      description: 'Bilingual field-ops platform.', vertical: 'Future of Work',
-      subcategory: 'Workforce tools', stage: 'Seed', accelerator: null, fundingRaised: null,
-      dateFirstSurfaced: '2026-03-02', lastRefreshed: '2026-07-14',
-      primarySource: 'Company About page', policyException: null,
+      description: 'Bilingual field-ops platform.', industry: 'Future of Work',
       dealRadarId: 'c-cuadrilla', dealRadarUrl: 'http://localhost:5173/?company=c-cuadrilla',
     },
     contacts: [],

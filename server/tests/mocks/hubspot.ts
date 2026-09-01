@@ -4,6 +4,7 @@ import {
   buildCompanyProperties,
   buildContactProperties,
   buildDealProperties,
+  buildSyncNoteBody,
   type DuplicateCheckInput,
   type HubSpotService,
   type HubSpotSearchHit,
@@ -62,10 +63,6 @@ export class MockHubSpot implements HubSpotService {
     });
 
     // Same tier order as the live client.
-    if (input.dealRadarId) {
-      const byRadar = companies.filter((o) => o.properties.vamos_deal_radar_id === input.dealRadarId);
-      if (byRadar.length > 0) return byRadar.map((o) => asMatch(o, 'radar-id'));
-    }
     const nDomain = normalizeDomain(input.domain);
     if (nDomain) {
       const byDomain = companies.filter((o) => normalizeDomain(String(o.properties.domain ?? '')) === nDomain);
@@ -135,11 +132,9 @@ export class MockHubSpot implements HubSpotService {
   async syncCompany(args: Parameters<HubSpotService['syncCompany']>[0]): Promise<SyncResult> {
     const { company, contacts, deal, stageId, pipelineId, resolution, existingRecordId, existingDealId } = args;
     // Same idempotency as the live client: a radar record synced before
-    // updates its existing company instead of creating a twin.
-    const prior = store.raw.mockHubSpot.find(
-      (o) => o.type === 'company' && o.properties.vamos_deal_radar_id === company.dealRadarId,
-    );
-    const targetId = (resolution === 'update-existing' && existingRecordId) ? existingRecordId : prior?.id ?? null;
+    // updates via the caller's own persisted link — no HubSpot-side
+    // property to search by instead.
+    const targetId = resolution === 'update-existing' ? existingRecordId : null;
     const updating = !!targetId;
     const companyObj = this.put(
       'company',
@@ -156,21 +151,22 @@ export class MockHubSpot implements HubSpotService {
         : undefined;
       return this.put('contact', buildContactProperties(c), existing?.id ?? null);
     });
-    // Same idempotency for the deal: prefer the caller's persisted
-    // hubspot_deal_id, else fall back to a search by our own
-    // vamos_deal_radar_id property (records synced before this link
-    // was tracked).
-    const priorDeal = store.raw.mockHubSpot.find(
-      (o) => o.type === 'deal' && o.properties.vamos_deal_radar_id === deal.dealRadarId,
-    );
-    const dealTargetId = existingDealId ?? priorDeal?.id ?? null;
+    const dealTargetId = existingDealId;
     const dealUpdating = !!dealTargetId;
-    const dealObj = this.put('deal', buildDealProperties(deal, stageId, pipelineId), dealTargetId);
+    const dealProps = buildDealProperties(deal, stageId, pipelineId) as Record<string, string | number | null>;
+    if (dealUpdating) delete dealProps.hubspot_owner_id;
+    const dealObj = this.put('deal', dealProps, dealTargetId);
 
     dealObj.associations = Array.from(new Set([...dealObj.associations, companyObj.id, ...contactObjs.map((o) => o.id)]));
     companyObj.associations = Array.from(
       new Set([...companyObj.associations, dealObj.id, ...contactObjs.map((o) => o.id)]),
     );
+
+    // Provenance + everything with no property home — a Note, same as live.
+    const noteObj = this.put('note', { hs_note_body: buildSyncNoteBody(deal, updating), hs_timestamp: new Date().toISOString() }, null);
+    noteObj.associations = [companyObj.id, dealObj.id];
+    companyObj.associations = Array.from(new Set([...companyObj.associations, noteObj.id]));
+    dealObj.associations = Array.from(new Set([...dealObj.associations, noteObj.id]));
     store.save();
 
     audit({

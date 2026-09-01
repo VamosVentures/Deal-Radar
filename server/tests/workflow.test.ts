@@ -4,6 +4,8 @@ import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
 import { listHubspotSyncHistory } from '../db/repos/operations';
+import { saveCompany } from '../db/repos/companies';
+import type { ImportedCompany } from '../services/imports';
 import { installMockIntegrations, installTestPipelineMapping, uninstallMockIntegrations } from './mocks/install';
 import { adminAgent } from './testAuth';
 
@@ -23,11 +25,33 @@ const company = {
   website: 'https://solcarehealth.example.com',
   city: 'Austin', state: 'TX', country: 'United States',
   description: 'AI care-navigation for bilingual Medicaid populations.',
-  vertical: 'Health & Wellness', subcategory: 'Personalized care (AI / tech-enabled)',
-  stage: 'Seed', accelerator: null, fundingRaised: '$3.5M seed',
-  dateFirstSurfaced: '2026-04-12', lastRefreshed: '2026-07-14',
-  primarySource: 'Company press release', policyException: null,
+  industry: 'Health & Wellness',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
+};
+
+/**
+ * A radar record for 'c-solcare' saved LOCALLY before every sync test,
+ * matching how the app actually works: a company always exists in
+ * Deal Radar's own DB (imported/discovered) before a human ever opens
+ * the HubSpot sync modal for it. This is also what makes sync
+ * idempotency work at all now — HubSpot itself carries no Deal-Radar
+ * identifying property (see shared/integrations.ts's HubSpot section),
+ * so performSync's "resync updates, never twins" guarantee comes
+ * entirely from this locally-persisted hubspot_company_id/
+ * hubspot_deal_id link (companyMetaView), not from anything HubSpot-side.
+ */
+const localCompanyRecord: ImportedCompany = {
+  id: 'c-solcare', name: 'SolCare Health', oneLiner: 'AI care-navigation for bilingual Medicaid populations.',
+  vertical: 'health', subcategory: 'Personalized care', stage: 'Seed',
+  city: 'Austin', state: 'TX', foundedYear: 2022, teamSize: 6,
+  website: 'https://solcarehealth.example.com',
+  traction: { level: 5, note: 'Fixture traction.' },
+  founders: [{ name: 'Mariana Otero', role: 'CEO', background: 'Former VP Ops, Oscar Health.' }],
+  evidence: [{
+    claim: 'Closed pilot with Central Texas health plan', source: 'Company press release',
+    url: 'https://example.com/solcare-pilot', date: '2026-04-10', type: 'News',
+  }],
+  flags: [], imported: true,
 };
 
 const contactMariana = {
@@ -90,6 +114,7 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     resetIdempotencyForTests();
     installMockIntegrations();
     installTestPipelineMapping();
+    saveCompany(localCompanyRecord, { origin: 'user-entered', source: 'test' });
     app = createApp();
     agent = await adminAgent(app);
   });
@@ -104,7 +129,7 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     // Duplicate check — clean the first time.
     const dup1 = await agent
       .post('/api/hubspot/check-duplicate')
-      .send({ name: 'SolCare Health', domain: 'solcarehealth.example.com', dealRadarId: 'c-solcare' });
+      .send({ name: 'SolCare Health', domain: 'solcarehealth.example.com' });
     expect(dup1.body.matches).toHaveLength(0);
 
     // Approved sync: company + contact + deal with score, explanation, reviewer, approval date, source URLs.
@@ -114,24 +139,21 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     expect(sync.body.contactIds).toHaveLength(1);
 
     const dealObj = store.raw.mockHubSpot.find((o) => o.id === sync.body.dealId)!;
-    expect(dealObj.properties.vamos_fit_score).toBe(8.7);
-    expect(dealObj.properties.vamos_score_explanation).toContain('model v3.0');
-    expect(dealObj.properties.vamos_reviewer).toBe('DR');
-    expect(dealObj.properties.vamos_approval_date).toBe('2026-07-18');
-    expect(String(dealObj.properties.vamos_source_urls)).toContain('https://example.com/solcare-pilot');
     expect(dealObj.associations).toContain(sync.body.companyId);
+
+    // Everything with no property home (fit score, score explanation,
+    // reviewer, approval date, source URLs) lands in the sync Note
+    // instead — never a vamos_* property on the deal itself.
+    const noteObj = store.raw.mockHubSpot.find((o) => o.type === 'note' && o.associations.includes(dealObj.id))!;
+    expect(String(noteObj.properties.hs_note_body)).toContain('8.7/10');
+    expect(String(noteObj.properties.hs_note_body)).toContain('model v3.0');
+    expect(String(noteObj.properties.hs_note_body)).toContain('Approved by DR on 2026-07-18');
+    expect(String(noteObj.properties.hs_note_body)).toContain('https://example.com/solcare-pilot');
 
     // Synchronization success recorded durably.
     const history = listHubspotSyncHistory('c-solcare');
     expect(history[0].outcome).toBe('ok');
     expect(history[0].hubspotCompanyId).toBe(sync.body.companyId);
-
-    // Duplicate check now finds the record by our own radar id (tier 1).
-    const dup2 = await agent
-      .post('/api/hubspot/check-duplicate')
-      .send({ name: 'Different Name', domain: null, dealRadarId: 'c-solcare' });
-    expect(dup2.body.matches).toHaveLength(1);
-    expect(dup2.body.matches[0].matchedOn).toBe('radar-id');
 
     // Founder email matches surface too.
     const dup3 = await agent

@@ -4,13 +4,19 @@ import { verticalById } from '../data/taxonomy';
 import { flagLabel } from './scoring';
 import { HOT_THRESHOLD, TRACK_THRESHOLD } from '../../shared/scoringThresholds';
 import {
+  bucketRaiseAmount,
   cleanJobTitle,
+  HUBSPOT_MAX_FOUNDER_SLOTS,
   isSyncableContactName,
+  mapDiverseGroup,
+  mapStageToRound,
+  matchAcceleratorOption,
   normalizeDomain,
   type EmailGenContext,
   type HubSpotCompanyRecord,
   type HubSpotContactRecord,
   type HubSpotDealRecord,
+  type HubSpotFounderSlot,
   type VerifiedDemographic,
 } from '../../shared/integrations';
 
@@ -27,7 +33,22 @@ export function recommendationFor(score: number): string {
   return 'Review — weak fit';
 }
 
+/** Founder slots for HubSpot's founder_name__N/founder_email__N/founder_linkedin__N/founder__N_job_title (up to 5). Same placeholder guardrail as Contact creation: an unverified/placeholder name is withheld rather than written into a shared company record. */
+export function founderSlotsForHubSpot(c: Company): HubSpotFounderSlot[] {
+  return c.founders
+    .filter((f) => isSyncableContactName(f.name))
+    .slice(0, HUBSPOT_MAX_FOUNDER_SLOTS)
+    .map((f) => ({
+      name: f.name,
+      email: f.email ?? null,
+      linkedin: f.linkedin ?? null,
+      jobTitle: cleanJobTitle(f.role),
+    }));
+}
+
 export function companyToHubSpot(c: Company): HubSpotCompanyRecord {
+  const demographics = c.founders.flatMap((f) => founderDemographics(f));
+  const { diverseGroup, diverseGroupOther } = mapDiverseGroup(demographics);
   return {
     name: c.name,
     domain: normalizeDomain(c.website ?? null),
@@ -36,15 +57,13 @@ export function companyToHubSpot(c: Company): HubSpotCompanyRecord {
     state: c.state,
     country: 'United States',
     description: c.oneLiner,
-    vertical: verticalById(c.vertical).name,
-    subcategory: c.subcategory,
-    stage: c.stage,
-    accelerator: c.accelerator ?? null,
-    fundingRaised: c.raising ?? null,
-    dateFirstSurfaced: c.dateFirstSurfaced ?? TODAY(),
-    lastRefreshed: c.lastRefreshed ?? TODAY(),
-    primarySource: c.evidence[0]?.source ?? 'Deal Radar',
-    policyException: policyExceptionText(c),
+    industry: verticalById(c.vertical).name,
+    roundCurrentlyRaising: mapStageToRound(c.stage),
+    totalRaisingForRound: bucketRaiseAmount(c.raising ?? null),
+    acceleratorParticipation: matchAcceleratorOption(c.accelerator ?? null),
+    diverseGroup,
+    diverseGroupOther,
+    founders: founderSlotsForHubSpot(c),
     dealRadarId: c.id,
     dealRadarUrl: `${window.location.origin}/?company=${c.id}`,
   };

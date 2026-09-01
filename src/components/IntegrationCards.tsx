@@ -146,7 +146,7 @@ function HubSpotCard({ conn, refreshAll }: { conn: IntegrationConnection; refres
     <CardShell title="HubSpot CRM" conn={conn}>
       <div className="space-y-2 text-xs text-slate-mid">
         <div>Auth type: <span className="font-mono text-ink">{conn.mode === 'live' ? (conn.account === 'oauth' ? 'OAuth (user connection)' : 'private-app token / OAuth') : 'none — not connected'}</span> (secrets stay on the backend)</div>
-        <div>Property mapping: Deal Radar fields → <span className="font-mono text-ink">vamos_*</span> custom properties (see README for the recommended property set).</div>
+        <div>Property mapping: Deal Radar fields write onto Vamos's own existing Company/Deal/Contact properties — the same ones every other deal in the portal uses. No new custom property is ever created (see README for the exact mapping).</div>
         <div className="flex flex-wrap gap-2 pt-1">
           <button className={btnGhost} onClick={testConnection} disabled={busy}>Test connection</button>
           {!conn.connected && <button className={btnGhost} onClick={connect} disabled={busy}>Connect (OAuth)</button>}

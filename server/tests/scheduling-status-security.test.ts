@@ -271,8 +271,7 @@ describe('company status lifecycle', () => {
       company: {
         name: 'Status Test Co', domain: 'statustest.example.com', website: 'https://statustest.example.com',
         city: 'Austin', state: 'TX', country: 'United States', description: 'x',
-        vertical: 'FinTech', subcategory: 'Payments', stage: 'Seed', accelerator: null, fundingRaised: null,
-        dateFirstSurfaced: '2026-06-01', lastRefreshed: '2026-06-01', primarySource: 'src', policyException: null,
+        industry: 'FinTech',
         dealRadarId: 'sync-me', dealRadarUrl: 'http://localhost:5173/?company=sync-me',
       },
       contacts: [],

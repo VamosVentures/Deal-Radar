@@ -77,7 +77,6 @@ hubspotRouter.post('/hubspot/check-duplicate', wrap(async (req, res) => {
       name: z.string().min(1),
       domain: z.string().nullable().default(null),
       founderEmails: z.array(z.string().email()).default([]),
-      dealRadarId: z.string().optional(),
     })
     .parse(req.body);
   const svc = hubspotService();
@@ -254,11 +253,9 @@ hubspotRouter.post('/hubspot/contact', wrap(async (req, res) => {
   const result = await svc.syncCompany({
     company: {
       name: contact.companyName, domain: null, website: null, city: '', state: '',
-      country: 'United States', description: '', vertical: '', subcategory: '',
-      stage: '', accelerator: null, fundingRaised: null,
-      dateFirstSurfaced: new Date().toISOString().slice(0, 10),
-      lastRefreshed: new Date().toISOString().slice(0, 10),
-      primarySource: 'Deal Radar', policyException: null,
+      country: 'United States', description: '', industry: '',
+      roundCurrentlyRaising: null, totalRaisingForRound: null, acceleratorParticipation: null,
+      diverseGroup: null, diverseGroupOther: null, founders: [],
       dealRadarId: `contact-only-${Date.now()}`, dealRadarUrl: env.FRONTEND_URL,
     },
     contacts: [contact],
@@ -277,10 +274,9 @@ hubspotRouter.post('/hubspot/deal', wrap(async (req, res) => {
   const result = await svc.syncCompany({
     company: {
       name: deal.companyName, domain: null, website: null, city: '', state: '',
-      country: 'United States', description: '', vertical: deal.vertical, subcategory: '',
-      stage: deal.stage, accelerator: null, fundingRaised: null,
-      dateFirstSurfaced: deal.dateSurfaced, lastRefreshed: deal.dateSurfaced,
-      primarySource: 'Deal Radar', policyException: deal.policyException,
+      country: 'United States', description: '', industry: deal.vertical,
+      roundCurrentlyRaising: null, totalRaisingForRound: null, acceleratorParticipation: null,
+      diverseGroup: null, diverseGroupOther: null, founders: [],
       dealRadarId: deal.dealRadarId, dealRadarUrl: deal.dealRadarUrl,
     },
     contacts: [], deal, pipelineId, stageId,

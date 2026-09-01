@@ -191,7 +191,7 @@ const liveApi = {
         method: 'POST',
         body: JSON.stringify({ query, type }),
       }),
-    checkDuplicate: (input: { name: string; domain: string | null; founderEmails?: string[]; dealRadarId?: string }) =>
+    checkDuplicate: (input: { name: string; domain: string | null; founderEmails?: string[] }) =>
       call<{ matches: DuplicateMatch[]; demo: boolean }>('/api/hubspot/check-duplicate', {
         method: 'POST',
         body: JSON.stringify(input),

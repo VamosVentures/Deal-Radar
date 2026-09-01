@@ -13,6 +13,22 @@ import {
   type SyncResult,
 } from '../../shared/integrations';
 
+/**
+ * Company/Deal owner assignment (per Andrew, 2026-09-01): Vamos assigns
+ * ownership by vertical, not by an individual "relationship owner" typed
+ * into Deal Radar. Keyed by the exact `industry_`/vertical display name
+ * already flowing through HubSpotCompanyRecord.industry and
+ * HubSpotDealRecord.vertical. A vertical with no entry (or no confident
+ * industry match) leaves the owner field untouched — never guessed.
+ */
+const OWNER_ID_BY_INDUSTRY: Record<string, string> = {
+  'Future of Work': '105209710', // Valeria Martinez
+  'Health & Wellness': '48549163', // Ashley Ryder
+  FinTech: '131894443', // Andres Morin
+  Sustainability: '141729612', // Maya Trujillo
+  Frontier: '82101654', // Andrew Gonzalez
+};
+
 // ── Auth: private-app token OR user-connected OAuth ─────────────
 
 function oauthToken(): TokenRecord | undefined {
@@ -62,9 +78,9 @@ async function exchangeHubSpotToken(body: Record<string, string>) {
  *
  *   crm.objects.companies.read
  *     The tiered duplicate check that runs BEFORE any create
- *     (checkDuplicate: by vamos_deal_radar_id, then domain, then name),
- *     the connection test (verifyConnection), and reading back the
- *     properties a sync must preserve rather than overwrite.
+ *     (checkDuplicate: by domain, then name), the connection test
+ *     (verifyConnection), and reading back the properties a sync must
+ *     preserve rather than overwrite.
  *
  *   crm.objects.companies.write
  *     Creating the company record, updating an existing one when the
@@ -93,9 +109,13 @@ async function exchangeHubSpotToken(body: Record<string, string>) {
  *     associating it to the company and contacts.
  *
  *   crm.objects.notes.write
- *     Logging "an outreach draft was created, awaiting human review and
- *     manual send" as a note on the company (logActivity). Write only —
- *     this app never reads notes back, so no notes.read is requested.
+ *     The sync Note every syncCompany call attaches to the deal and
+ *     company (provenance plus everything with no property home: fit
+ *     score, rationale, risks, evidence, sourcing status, source URLs —
+ *     see buildSyncNoteBody), and logging "an outreach draft was
+ *     created, awaiting human review and manual send" (logActivity).
+ *     Write only — this app never reads notes back, so no notes.read
+ *     is requested.
  *
  * NOT requested, and deliberately so: any `.All`/owner/pipeline-admin
  * scope, `crm.objects.notes.read`, marketing/forms/timeline scopes, or
@@ -185,87 +205,95 @@ async function hubspotBearer(): Promise<string> {
 }
 
 // ── Payload builders (pure — unit-tested) ────────────────────────
+//
+// Every key below is one of Vamos's own pre-existing HubSpot properties
+// (internal names pulled from the live portal schema) — no `vamos_*`
+// property is created or written. A field with no corresponding
+// property (fit score, rationale, risks, evidence, sourcing status,
+// source URLs, the Deal Radar link) never becomes a new property; see
+// buildSyncNoteBody, which carries all of that as a Note instead.
+//
+// Nullish values are stripped before returning: a field Deal Radar has
+// no data for is left OUT of the payload entirely (never sent as an
+// explicit null), so a resync can never clear a value a human already
+// filled in — see also propertiesRespectingExisting's PRESERVE list.
 
-export function buildCompanyProperties(c: HubSpotCompanyRecord) {
-  return {
+function stripNullish<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null && v !== undefined)) as Partial<T>;
+}
+
+export function buildCompanyProperties(c: HubSpotCompanyRecord): Record<string, string | number | null> {
+  const founderProps: Record<string, string | null> = {};
+  c.founders.forEach((f, i) => {
+    const n = i + 1;
+    founderProps[`founder_name__${n}`] = f.name || null;
+    founderProps[`founder_email__${n}`] = f.email;
+    founderProps[`founder_linkedin__${n}`] = f.linkedin;
+    founderProps[`founder__${n}_job_title`] = f.jobTitle || null;
+  });
+  return stripNullish({
     name: c.name,
     domain: c.domain,
     website: c.website,
     city: c.city,
-    state: c.state,
-    country: c.country,
+    state_: c.state,
+    country_: c.country,
     description: c.description,
-    vamos_vertical: c.vertical,
-    vamos_subcategory: c.subcategory,
-    vamos_stage: c.stage,
-    vamos_accelerator: c.accelerator,
-    vamos_funding_raised: c.fundingRaised,
-    vamos_date_first_surfaced: c.dateFirstSurfaced,
-    vamos_last_refresh: c.lastRefreshed,
-    vamos_primary_source: c.primarySource,
-    vamos_policy_exception: c.policyException,
-    vamos_deal_radar_id: c.dealRadarId,
-    vamos_deal_radar_url: c.dealRadarUrl,
-  };
+    industry_: c.industry,
+    round_currently_raising: c.roundCurrentlyRaising,
+    total_raising_for_round: c.totalRaisingForRound,
+    top_accelerator_participation: c.acceleratorParticipation,
+    diverse_group: c.diverseGroup,
+    if_other__please_specify_diverse_group: c.diverseGroupOther,
+    // Deal Radar only ever sources outbound leads — never a founder application.
+    inbound_outbound: 'Outbound',
+    hubspot_owner_id: OWNER_ID_BY_INDUSTRY[c.industry] ?? null,
+    ...founderProps,
+  });
 }
 
-/**
- * Contact properties. Demographic fields are written ONLY from
- * entries that already passed the verifiedDemographicSchema — each
- * carries basis, named source, source ref, and verification status.
- * Nothing here derives demographics from any other field.
- */
+/** Contact properties: only the three Vamos actually uses on the Contact object. Everything else Deal Radar knows about a founder (job title, LinkedIn, verification, demographics) lives on the Company's founder slots and the sync Note instead. */
 export function buildContactProperties(f: HubSpotContactRecord) {
-  return {
+  return stripNullish({
     firstname: f.firstName,
     lastname: f.lastName,
     email: f.email,
-    jobtitle: f.jobTitle,
-    linkedin_url: f.linkedinUrl,
-    company: f.companyName,
-    vamos_info_source: f.infoSource,
-    vamos_verification_status: f.verificationStatus,
-    vamos_relationship_owner: f.relationshipOwner,
-    vamos_last_outreach_date: f.lastOutreachDate,
-    vamos_verified_demographics:
-      f.demographics.length > 0
-        ? f.demographics
-            .map(
-              (d) =>
-                `${d.indicator} (${d.basis}; ${d.sourceName}; ${d.sourceRef}; ${d.verificationStatus})`,
-            )
-            .join(' | ')
-        : null,
-  };
+  });
 }
 
 export function buildDealProperties(d: HubSpotDealRecord, stageId: string, pipelineId: string) {
-  return {
-    dealname: `${d.companyName} — Vamos Deal Radar`,
+  return stripNullish({
+    dealname: d.companyName,
     pipeline: pipelineId,
     dealstage: stageId,
-    vamos_fit_score: d.fitScore,
-    vamos_recommendation: d.recommendation,
-    vamos_vertical: d.vertical,
-    vamos_stage: d.stage,
-    vamos_score_breakdown: d.scoreBreakdown
-      .map((s) => `${s.label}: ${s.points}/${s.max}`)
-      .join('; '),
-    vamos_rationale: d.rationale,
-    vamos_risks: d.risks,
-    vamos_score_explanation: d.scoreExplanation,
-    vamos_reviewer: d.approvedBy,
-    vamos_approval_date: d.approvalDate,
-    vamos_source_urls: d.sourceUrls.join('\n') || null,
-    vamos_evidence_quality: d.evidenceQualityScore,
-    vamos_policy_exception: d.policyException,
-    vamos_sourcing_status: d.sourcingStatus,
-    vamos_date_surfaced: d.dateSurfaced,
-    vamos_next_action: d.nextAction,
-    vamos_relationship_owner: d.relationshipOwner,
-    vamos_deal_radar_id: d.dealRadarId,
-    vamos_deal_radar_url: d.dealRadarUrl,
-  };
+    hubspot_owner_id: OWNER_ID_BY_INDUSTRY[d.vertical] ?? null,
+  });
+}
+
+/**
+ * Everything Deal Radar knows that has no home in Vamos's existing
+ * property schema — fit score, recommendation, rationale, risks,
+ * evidence quality, sourcing status, approver, source URLs — folded
+ * into one Note attached to the deal and company at sync time, per
+ * Andrew's 2026-09-01 decision. Nothing here is a HubSpot property.
+ */
+export function buildSyncNoteBody(deal: HubSpotDealRecord, updating: boolean): string {
+  const lines = [
+    updating ? 'Deal Radar sync update' : 'Added by Vamos Deal Radar',
+    `Fit score: ${deal.fitScore}/10 — ${deal.recommendation}`,
+    `Vertical: ${deal.vertical} — Stage: ${deal.stage}`,
+    `Why it fits: ${deal.rationale}`,
+    `Risks: ${deal.risks}`,
+    `Evidence quality: ${deal.evidenceQualityScore}/10`,
+    deal.scoreExplanation ? deal.scoreExplanation : null,
+    deal.policyException ? `Policy exception: ${deal.policyException}` : null,
+    `Sourcing status: ${deal.sourcingStatus} (surfaced ${deal.dateSurfaced})`,
+    `Next action: ${deal.nextAction}`,
+    deal.approvedBy ? `Approved by ${deal.approvedBy}${deal.approvalDate ? ` on ${deal.approvalDate}` : ''}` : null,
+    deal.sourceUrls.length > 0 ? `Sources:\n${deal.sourceUrls.join('\n')}` : null,
+    `Deal Radar record: ${deal.dealRadarUrl}`,
+  ].filter((l): l is string => l !== null);
+  return lines.join('\n');
 }
 
 // ── Service interface ────────────────────────────────────────────
@@ -284,8 +312,6 @@ export interface DuplicateCheckInput {
   domain: string | null;
   /** Verified founder emails, when available — matched against HubSpot contacts. */
   founderEmails?: string[];
-  /** Our record id — matched against the vamos_deal_radar_id property. */
-  dealRadarId?: string;
 }
 
 export interface HubSpotService {
@@ -352,26 +378,16 @@ class LiveHubSpot implements HubSpotService {
     );
   }
 
-  private async searchDealsBy(prop: string, value: string) {
-    return this.call<{ results: { id: string }[] }>(
-      '/crm/v3/objects/deals/search',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          filterGroups: [{ filters: [{ propertyName: prop, operator: 'EQ', value }] }],
-          properties: [],
-          limit: 1,
-        }),
-      },
-    );
-  }
-
   /**
    * Tiered duplicate check before any create:
-   * 1. our Vamos property (vamos_deal_radar_id) — exact prior sync,
-   * 2. normalized domain,
-   * 3. normalized company name,
-   * 4. verified founder emails against HubSpot contacts.
+   * 1. normalized domain,
+   * 2. normalized company name,
+   * 3. verified founder emails against HubSpot contacts.
+   *
+   * A radar record Deal Radar already synced before is found a
+   * different way — its own locally-persisted hubspot_company_id/
+   * hubspot_deal_id link (see server/routes/hubspot.ts's performSync) —
+   * not a HubSpot-side property, so it isn't a tier here.
    */
   async checkDuplicate(input: DuplicateCheckInput): Promise<DuplicateMatch[]> {
     const portal = env.HUBSPOT_PORTAL_ID;
@@ -385,10 +401,6 @@ class LiveHubSpot implements HubSpotService {
       demo: false,
     });
 
-    if (input.dealRadarId) {
-      const byRadar = await this.searchCompaniesBy('vamos_deal_radar_id', input.dealRadarId).catch(() => ({ results: [] }));
-      if (byRadar.results.length > 0) return byRadar.results.map((r) => toMatch(r, 'radar-id'));
-    }
     const nDomain = normalizeDomain(input.domain);
     if (nDomain) {
       const byDomain = await this.searchCompaniesBy('domain', nDomain);
@@ -477,15 +489,22 @@ class LiveHubSpot implements HubSpotService {
   }
 
   /**
-   * HubSpot's explicit fields win over anything we derived: when
-   * updating, core fields (name, domain, website, geography,
-   * description) that already hold values in HubSpot are NOT
-   * overwritten — only empty fields are filled, and vamos_* properties
-   * (which are ours) are always refreshed. Geography is never inferred:
-   * if HubSpot has city/state, ours are dropped.
+   * HubSpot's explicit fields win over anything Deal Radar derived.
+   * Every property Deal Radar writes on the Company object is one Vamos
+   * already uses elsewhere and a human can (and does) edit by hand — so
+   * on an update, a field that already holds a value in HubSpot is left
+   * alone; only empty fields are filled. Founder slots and
+   * inbound_outbound are the exception: Deal Radar is the authoritative
+   * source for founder details on a Deal-Radar-sourced company and for
+   * the outbound-sourcing fact, so those always refresh.
    */
   private async propertiesRespectingExisting(recordId: string, company: HubSpotCompanyRecord) {
-    const PRESERVED = ['name', 'domain', 'website', 'city', 'state', 'country', 'description'] as const;
+    const PRESERVED = [
+      'name', 'domain', 'website', 'city', 'state_', 'country_', 'description',
+      'industry_', 'round_currently_raising', 'total_raising_for_round',
+      'top_accelerator_participation', 'diverse_group', 'if_other__please_specify_diverse_group',
+      'hubspot_owner_id',
+    ] as const;
     const ours = buildCompanyProperties(company) as Record<string, string | number | null>;
     const existing = await this.call<{ properties: Record<string, string | null> }>(
       `/crm/v3/objects/companies/${recordId}?properties=${PRESERVED.join(',')}`,
@@ -506,12 +525,11 @@ class LiveHubSpot implements HubSpotService {
 
     // Idempotency: if this radar record was ever synced, update that
     // HubSpot company instead of creating a twin — even when the
-    // caller asked for create-new (e.g. a repeated click).
-    let targetId = resolution === 'update-existing' ? existingRecordId : null;
-    if (!targetId) {
-      const prior = await this.searchCompaniesBy('vamos_deal_radar_id', company.dealRadarId).catch(() => ({ results: [] }));
-      if (prior.results[0]) targetId = prior.results[0].id;
-    }
+    // caller asked for create-new (e.g. a repeated click). The link
+    // comes from the caller's own locally-persisted hubspot_company_id
+    // (see server/routes/hubspot.ts's performSync) — there is no
+    // HubSpot-side property to fall back to searching by.
+    const targetId = resolution === 'update-existing' ? existingRecordId : null;
     const updating = !!targetId;
 
     const companyRes = targetId
@@ -556,23 +574,22 @@ class LiveHubSpot implements HubSpotService {
 
     // Idempotency: reuse the deal previously created for this radar
     // record instead of creating a twin on every resync/stage change.
-    // Prefer the caller's persisted hubspot_deal_id (the fast path);
-    // fall back to a live search by our own vamos_deal_radar_id
-    // property for records synced before this link was tracked.
-    let dealTargetId = existingDealId;
-    if (!dealTargetId) {
-      const priorDeal = await this.searchDealsBy('vamos_deal_radar_id', deal.dealRadarId).catch(() => ({ results: [] }));
-      if (priorDeal.results[0]) dealTargetId = priorDeal.results[0].id;
-    }
+    // Same as the company — the caller's persisted hubspot_deal_id is
+    // the only link; no HubSpot-side property to search by instead.
+    const dealTargetId = existingDealId;
     const dealUpdating = !!dealTargetId;
+    const dealProps = buildDealProperties(deal, stageId, pipelineId) as Record<string, string | number | null>;
+    // Owner is preserve-if-set, same reasoning as the company: a human
+    // may have manually reassigned the deal, and a resync shouldn't fight it.
+    if (dealUpdating) delete dealProps.hubspot_owner_id;
     const dealRes = dealTargetId
       ? await this.call<{ id: string }>(`/crm/v3/objects/deals/${dealTargetId}`, {
           method: 'PATCH',
-          body: JSON.stringify({ properties: buildDealProperties(deal, stageId, pipelineId) }),
+          body: JSON.stringify({ properties: dealProps }),
         })
       : await this.call<{ id: string }>('/crm/v3/objects/deals', {
           method: 'POST',
-          body: JSON.stringify({ properties: buildDealProperties(deal, stageId, pipelineId) }),
+          body: JSON.stringify({ properties: dealProps }),
         });
 
     // Associations: deal↔company, deal↔contacts, company↔contacts.
@@ -585,6 +602,18 @@ class LiveHubSpot implements HubSpotService {
       await assoc('deals', dealRes.id, 'contacts', id);
       await assoc('companies', companyRes.id, 'contacts', id);
     }
+
+    // Provenance + everything that has no property home (score,
+    // rationale, risks, evidence, sourcing status, source URLs) — a
+    // Note, never a new property. See buildSyncNoteBody.
+    const note = await this.call<{ id: string }>('/crm/v3/objects/notes', {
+      method: 'POST',
+      body: JSON.stringify({
+        properties: { hs_note_body: buildSyncNoteBody(deal, updating), hs_timestamp: new Date().toISOString() },
+      }),
+    });
+    await assoc('notes', note.id, 'companies', companyRes.id);
+    await assoc('notes', note.id, 'deals', dealRes.id);
 
     const portal = env.HUBSPOT_PORTAL_ID;
     audit({
@@ -602,7 +631,7 @@ class LiveHubSpot implements HubSpotService {
       dealUrl: portal ? `https://app.hubspot.com/contacts/${portal}/deal/${dealRes.id}` : null,
       action: updating ? 'updated' : 'created',
       message: updating
-        ? 'HubSpot record updated (existing explicit HubSpot fields were preserved; Vamos properties refreshed).'
+        ? 'HubSpot record updated (existing explicit HubSpot field values were preserved).'
         : 'HubSpot records saved.',
     };
   }
