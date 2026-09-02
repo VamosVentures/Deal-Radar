@@ -86,6 +86,20 @@ export const HUBSPOT_ACCELERATOR_OPTIONS = ['Techstars', '500 Global', 'Y Combin
  */
 export const HUBSPOT_DIVERSE_GROUP_OPTIONS = ['Asian', 'Black or African American', 'Caucasian', 'Disabled Person', 'Hispanic', 'LGBTQ+', 'Middle Eastern or Middle Eastern American', 'Native Hawaiian or other Pacific Islander', 'American Indian or Alaskan Native', 'Veteran', 'Women', 'First-generation college student', 'Other'] as const;
 
+/** HubSpot `business_model` (Company) — a fixed dropdown. No Deal Radar signal derives this; it's always a manual reviewer pick. */
+export const HUBSPOT_BUSINESS_MODEL_OPTIONS = ['B2B', 'B2B2C', 'B2C'] as const;
+
+/**
+ * HubSpot `immigrant_background` (Company) — a fixed dropdown. Only the two
+ * positive values are offered here: "Not applicable" is HubSpot's own default/
+ * unknown state, and Deal Radar never asserts it as a negative claim — the
+ * property is simply left untouched when nothing is verified. Note the exact
+ * casing: the underlying HubSpot *value* for the second option is lowercase
+ * ("First-generation immigrant") even though its display label capitalizes
+ * "Immigrant" — the value is what the API write must match.
+ */
+export const HUBSPOT_IMMIGRANT_BACKGROUND_OPTIONS = ['Immigrant', 'First-generation immigrant'] as const;
+
 export const hubspotFounderSlotSchema = z.object({
   name: z.string(),
   email: z.string().nullable(),
@@ -117,6 +131,12 @@ export const hubspotCompanyRecordSchema = z.object({
   diverseGroup: z.string().nullable().default(null),
   /** Free-text detail — set only alongside diverseGroup === 'Other'. */
   diverseGroupOther: z.string().nullable().default(null),
+  /** One of HUBSPOT_BUSINESS_MODEL_OPTIONS — always a manual reviewer pick, no Deal Radar signal derives it. */
+  businessModel: z.string().nullable().default(null),
+  /** One of HUBSPOT_IMMIGRANT_BACKGROUND_OPTIONS, from a founder's own verified identity (same bar as diverseGroup) — null when nothing is verified, never inferred. */
+  immigrantBackground: z.string().nullable().default(null),
+  /** A founder's own prior company, only when explicitly stated in their verified identity — null (not "no") when nothing is verified. */
+  previousCompanyName: z.string().nullable().default(null),
   /** Up to HUBSPOT_MAX_FOUNDER_SLOTS, in order. */
   founders: z.array(hubspotFounderSlotSchema).max(HUBSPOT_MAX_FOUNDER_SLOTS).default([]),
   /**
@@ -143,6 +163,9 @@ const US_STATE_NAMES: Record<string, string> = {
   VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
   DC: 'Washington, D.C.',
 };
+
+/** The exact `state_` dropdown options, for rendering a real select in the review UI instead of free text. */
+export const HUBSPOT_STATE_OPTIONS = [...Object.values(US_STATE_NAMES).sort(), 'N/A'] as const;
 
 /** Convert Deal Radar's two-letter state code to the full name HubSpot's `state_` dropdown requires. Returns null for anything not a recognized US state/DC (a non-US HQ, or bad data like "??") — never guessed, the field is simply left unset. */
 export function mapStateToHubSpot(state: string | null | undefined): string | null {
@@ -290,7 +313,6 @@ export const hubspotDealRecordSchema = z.object({
   policyException: z.string().nullable(),
   sourcingStatus: z.string(),
   dateSurfaced: z.string(),
-  nextAction: z.string(),
   dealRadarId: z.string(),
   dealRadarUrl: z.string(),
   /** Plain-language scoring explanation (model version + strongest/weakest components). */

@@ -161,7 +161,7 @@ describe('HubSpot search + OAuth (fixtures / offline)', () => {
         companyName: 'SolCare Health', fitScore: 8, recommendation: 'Track', vertical: 'Health',
         stage: 'Seed', scoreBreakdown: [], rationale: '', risks: '', evidenceQualityScore: 5,
         policyException: null, sourcingStatus: 'Surfaced', dateSurfaced: '2026-01-01',
-        nextAction: 'Review', relationshipOwner: null, dealRadarId: 'c-solcare',
+        dealRadarId: 'c-solcare',
         dealRadarUrl: 'http://localhost:5173',
       },
       radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,

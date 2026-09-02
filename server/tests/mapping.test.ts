@@ -19,7 +19,6 @@ function syncPayload() {
       vertical: 'Future of Work', stage: 'Seed',
       scoreBreakdown: [], rationale: 'r', risks: 'none', evidenceQualityScore: 7,
       policyException: null, sourcingStatus: 'Surfaced', dateSurfaced: '2026-03-02',
-      nextAction: 'Review', relationshipOwner: 'MG',
       dealRadarId: 'c-cuadrilla', dealRadarUrl: 'http://localhost:5173/?company=c-cuadrilla',
     },
     radarStage: 'To Be Reviewed',

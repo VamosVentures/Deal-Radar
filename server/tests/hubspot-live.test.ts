@@ -84,7 +84,8 @@ describe('LiveHubSpot (stubbed network)', () => {
     city: 'Austin', state: 'TX', country: 'United States',
     description: 'Derived description.', industry: 'Health & Wellness',
     roundCurrentlyRaising: null, totalRaisingForRound: null, acceleratorParticipation: null,
-    diverseGroup: null, diverseGroupOther: null, founders: [],
+    diverseGroup: null, diverseGroupOther: null, businessModel: null,
+    immigrantBackground: null, previousCompanyName: null, founders: [],
     dealRadarId: 'c-live-1', dealRadarUrl: 'http://localhost:5173/?company=c-live-1',
     ...over,
   });
@@ -92,7 +93,7 @@ describe('LiveHubSpot (stubbed network)', () => {
     companyName: 'Radar Derived Name', fitScore: 8, recommendation: 'Track', vertical: 'Health & Wellness',
     stage: 'Seed', scoreBreakdown: [], rationale: 'r', risks: 'none', evidenceQualityScore: 3,
     policyException: null, sourcingStatus: 'Surfaced', dateSurfaced: '2026-07-01',
-    nextAction: 'Review', relationshipOwner: 'DR', dealRadarId: 'c-live-1',
+    dealRadarId: 'c-live-1',
     dealRadarUrl: 'http://localhost:5173/?company=c-live-1',
     scoreExplanation: 'explained', approvedBy: 'DR', approvalDate: '2026-07-18', sourceUrls: ['https://example.com/e1'],
   });
@@ -137,6 +138,40 @@ describe('LiveHubSpot (stubbed network)', () => {
     expect(state.dealCreateCalls).toBe(0); // never POSTs when the deal id is already known
     expect(state.dealPatchBodies).toHaveLength(1);
     expect(state.dealPatchBodies![0].properties as Record<string, unknown>).toMatchObject({ dealstage: 's-2', pipeline: 'p-1' });
+  });
+
+  /**
+   * A radar record's locally-persisted hubspot_company_id/hubspot_deal_id
+   * link can go stale if the linked record was deleted directly in
+   * HubSpot (e.g. a test record removed by hand after syncing) — the
+   * PATCH then 404s. That must recover by creating a fresh record, not
+   * fail the sync outright and leave the company un-syncable forever.
+   */
+  it('recovers from a 404 on update by creating a fresh company and deal — the link was stale, not wrong', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? 'GET';
+      if (method === 'PATCH' && u.includes('/crm/v3/objects/companies/GONE-1')) {
+        return jsonResponse({ status: 'error', message: 'resource not found' }, 404);
+      }
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/companies')) return jsonResponse({ id: 'HS-NEW' });
+      if (method === 'PATCH' && u.includes('/crm/v3/objects/deals/GONE-2')) {
+        return jsonResponse({ status: 'error', message: 'resource not found' }, 404);
+      }
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/deals')) return jsonResponse({ id: 'DL-NEW' });
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/contacts')) return jsonResponse({ id: 'CT-1' });
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/notes')) return jsonResponse({ id: 'NOTE-1' });
+      if (method === 'PUT' && u.includes('/associations/')) return jsonResponse({});
+      throw new Error(`Unexpected request in test: ${method} ${u}`);
+    }));
+    const { hubspotService } = await liveService();
+    const result = await hubspotService().syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 's-1', pipelineId: 'p-1', resolution: 'update-existing', existingRecordId: 'GONE-1', existingDealId: 'GONE-2',
+    });
+    expect(result.companyId).toBe('HS-NEW');
+    expect(result.dealId).toBe('DL-NEW');
+    expect(result.action).toBe('created'); // honestly reports what actually happened, not what was requested
   });
 
   it('a later Radar-stage change updates the same HubSpot deal\'s stage rather than creating a new one', async () => {
@@ -254,7 +289,7 @@ describe('sync failure recording and retry', () => {
       deal: {
         companyName: 'Retry Co', fitScore: 6, recommendation: 'Track', vertical: 'FinTech', stage: 'Seed',
         scoreBreakdown: [], rationale: '', risks: '', evidenceQualityScore: 2, policyException: null,
-        sourcingStatus: 'Surfaced', dateSurfaced: '2026-07-01', nextAction: 'Review', relationshipOwner: null,
+        sourcingStatus: 'Surfaced', dateSurfaced: '2026-07-01',
         dealRadarId: 'c-retry', dealRadarUrl: 'http://localhost:5173',
       },
       radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,

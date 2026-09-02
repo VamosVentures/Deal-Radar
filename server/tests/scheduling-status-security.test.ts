@@ -278,7 +278,7 @@ describe('company status lifecycle', () => {
       deal: {
         companyName: 'Status Test Co', fitScore: 7, recommendation: 'Track', vertical: 'FinTech', stage: 'Seed',
         scoreBreakdown: [], rationale: 'r', risks: 'none', evidenceQualityScore: 5, policyException: null,
-        sourcingStatus: 'Surfaced', dateSurfaced: '2026-06-01', nextAction: 'Review', relationshipOwner: 'team',
+        sourcingStatus: 'Surfaced', dateSurfaced: '2026-06-01',
         dealRadarId: 'sync-me', dealRadarUrl: 'http://localhost:5173/?company=sync-me',
       },
       radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,

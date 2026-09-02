@@ -245,6 +245,28 @@ export function buildCompanyProperties(c: HubSpotCompanyRecord): Record<string, 
     top_accelerator_participation: c.acceleratorParticipation,
     diverse_group: c.diverseGroup,
     if_other__please_specify_diverse_group: c.diverseGroupOther,
+    business_model: c.businessModel,
+    // First-generation-immigrant/immigrant status, from a founder's own verified
+    // identity (same bar as diverse_group — never inferred). No positive claim,
+    // no property write: "Not applicable" is never asserted, only ever omitted.
+    immigrant_background: c.immigrantBackground,
+    // Same logic as above, applied to prior-founder history: a name only ever
+    // appears here when a founder's verified identity states it explicitly.
+    // "No" is never asserted — absence of evidence isn't evidence of absence.
+    ...(c.previousCompanyName
+      ? {
+          have_you_or_your_co_founders_previously_started_a_company_: 'Yes',
+          if_yes__please_provide_previous_company_name: c.previousCompanyName,
+        }
+      : {}),
+    // "US incorporated" is really "incorporated as a C-Corp" in HubSpot's own
+    // property description — Deal Radar has no way to know incorporation
+    // structure. Approximated from HQ state per Andrew's 2026-09-01 call:
+    // a company with a recognized US HQ state reads "Yes", otherwise "No".
+    c_corp: c.state ? 'Yes' : 'No',
+    // Deal Radar only ever sources outbound — never a founder-form submission.
+    were_you_referred_to_us_: 'No',
+    were_you_referred_by_a_vamosventures_team_member_: 'Not applicable',
     // Deal Radar only ever sources outbound leads — never a founder application.
     inbound_outbound: 'Outbound',
     hubspot_owner_id: OWNER_ID_BY_INDUSTRY[c.industry] ?? null,
@@ -288,7 +310,6 @@ export function buildSyncNoteBody(deal: HubSpotDealRecord, updating: boolean): s
     deal.scoreExplanation ? deal.scoreExplanation : null,
     deal.policyException ? `Policy exception: ${deal.policyException}` : null,
     `Sourcing status: ${deal.sourcingStatus} (surfaced ${deal.dateSurfaced})`,
-    `Next action: ${deal.nextAction}`,
     deal.approvedBy ? `Approved by ${deal.approvedBy}${deal.approvalDate ? ` on ${deal.approvalDate}` : ''}` : null,
     deal.sourceUrls.length > 0 ? `Sources:\n${deal.sourceUrls.join('\n')}` : null,
     `Deal Radar record: ${deal.dealRadarUrl}`,
@@ -503,6 +524,9 @@ class LiveHubSpot implements HubSpotService {
       'name', 'domain', 'website', 'city', 'state_', 'country_', 'description',
       'industry_', 'round_currently_raising', 'total_raising_for_round',
       'top_accelerator_participation', 'diverse_group', 'if_other__please_specify_diverse_group',
+      'business_model', 'immigrant_background',
+      'have_you_or_your_co_founders_previously_started_a_company_', 'if_yes__please_provide_previous_company_name',
+      'c_corp', 'were_you_referred_to_us_', 'were_you_referred_by_a_vamosventures_team_member_',
       'hubspot_owner_id',
     ] as const;
     const ours = buildCompanyProperties(company) as Record<string, string | number | null>;
@@ -530,12 +554,26 @@ class LiveHubSpot implements HubSpotService {
     // (see server/routes/hubspot.ts's performSync) — there is no
     // HubSpot-side property to fall back to searching by.
     const targetId = resolution === 'update-existing' ? existingRecordId : null;
-    const updating = !!targetId;
+    let updating = !!targetId;
 
+    /**
+     * A 404 on the PATCH means the linked HubSpot company was deleted
+     * outside Deal Radar (e.g. a test record removed by hand after a
+     * sync) — the stale local link is gone, not wrong. Recreate rather
+     * than permanently fail every future sync for this radar record.
+     * Any other error is a real failure and still propagates.
+     */
     const companyRes = targetId
       ? await this.call<{ id: string }>(`/crm/v3/objects/companies/${targetId}`, {
           method: 'PATCH',
           body: JSON.stringify({ properties: await this.propertiesRespectingExisting(targetId, company) }),
+        }).catch(async (e: { status?: number }) => {
+          if (e.status !== 404) throw e;
+          updating = false;
+          return this.call<{ id: string }>('/crm/v3/objects/companies', {
+            method: 'POST',
+            body: JSON.stringify({ properties: buildCompanyProperties(company) }),
+          });
         })
       : await this.call<{ id: string }>('/crm/v3/objects/companies', {
           method: 'POST',
@@ -577,19 +615,27 @@ class LiveHubSpot implements HubSpotService {
     // Same as the company — the caller's persisted hubspot_deal_id is
     // the only link; no HubSpot-side property to search by instead.
     const dealTargetId = existingDealId;
-    const dealUpdating = !!dealTargetId;
-    const dealProps = buildDealProperties(deal, stageId, pipelineId) as Record<string, string | number | null>;
-    // Owner is preserve-if-set, same reasoning as the company: a human
-    // may have manually reassigned the deal, and a resync shouldn't fight it.
-    if (dealUpdating) delete dealProps.hubspot_owner_id;
+    let dealUpdating = !!dealTargetId;
+    const fullDealProps = buildDealProperties(deal, stageId, pipelineId) as Record<string, string | number | null>;
+    // Same 404-recovery reasoning as the company: a deleted-outside-Deal-Radar
+    // deal recreates rather than fails the sync outright.
     const dealRes = dealTargetId
       ? await this.call<{ id: string }>(`/crm/v3/objects/deals/${dealTargetId}`, {
           method: 'PATCH',
-          body: JSON.stringify({ properties: dealProps }),
+          // Owner is preserve-if-set on a genuine update, same reasoning as
+          // the company — a human may have manually reassigned the deal.
+          body: JSON.stringify({ properties: { ...fullDealProps, hubspot_owner_id: undefined } }),
+        }).catch(async (e: { status?: number }) => {
+          if (e.status !== 404) throw e;
+          dealUpdating = false;
+          return this.call<{ id: string }>('/crm/v3/objects/deals', {
+            method: 'POST',
+            body: JSON.stringify({ properties: fullDealProps }),
+          });
         })
       : await this.call<{ id: string }>('/crm/v3/objects/deals', {
           method: 'POST',
-          body: JSON.stringify({ properties: dealProps }),
+          body: JSON.stringify({ properties: fullDealProps }),
         });
 
     // Associations: deal↔company, deal↔contacts, company↔contacts.

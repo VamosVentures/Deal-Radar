@@ -9,10 +9,13 @@ import { ExceptionBadge, ScoreGauge } from './ui';
 import { btnGhost, btnPrimary, ErrorNote, Field, Modal } from './Modal';
 import {
   HUBSPOT_ACCELERATOR_OPTIONS,
+  HUBSPOT_BUSINESS_MODEL_OPTIONS,
   HUBSPOT_DIVERSE_GROUP_OPTIONS,
+  HUBSPOT_IMMIGRANT_BACKGROUND_OPTIONS,
   HUBSPOT_INDUSTRY_OPTIONS,
   HUBSPOT_RAISE_RANGE_OPTIONS,
   HUBSPOT_ROUND_OPTIONS,
+  HUBSPOT_STATE_OPTIONS,
   normalizeDomain,
   RADAR_HUBSPOT_STAGE_GROUPS,
   type DuplicateMatch,
@@ -43,7 +46,6 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
 
   const [company, setCompany] = useState(() => companyToHubSpot(c));
   const [approvedBy, setApprovedBy] = useState(APPROVERS[0]);
-  const [nextAction, setNextAction] = useState('Review evidence and approve outreach');
   const [notes, setNotes] = useState('');
   const [radarStage, setRadarStage] = useState<RadarHubSpotStage>('To Be Reviewed');
   /**
@@ -109,7 +111,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
     setBusy(true);
     setError(null);
     try {
-      const base = dealToHubSpot(c, approvedBy, nextAction);
+      const base = dealToHubSpot(c, approvedBy);
       const deal = {
         ...base,
         rationale: notes ? `${notes} — ${base.rationale}` : base.rationale,
@@ -176,10 +178,21 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                 {HUBSPOT_INDUSTRY_OPTIONS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </label>
-            <Field label="Headquarters" value={`${company.city}, ${company.state ?? ''}`} onChange={(v) => {
-              const [city, state = ''] = v.split(',');
-              setCompany((p) => ({ ...p, city: city.trim(), state: state.trim() || null }));
-            }} />
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              Business model
+              <select value={company.businessModel ?? ''} onChange={(e) => setCompany((p) => ({ ...p, businessModel: e.target.value || null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                <option value="">— not set —</option>
+                {HUBSPOT_BUSINESS_MODEL_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
+            <Field label="City" value={company.city} onChange={setCompanyField('city')} />
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              State
+              <select value={company.state ?? ''} onChange={(e) => setCompany((p) => ({ ...p, state: e.target.value || null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                <option value="">— not set —</option>
+                {HUBSPOT_STATE_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
             <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
               Round currently raising
               <select value={company.roundCurrentlyRaising ?? ''} onChange={(e) => setCompany((p) => ({ ...p, roundCurrentlyRaising: e.target.value || null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
@@ -208,6 +221,13 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                 {HUBSPOT_DIVERSE_GROUP_OPTIONS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </label>
+            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
+              Immigrant background
+              <select value={company.immigrantBackground ?? ''} onChange={(e) => setCompany((p) => ({ ...p, immigrantBackground: e.target.value || null }))} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+                <option value="">— not set —</option>
+                {HUBSPOT_IMMIGRANT_BACKGROUND_OPTIONS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </label>
             {company.diverseGroup === 'Other' && (
               <Field label="Diverse group — specify" value={company.diverseGroupOther ?? ''} onChange={setCompanyField('diverseGroupOther')} />
             )}
@@ -215,7 +235,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           <Field label="Company description" value={company.description} onChange={setCompanyField('description')} textarea />
           <Field label="Sourcing notes (added to the deal rationale)" value={notes} onChange={setNotes} textarea placeholder="Optional analyst notes" />
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
               Suggested HubSpot stage
               <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
@@ -232,7 +252,6 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
                 {APPROVERS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </label>
-            <Field label="Next action" value={nextAction} onChange={setNextAction} />
           </div>
 
           <section>

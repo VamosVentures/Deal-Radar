@@ -74,7 +74,6 @@ const deal = {
   rationale: 'Direct thesis match.', risks: 'None flagged.',
   evidenceQualityScore: 4, policyException: null,
   sourcingStatus: 'Surfaced by Deal Radar', dateSurfaced: '2026-04-12',
-  nextAction: 'Approve outreach', relationshipOwner: 'DR',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
   scoreExplanation: 'VamosVentures Fit Score 8.7/10 (87/100 points, model v3.0 (2026-07)).',
   approvedBy: 'DR', approvalDate: '2026-07-18',

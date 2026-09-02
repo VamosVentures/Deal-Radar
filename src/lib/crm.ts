@@ -64,6 +64,9 @@ export function companyToHubSpot(c: Company): HubSpotCompanyRecord {
     acceleratorParticipation: matchAcceleratorOption(c.accelerator ?? null),
     diverseGroup,
     diverseGroupOther,
+    businessModel: null,
+    immigrantBackground: c.founders.map((f) => f.identity?.immigrantBackground).find((v): v is 'Immigrant' | 'First-generation immigrant' => !!v) ?? null,
+    previousCompanyName: c.founders.map((f) => f.identity?.previousCompanyName).find((v): v is string => !!v) ?? null,
     founders: founderSlotsForHubSpot(c),
     dealRadarId: c.id,
     dealRadarUrl: `${window.location.origin}/?company=${c.id}`,
@@ -128,7 +131,7 @@ export function founderToHubSpot(c: Company, f: Founder): HubSpotContactRecord {
   };
 }
 
-export function dealToHubSpot(c: Company, approvedBy: string | null, nextAction: string): HubSpotDealRecord {
+export function dealToHubSpot(c: Company, approvedBy: string | null): HubSpotDealRecord {
   const fit = scoreCompany(c);
   const evidenceQuality = fit.components.find((x) => x.key === 'evidence')?.points ?? 0;
   const risks = [
@@ -148,7 +151,6 @@ export function dealToHubSpot(c: Company, approvedBy: string | null, nextAction:
     policyException: policyExceptionText(c),
     sourcingStatus: 'Surfaced by Deal Radar',
     dateSurfaced: c.dateFirstSurfaced ?? TODAY(),
-    nextAction,
     dealRadarId: c.id,
     dealRadarUrl: `${window.location.origin}/?company=${c.id}`,
     scoreExplanation: fit.explanation,

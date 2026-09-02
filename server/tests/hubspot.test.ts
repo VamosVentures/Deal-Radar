@@ -33,6 +33,7 @@ const company = (over: Partial<HubSpotCompanyRecord> = {}): HubSpotCompanyRecord
   totalRaisingForRound: '$1,000,000-5,000,000',
   acceleratorParticipation: null,
   diverseGroup: null, diverseGroupOther: null,
+  businessModel: null, immigrantBackground: null, previousCompanyName: null,
   founders: [{ name: 'Mariana Otero', email: 'mariana@solcarehealth.example.com', linkedin: null, jobTitle: 'CEO' }],
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
   ...over,
@@ -56,7 +57,6 @@ const deal = (over: Partial<HubSpotDealRecord> = {}): HubSpotDealRecord => ({
   rationale: 'Direct thesis match.', risks: 'None flagged.',
   evidenceQualityScore: 8, policyException: null,
   sourcingStatus: 'Surfaced by Deal Radar', dateSurfaced: '2026-04-12',
-  nextAction: 'Approve outreach',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
   scoreExplanation: 'VamosVentures Fit Score 8.7/10 (test fixture explanation).',
   approvedBy: 'DR', approvalDate: '2026-07-18',
@@ -151,6 +151,37 @@ describe('payload builders', () => {
     const p = buildCompanyProperties(company({ acceleratorParticipation: null, diverseGroup: null }));
     expect('top_accelerator_participation' in p).toBe(false);
     expect('diverse_group' in p).toBe(false);
+  });
+
+  it('always fills in the fields Deal Radar knows about its own sourcing process — outbound, no referral', () => {
+    const p = buildCompanyProperties(company());
+    expect(p.were_you_referred_to_us_).toBe('No');
+    expect(p.were_you_referred_by_a_vamosventures_team_member_).toBe('Not applicable');
+  });
+
+  it('approximates US incorporated from whether the HQ state resolved to a real US state', () => {
+    expect(buildCompanyProperties(company({ state: 'California' })).c_corp).toBe('Yes');
+    expect(buildCompanyProperties(company({ state: null })).c_corp).toBe('No');
+  });
+
+  it('writes business model only when a reviewer picked one — never a Deal Radar guess', () => {
+    expect(buildCompanyProperties(company({ businessModel: null })).business_model).toBeUndefined();
+    expect(buildCompanyProperties(company({ businessModel: 'B2B' })).business_model).toBe('B2B');
+  });
+
+  it('writes immigrant background only from a founder\'s own verified identity, never "Not applicable"', () => {
+    expect(buildCompanyProperties(company({ immigrantBackground: null })).immigrant_background).toBeUndefined();
+    expect(buildCompanyProperties(company({ immigrantBackground: 'First-generation immigrant' })).immigrant_background).toBe('First-generation immigrant');
+  });
+
+  it('only asserts "previously started a company" as Yes with a name — never as a negative guess', () => {
+    const unverified = buildCompanyProperties(company({ previousCompanyName: null }));
+    expect('have_you_or_your_co_founders_previously_started_a_company_' in unverified).toBe(false);
+    expect('if_yes__please_provide_previous_company_name' in unverified).toBe(false);
+
+    const verified = buildCompanyProperties(company({ previousCompanyName: 'Prior Startup Inc.' }));
+    expect(verified.have_you_or_your_co_founders_previously_started_a_company_).toBe('Yes');
+    expect(verified.if_yes__please_provide_previous_company_name).toBe('Prior Startup Inc.');
   });
 
   it('builds contact payload with only the three properties Vamos actually uses on Contact', () => {
@@ -428,7 +459,7 @@ describe('founder contacts written to HubSpot', () => {
       ],
       deal: {
         companyName: 'Guard Co', fitScore: 7, recommendation: 'Track', vertical: 'Health & Wellness',
-        stage: 'Seed', scoreBreakdown: [], rationale: 'x', risks: '', nextAction: 'y',
+        stage: 'Seed', scoreBreakdown: [], rationale: 'x', risks: '',
         sourceEvidence: [], reviewer: null,
         evidenceQualityScore: 5, policyException: '', sourcingStatus: 'Approved to Track',
         dateSurfaced: '2026-07-01', relationshipOwner: '', dealRadarId: 'c-guard-1',
