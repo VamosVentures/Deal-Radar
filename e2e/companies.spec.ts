@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { E2E_BACKEND_PORT } from './env';
+import { bulkSetStatus } from './bulk-status';
 
 test.describe('All Deals (companies review queue)', () => {
   test('loads with the seeded companies and no demo/sample data', async ({ page }) => {
@@ -75,26 +76,29 @@ test.describe('All Deals (companies review queue)', () => {
     await expect(disabledRunSync).toHaveAttribute('title', /is disabled\. Use Enable first/);
   });
 
-  test('the company detail view opens and review-status actions work', async ({ page }) => {
+  test('the company detail view opens and a status set from the queue lands on it', async ({ page }) => {
     await page.goto('/companies');
+    await bulkSetStatus(page, 'E2E Health Fixture Co', 'Monitor');
+
+    // The detail view still opens on a row click, and carries the
+    // status the queue just applied — the two halves of the workflow
+    // that the removed panel used to combine into one screen.
     await page.getByText('E2E Health Fixture Co').click();
     await expect(page.getByText(/VamosVentures Fit Score:/)).toBeVisible();
-
-    await page.getByRole('button', { name: 'Monitor' }).click();
     await expect(page.getByText('Monitor', { exact: true }).first()).toBeVisible();
   });
 
-  test('Research Needed and Awaiting Review actions work from the detail view', async ({ page }) => {
+  test('Research Needed is reachable for a company awaiting review', async ({ page }) => {
     await page.goto('/companies');
+    await bulkSetStatus(page, 'E2E FinTech Fixture Co', 'Research Needed');
     await page.getByText('E2E FinTech Fixture Co').click();
-    await page.getByRole('button', { name: 'Send for research' }).click();
     await expect(page.getByText('Research Needed').first()).toBeVisible();
   });
 
-  test('Pass moves a company to a terminal status', async ({ page }) => {
+  test('Passed moves a company to a terminal status', async ({ page }) => {
     await page.goto('/companies');
+    await bulkSetStatus(page, 'E2E FinTech Fixture Co', 'Passed');
     await page.getByText('E2E FinTech Fixture Co').click();
-    await page.getByRole('button', { name: 'Pass', exact: true }).click();
     await expect(page.getByText('Passed', { exact: true }).first()).toBeVisible();
   });
 
