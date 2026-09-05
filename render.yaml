@@ -107,6 +107,39 @@ services:
       # Optional: identifies this app to SEC EDGAR per their request.
       - key: SEC_CONTACT_EMAIL
         sync: false
+
+      # ── HubSpot ────────────────────────────────────────────────
+      # Declared here — with NO values — for exactly the reason the
+      # Entra block above gives: without an entry there is nothing on
+      # the service to fill in, and the symptom is silent. HubSpot had
+      # no entry at all, so a deployment that had just shipped a full
+      # HubSpot sync rebuild reported `hubspot: not_configured` on
+      # /health/ready and nothing said why. `.env` is gitignored and
+      # never travels, so a working local token proves nothing about
+      # this service.
+      #
+      # Both are sync: false and are entered ONCE in the Render
+      # dashboard. The token is a real credential and must never be
+      # committed here.
+      #
+      # HUBSPOT_ACCESS_TOKEN is a private-app token and is what makes
+      # hubspotConnected() true (server/services/hubspot.ts). It needs
+      # the read+write scopes on companies, contacts, deals and notes
+      # listed in .env.example.
+      #
+      # The alternative is the OAuth app — HUBSPOT_CLIENT_ID plus
+      # HUBSPOT_CLIENT_SECRET, with a human clicking Connect under Data
+      # Sources, and the callback derived from APP_BASE_URL. Those are
+      # deliberately NOT declared: exactly one of the two mechanisms
+      # should be live, and the private-app token is the one this
+      # deployment uses. Adding empty OAuth slots alongside it would
+      # invite filling in both and make hubspotAuthType() ambiguous.
+      - key: HUBSPOT_ACCESS_TOKEN
+        sync: false
+      # Optional. Only enables deep links from a synced record back to
+      # the HubSpot portal; sync itself works without it.
+      - key: HUBSPOT_PORTAL_ID
+        sync: false
     disk:
       name: deal-radar-data
       mountPath: /app/server/.data

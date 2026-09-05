@@ -566,4 +566,39 @@ describe('the Render blueprint declares what production needs', () => {
     // …and the password it falls back to is still provisioned.
     expect(declared).toContain('ADMIN_PASSWORD');
   });
+
+  /**
+   * The SAME failure this describe block was written for, recurring on a
+   * different integration.
+   *
+   * HubSpot had no entry in the blueprint at all, so there was no field
+   * on the Render service to fill in and no way to notice: production
+   * reported `hubspot: not_configured` on /health/ready immediately
+   * after a three-commit HubSpot sync rebuild shipped, and a developer
+   * checking locally saw "connected" because `.env` is gitignored and
+   * never travels to Render.
+   *
+   * hubspotConnected() is satisfied by HUBSPOT_ACCESS_TOKEN, so that is
+   * the one that must exist as a slot.
+   */
+  it('declares the HubSpot credential the sync actually needs', () => {
+    expect(declared).toContain('HUBSPOT_ACCESS_TOKEN');
+  });
+
+  it('never commits a value for the HubSpot token', () => {
+    const entry = /-\s*key:\s*HUBSPOT_ACCESS_TOKEN\s*\n\s*(\S+):/m.exec(blueprint);
+    expect(entry, 'HUBSPOT_ACCESS_TOKEN is not declared in render.yaml').not.toBeNull();
+    expect(entry![1], 'HUBSPOT_ACCESS_TOKEN must be sync: false, never a committed value').toBe('sync');
+  });
+
+  it('does not declare the OAuth app alongside the private-app token', () => {
+    // hubspotAuthType() resolves private-app BEFORE oauth, so having
+    // both provisioned makes the live auth path depend on which
+    // dashboard field someone happened to fill in. Exactly one
+    // mechanism should exist on this service.
+    expect(declared).not.toContain('HUBSPOT_CLIENT_ID');
+    expect(declared).not.toContain('HUBSPOT_CLIENT_SECRET');
+    // Derived from APP_BASE_URL, same rule as the Entra callbacks.
+    expect(declared).not.toContain('HUBSPOT_REDIRECT_URI');
+  });
 });
