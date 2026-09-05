@@ -23,10 +23,8 @@ export function uninstallMockIntegrations(): void {
 /** A complete radar-stage → fixture-stage mapping (sync routes require one). */
 export function installTestPipelineMapping(): void {
   setConfig('hubspot-pipeline-mapping', {
-    pipelineId: 'test-pipeline',
-    pipelineLabel: 'Test fixture pipeline',
     stages: Object.fromEntries(
-      RADAR_HUBSPOT_STAGES.map((s) => [s, `test-${s.toLowerCase().replace(/\s+/g, '-')}`]),
+      RADAR_HUBSPOT_STAGES.map((s) => [s, { pipelineId: 'test-pipeline', stageId: `test-${s.toLowerCase().replace(/\s+/g, '-')}` }]),
     ),
   });
 }

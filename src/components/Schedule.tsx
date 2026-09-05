@@ -103,9 +103,9 @@ export function SchedulePanel() {
       {state && <p className="mt-1 text-[11px] text-slate-mid">{state.label} Runs happen server-side — no browser tab needs to stay open.</p>}
       <p className="text-[11px] text-slate-mid">
         Scheduled runs use the same pipeline, budgets, and guardrails as a manual run and cannot overlap another
-        run in progress. Unlike a manual run, new candidates are auto-imported to Awaiting Review rather than
-        left in the candidate preview — they still never contact founders, send email, approve/reject deals,
-        or change HubSpot stages.
+        run in progress. Every run — scheduled or manual — auto-imports its new, non-duplicate candidates to
+        Awaiting Review rather than leaving them in the candidate preview; they still never contact founders,
+        send email, approve/reject deals, or change HubSpot stages.
       </p>
 
       <div className="mt-3 grid gap-2 rounded-[2px] border border-line bg-paper p-3 text-xs">

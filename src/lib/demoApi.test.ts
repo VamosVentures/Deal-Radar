@@ -69,7 +69,7 @@ describe('demoApi — never calls fetch, ever', () => {
 
   const mutations: Array<[string, () => Promise<unknown>]> = [
     ['hubspot.connect', () => demoApi.hubspot.connect()],
-    ['hubspot.saveMapping', () => demoApi.hubspot.saveMapping({ pipelineId: 'x', pipelineLabel: 'x', stages: {} })],
+    ['hubspot.saveMapping', () => demoApi.hubspot.saveMapping({ stages: {} })],
     ['hubspot.syncCompany', () => demoApi.hubspot.syncCompany({} as never)],
     ['outlook.connect', () => demoApi.outlook.connect()],
     ['outlook.saveDraft', () => demoApi.outlook.saveDraft({ companyId: 'x', to: 'a@b.com', subject: 's', body: 'b', senderName: 'n', tone: 't' })],

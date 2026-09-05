@@ -10,10 +10,7 @@ function syncPayload() {
     company: {
       name: 'Cuadrilla', domain: 'cuadrilla.example.com', website: 'https://cuadrilla.example.com',
       city: 'San Antonio', state: 'TX', country: 'United States',
-      description: 'Bilingual field-ops platform.', vertical: 'Future of Work',
-      subcategory: 'Workforce tools', stage: 'Seed', accelerator: null, fundingRaised: null,
-      dateFirstSurfaced: '2026-03-02', lastRefreshed: '2026-07-14',
-      primarySource: 'Company About page', policyException: null,
+      description: 'Bilingual field-ops platform.', industry: 'Future of Work',
       dealRadarId: 'c-cuadrilla', dealRadarUrl: 'http://localhost:5173/?company=c-cuadrilla',
     },
     contacts: [],
@@ -22,10 +19,9 @@ function syncPayload() {
       vertical: 'Future of Work', stage: 'Seed',
       scoreBreakdown: [], rationale: 'r', risks: 'none', evidenceQualityScore: 7,
       policyException: null, sourcingStatus: 'Surfaced', dateSurfaced: '2026-03-02',
-      nextAction: 'Review', relationshipOwner: 'MG',
       dealRadarId: 'c-cuadrilla', dealRadarUrl: 'http://localhost:5173/?company=c-cuadrilla',
     },
-    radarStage: 'Approved to Track',
+    radarStage: 'To Be Reviewed',
     duplicateResolution: 'create-new',
     existingRecordId: null,
   };
@@ -55,9 +51,7 @@ describe('pipeline-stage mapping', () => {
     const app = createApp();
     const agent = await adminAgent(app);
     const put = await agent.put('/api/hubspot/pipeline-mapping').send({
-      pipelineId: 'test-pipeline',
-      pipelineLabel: 'Test',
-      stages: { 'Approved to Track': 'custom-stage-42' },
+      stages: { 'To Be Reviewed': { pipelineId: 'test-pipeline', stageId: 'custom-stage-42' } },
     });
     expect(put.status).toBe(200);
     const res = await agent.post('/api/hubspot/sync-company').send(syncPayload());
@@ -70,7 +64,7 @@ describe('pipeline-stage mapping', () => {
   it('rejects an invalid mapping payload', async () => {
     const app = createApp();
     const agent = await adminAgent(app);
-    const res = await agent.put('/api/hubspot/pipeline-mapping').send({ pipelineId: '', stages: 'nope' });
+    const res = await agent.put('/api/hubspot/pipeline-mapping').send({ stages: 'nope' });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_failed');
   });

@@ -38,18 +38,9 @@ describe('LiveHubSpot (stubbed network)', () => {
       const u = String(url);
       const method = init?.method ?? 'GET';
       if (u.includes('/crm/v3/objects/companies/search')) {
-        const body = JSON.parse(String(init?.body ?? '{}'));
-        const prop = body.filterGroups?.[0]?.filters?.[0]?.propertyName;
-        if (prop === 'vamos_deal_radar_id' && state.companyExists) {
-          return jsonResponse({ results: [{ id: 'HS-1', properties: { name: 'HubSpot Explicit Name', domain: 'explicit.example.com' } }] });
-        }
         return jsonResponse({ results: [] });
       }
       if (u.includes('/crm/v3/objects/contacts/search')) return jsonResponse({ results: [] });
-      if (u.includes('/crm/v3/objects/deals/search')) {
-        if (state.dealExists) return jsonResponse({ results: [{ id: 'DL-1' }] });
-        return jsonResponse({ results: [] });
-      }
       if (method === 'GET' && u.includes('/crm/v3/objects/companies/HS-1')) {
         return jsonResponse({ properties: state.existingProperties });
       }
@@ -72,6 +63,7 @@ describe('LiveHubSpot (stubbed network)', () => {
         state.dealExists = true;
         return jsonResponse({ id: 'DL-1' });
       }
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/notes')) return jsonResponse({ id: 'NOTE-1' });
       if (method === 'PUT' && u.includes('/associations/')) return jsonResponse({});
       if (u.endsWith('/crm/v3/objects/companies?limit=1')) return jsonResponse({ results: [] });
       throw new Error(`Unexpected request in test: ${method} ${u}`);
@@ -90,10 +82,10 @@ describe('LiveHubSpot (stubbed network)', () => {
   const company = (over: Record<string, unknown> = {}) => ({
     name: 'Radar Derived Name', domain: 'radar.example.com', website: 'https://radar.example.com',
     city: 'Austin', state: 'TX', country: 'United States',
-    description: 'Derived description.', vertical: 'Health & Wellness', subcategory: 'Care',
-    stage: 'Seed', accelerator: null, fundingRaised: null,
-    dateFirstSurfaced: '2026-07-01', lastRefreshed: '2026-07-18',
-    primarySource: 'src', policyException: null,
+    description: 'Derived description.', industry: 'Health & Wellness',
+    roundCurrentlyRaising: null, totalRaisingForRound: null, acceleratorParticipation: null,
+    diverseGroup: null, diverseGroupOther: null, businessModel: null,
+    immigrantBackground: null, previousCompanyName: null, founders: [],
     dealRadarId: 'c-live-1', dealRadarUrl: 'http://localhost:5173/?company=c-live-1',
     ...over,
   });
@@ -101,12 +93,23 @@ describe('LiveHubSpot (stubbed network)', () => {
     companyName: 'Radar Derived Name', fitScore: 8, recommendation: 'Track', vertical: 'Health & Wellness',
     stage: 'Seed', scoreBreakdown: [], rationale: 'r', risks: 'none', evidenceQualityScore: 3,
     policyException: null, sourcingStatus: 'Surfaced', dateSurfaced: '2026-07-01',
-    nextAction: 'Review', relationshipOwner: 'DR', dealRadarId: 'c-live-1',
+    dealRadarId: 'c-live-1',
     dealRadarUrl: 'http://localhost:5173/?company=c-live-1',
     scoreExplanation: 'explained', approvedBy: 'DR', approvalDate: '2026-07-18', sourceUrls: ['https://example.com/e1'],
   });
 
-  it('creates a company exactly once — a repeated create-new call updates instead (idempotent)', async () => {
+  /**
+   * There is no HubSpot-side property (like the old vamos_deal_radar_id)
+   * for syncCompany to search by, so a create-new call with no
+   * existingRecordId/existingDealId always creates — it never guesses
+   * at a prior record. Deduplication instead happens one layer up:
+   * checkDuplicate's domain/name tiers run before the reviewer confirms
+   * a sync, and server/routes/hubspot.ts's performSync passes the
+   * radar record's own persisted hubspot_company_id/hubspot_deal_id as
+   * existingRecordId/existingDealId once a first sync has happened —
+   * see the 'reuses a persisted hubspot_deal_id directly' test below.
+   */
+  it('create-new with no existing id always creates — syncCompany itself never searches for a prior record', async () => {
     const state: PortalState = { companyExists: false, createCalls: 0, patchBodies: [], existingProperties: {} };
     stubPortal(state);
     const { hubspotService } = await liveService();
@@ -117,15 +120,10 @@ describe('LiveHubSpot (stubbed network)', () => {
     };
     const first = await svc.syncCompany(args);
     expect(first.action).toBe('created');
-    const second = await svc.syncCompany(args); // repeated click, still create-new
-    expect(second.action).toBe('updated');
-    expect(second.companyId).toBe(first.companyId);
-    expect(state.createCalls).toBe(1); // never a duplicate company in HubSpot
-    // The deal is idempotent too: found via a live vamos_deal_radar_id
-    // search (no existingDealId was passed) and PATCHed, never re-POSTed.
-    expect(second.dealId).toBe(first.dealId);
-    expect(state.dealCreateCalls).toBe(1);
-    expect(state.dealPatchBodies).toHaveLength(1);
+    const second = await svc.syncCompany(args); // repeated click, still create-new, no id supplied
+    expect(second.action).toBe('created');
+    expect(state.createCalls).toBe(2);
+    expect(state.dealCreateCalls).toBe(2);
   });
 
   it('reuses a persisted hubspot_deal_id directly (PATCH, no search) when the caller supplies it', async () => {
@@ -140,6 +138,40 @@ describe('LiveHubSpot (stubbed network)', () => {
     expect(state.dealCreateCalls).toBe(0); // never POSTs when the deal id is already known
     expect(state.dealPatchBodies).toHaveLength(1);
     expect(state.dealPatchBodies![0].properties as Record<string, unknown>).toMatchObject({ dealstage: 's-2', pipeline: 'p-1' });
+  });
+
+  /**
+   * A radar record's locally-persisted hubspot_company_id/hubspot_deal_id
+   * link can go stale if the linked record was deleted directly in
+   * HubSpot (e.g. a test record removed by hand after syncing) — the
+   * PATCH then 404s. That must recover by creating a fresh record, not
+   * fail the sync outright and leave the company un-syncable forever.
+   */
+  it('recovers from a 404 on update by creating a fresh company and deal — the link was stale, not wrong', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? 'GET';
+      if (method === 'PATCH' && u.includes('/crm/v3/objects/companies/GONE-1')) {
+        return jsonResponse({ status: 'error', message: 'resource not found' }, 404);
+      }
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/companies')) return jsonResponse({ id: 'HS-NEW' });
+      if (method === 'PATCH' && u.includes('/crm/v3/objects/deals/GONE-2')) {
+        return jsonResponse({ status: 'error', message: 'resource not found' }, 404);
+      }
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/deals')) return jsonResponse({ id: 'DL-NEW' });
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/contacts')) return jsonResponse({ id: 'CT-1' });
+      if (method === 'POST' && u.endsWith('/crm/v3/objects/notes')) return jsonResponse({ id: 'NOTE-1' });
+      if (method === 'PUT' && u.includes('/associations/')) return jsonResponse({});
+      throw new Error(`Unexpected request in test: ${method} ${u}`);
+    }));
+    const { hubspotService } = await liveService();
+    const result = await hubspotService().syncCompany({
+      company: company(), contacts: [], deal: deal(),
+      stageId: 's-1', pipelineId: 'p-1', resolution: 'update-existing', existingRecordId: 'GONE-1', existingDealId: 'GONE-2',
+    });
+    expect(result.companyId).toBe('HS-NEW');
+    expect(result.dealId).toBe('DL-NEW');
+    expect(result.action).toBe('created'); // honestly reports what actually happened, not what was requested
   });
 
   it('a later Radar-stage change updates the same HubSpot deal\'s stage rather than creating a new one', async () => {
@@ -168,24 +200,24 @@ describe('LiveHubSpot (stubbed network)', () => {
       patchBodies: [],
       existingProperties: {
         name: 'HubSpot Explicit Name', domain: 'explicit.example.com', website: 'https://explicit.example.com',
-        city: 'Boston', state: 'MA', country: 'United States', description: 'Explicit description written in HubSpot.',
+        city: 'Boston', state_: 'MA', country_: 'United States', description: 'Explicit description written in HubSpot.',
       },
     };
     stubPortal(state);
     const { hubspotService } = await liveService();
     const result = await hubspotService().syncCompany({
       company: company({ city: 'Austin', state: 'TX' }), contacts: [], deal: deal(),
-      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new', existingRecordId: null, existingDealId: null,
+      stageId: 's-1', pipelineId: 'p-1', resolution: 'update-existing', existingRecordId: 'HS-1', existingDealId: null,
     });
     expect(result.action).toBe('updated');
     const patch = state.patchBodies[0].properties as Record<string, unknown>;
     // Explicit HubSpot values preserved — no inferred/derived overwrite:
-    for (const preserved of ['name', 'domain', 'website', 'city', 'state', 'country', 'description']) {
+    for (const preserved of ['name', 'domain', 'website', 'city', 'state_', 'country_', 'description']) {
       expect(patch).not.toHaveProperty(preserved);
     }
-    // Our own vamos_* properties ARE refreshed:
-    expect(patch.vamos_deal_radar_id).toBe('c-live-1');
-    expect(patch.vamos_vertical).toBe('Health & Wellness');
+    // Founder slots and the outbound-sourcing fact are Deal Radar's own
+    // authoritative data, so they ARE always refreshed:
+    expect(patch.inbound_outbound).toBe('Outbound');
   });
 
   it('fills empty HubSpot fields while preserving the non-empty ones', async () => {
@@ -195,19 +227,19 @@ describe('LiveHubSpot (stubbed network)', () => {
       patchBodies: [],
       existingProperties: {
         name: 'HubSpot Explicit Name', domain: null, website: '', // empty → ours may fill
-        city: 'Boston', state: 'MA', country: null, description: null,
+        city: 'Boston', state_: 'MA', country_: null, description: null,
       },
     };
     stubPortal(state);
     const { hubspotService } = await liveService();
     await hubspotService().syncCompany({
       company: company(), contacts: [], deal: deal(),
-      stageId: 's-1', pipelineId: 'p-1', resolution: 'create-new', existingRecordId: null, existingDealId: null,
+      stageId: 's-1', pipelineId: 'p-1', resolution: 'update-existing', existingRecordId: 'HS-1', existingDealId: null,
     });
     const patch = state.patchBodies[0].properties as Record<string, unknown>;
     expect(patch).not.toHaveProperty('name');   // explicit → preserved
     expect(patch).not.toHaveProperty('city');   // explicit geography → never overwritten
-    expect(patch).not.toHaveProperty('state');
+    expect(patch).not.toHaveProperty('state_');
     expect(patch.domain).toBe('radar.example.com');   // empty → filled from recorded facts
     expect(patch.website).toBe('https://radar.example.com');
     expect(patch.description).toBe('Derived description.');
@@ -250,18 +282,17 @@ describe('sync failure recording and retry', () => {
     const payload = {
       company: {
         name: 'Retry Co', domain: null, website: null, city: 'Austin', state: 'TX', country: 'United States',
-        description: 'x', vertical: 'FinTech', subcategory: 'Payments', stage: 'Seed', accelerator: null,
-        fundingRaised: null, dateFirstSurfaced: '2026-07-01', lastRefreshed: '2026-07-18',
-        primarySource: 'src', policyException: null, dealRadarId: 'c-retry', dealRadarUrl: 'http://localhost:5173',
+        description: 'x', industry: 'FinTech',
+        dealRadarId: 'c-retry', dealRadarUrl: 'http://localhost:5173',
       },
       contacts: [],
       deal: {
         companyName: 'Retry Co', fitScore: 6, recommendation: 'Track', vertical: 'FinTech', stage: 'Seed',
         scoreBreakdown: [], rationale: '', risks: '', evidenceQualityScore: 2, policyException: null,
-        sourcingStatus: 'Surfaced', dateSurfaced: '2026-07-01', nextAction: 'Review', relationshipOwner: null,
+        sourcingStatus: 'Surfaced', dateSurfaced: '2026-07-01',
         dealRadarId: 'c-retry', dealRadarUrl: 'http://localhost:5173',
       },
-      radarStage: 'Surfaced', duplicateResolution: 'create-new', existingRecordId: null,
+      radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,
     };
 
     const agent = await adminAgent(app);

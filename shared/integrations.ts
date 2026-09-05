@@ -54,28 +54,198 @@ export const verifiedDemographicSchema = z.object({
 export type VerifiedDemographic = z.infer<typeof verifiedDemographicSchema>;
 
 // ── HubSpot record payloads ──────────────────────────────────────
+//
+// These map onto Vamos's OWN pre-existing HubSpot Company/Deal/Contact
+// properties — the same ones every other deal in the portal carries,
+// whether sourced by Deal Radar or entered any other way. No `vamos_*`
+// custom property is ever created or written; see server/services/
+// hubspot.ts's buildCompanyProperties/buildDealProperties for the exact
+// internal property names, pulled from the live portal schema.
+//
+// A field with no corresponding property in Vamos's schema (fit score,
+// rationale, risks, evidence, sourcing status, source URLs, the Deal
+// Radar link) is never invented as a new property — it goes into a
+// HubSpot Note attached at sync time instead (see buildSyncNoteBody).
+
+/** HubSpot `industry_` (Company) — a fixed dropdown; values match src/data/taxonomy.ts vertical names exactly. */
+export const HUBSPOT_INDUSTRY_OPTIONS = ['Consumer', 'Health & Wellness', 'EdTech', 'FinTech', 'Frontier', 'Future of Work', 'Sustainability', 'Other', 'AI'] as const;
+
+/** HubSpot `round_currently_raising` (Company) — a fixed dropdown. */
+export const HUBSPOT_ROUND_OPTIONS = ['Angel / Angel+', 'Pre-Seed / Pre-Seed+', 'Seed / Seed+', 'Series A / Series A+', 'Series B / Series B+', 'Series C / Series C+', 'Series D / Series D+', 'Series E / Series E+'] as const;
+
+/** HubSpot `total_raising_for_round` (Company) — a fixed bucketed-range dropdown. */
+export const HUBSPOT_RAISE_RANGE_OPTIONS = ['$0-1,000,000', '$1,000,000-5,000,000', '$5,000,000-10,000,000', '$10,000,000-20,000,000', '$20,000,000+'] as const;
+
+/** HubSpot `top_accelerator_participation` (Company) — a fixed dropdown. "Other"/"Not applicable" are never auto-written — an unmatched accelerator is left unset and named in the sync Note instead. */
+export const HUBSPOT_ACCELERATOR_OPTIONS = ['Techstars', '500 Global', 'Y Combinator', 'Plug & Play', 'MassChallenge', 'SOSV', 'ERA', 'Alchemist', 'AngelPad', 'StartX', 'IndieBio', 'Betaworks', 'DreamIt', 'Startupbootcamp', 'HAX'] as const;
+
+/**
+ * HubSpot `diverse_group` (Company) — a fixed dropdown, single-select.
+ * "Not applicable" is excluded here on purpose: Deal Radar never asserts
+ * a NEGATIVE demographic claim, only ever a verified positive one.
+ */
+export const HUBSPOT_DIVERSE_GROUP_OPTIONS = ['Asian', 'Black or African American', 'Caucasian', 'Disabled Person', 'Hispanic', 'LGBTQ+', 'Middle Eastern or Middle Eastern American', 'Native Hawaiian or other Pacific Islander', 'American Indian or Alaskan Native', 'Veteran', 'Women', 'First-generation college student', 'Other'] as const;
+
+/** HubSpot `business_model` (Company) — a fixed dropdown. No Deal Radar signal derives this; it's always a manual reviewer pick. */
+export const HUBSPOT_BUSINESS_MODEL_OPTIONS = ['B2B', 'B2B2C', 'B2C'] as const;
+
+/**
+ * HubSpot `immigrant_background` (Company) — a fixed dropdown. Only the two
+ * positive values are offered here: "Not applicable" is HubSpot's own default/
+ * unknown state, and Deal Radar never asserts it as a negative claim — the
+ * property is simply left untouched when nothing is verified. Note the exact
+ * casing: the underlying HubSpot *value* for the second option is lowercase
+ * ("First-generation immigrant") even though its display label capitalizes
+ * "Immigrant" — the value is what the API write must match.
+ */
+export const HUBSPOT_IMMIGRANT_BACKGROUND_OPTIONS = ['Immigrant', 'First-generation immigrant'] as const;
+
+export const hubspotFounderSlotSchema = z.object({
+  name: z.string(),
+  email: z.string().nullable(),
+  linkedin: z.string().nullable(),
+  jobTitle: z.string(),
+});
+/** One of HubSpot's five `founder_name__N`/`founder_email__N`/`founder_linkedin__N`/`founder__N_job_title` slots. */
+export type HubSpotFounderSlot = z.infer<typeof hubspotFounderSlotSchema>;
+export const HUBSPOT_MAX_FOUNDER_SLOTS = 5;
 
 export const hubspotCompanyRecordSchema = z.object({
   name: z.string().min(1),
   domain: z.string().nullable(),
   website: z.string().nullable(),
   city: z.string(),
-  state: z.string(),
+  /** HubSpot's `state_` is a fixed dropdown of full state names, not two-letter codes — see mapStateToHubSpot. Null when Deal Radar's state code isn't a recognized US state (e.g. a non-US HQ) — left unset rather than sent as an invalid value. */
+  state: z.string().nullable(),
   country: z.string().default('United States'),
   description: z.string(),
-  vertical: z.string(),
-  subcategory: z.string(),
-  stage: z.string(),
-  accelerator: z.string().nullable(),
-  fundingRaised: z.string().nullable(),
-  dateFirstSurfaced: z.string(),
-  lastRefreshed: z.string(),
-  primarySource: z.string(),
-  policyException: z.string().nullable(), // human-readable flag text or null
+  /** One of HUBSPOT_INDUSTRY_OPTIONS. */
+  industry: z.string(),
+  /** One of HUBSPOT_ROUND_OPTIONS, or null when Deal Radar's stage doesn't bucket cleanly into one. */
+  roundCurrentlyRaising: z.string().nullable().default(null),
+  /** One of HUBSPOT_RAISE_RANGE_OPTIONS, or null when the raise amount can't be parsed into a bucket. */
+  totalRaisingForRound: z.string().nullable().default(null),
+  /** One of HUBSPOT_ACCELERATOR_OPTIONS, or null when the named accelerator isn't on HubSpot's fixed list. */
+  acceleratorParticipation: z.string().nullable().default(null),
+  /** One of HUBSPOT_DIVERSE_GROUP_OPTIONS, taken from the first verified founder demographic on record (single-select field), or null. */
+  diverseGroup: z.string().nullable().default(null),
+  /** Free-text detail — set only alongside diverseGroup === 'Other'. */
+  diverseGroupOther: z.string().nullable().default(null),
+  /** One of HUBSPOT_BUSINESS_MODEL_OPTIONS — always a manual reviewer pick, no Deal Radar signal derives it. */
+  businessModel: z.string().nullable().default(null),
+  /** One of HUBSPOT_IMMIGRANT_BACKGROUND_OPTIONS, from a founder's own verified identity (same bar as diverseGroup) — null when nothing is verified, never inferred. */
+  immigrantBackground: z.string().nullable().default(null),
+  /** A founder's own prior company, only when explicitly stated in their verified identity — null (not "no") when nothing is verified. */
+  previousCompanyName: z.string().nullable().default(null),
+  /** Up to HUBSPOT_MAX_FOUNDER_SLOTS, in order. */
+  founders: z.array(hubspotFounderSlotSchema).max(HUBSPOT_MAX_FOUNDER_SLOTS).default([]),
+  /**
+   * Deal Radar's own bookkeeping — NEVER sent to HubSpot as a property.
+   * Used only to look up the locally-persisted hubspot_company_id/
+   * hubspot_deal_id link and to build the sync Note's back-link.
+   */
   dealRadarId: z.string(),
   dealRadarUrl: z.string(),
 });
 export type HubSpotCompanyRecord = z.infer<typeof hubspotCompanyRecordSchema>;
+
+/** HubSpot's `state_` (Company) is a fixed dropdown of full state names — confirmed 2026-09-01 after a live sync attempt with a raw two-letter code ("CA") was rejected by HubSpot's API. */
+const US_STATE_NAMES: Record<string, string> = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
+  CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia',
+  HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa',
+  KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri',
+  MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey',
+  NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio',
+  OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+  VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  DC: 'Washington, D.C.',
+};
+
+/** The exact `state_` dropdown options, for rendering a real select in the review UI instead of free text. */
+export const HUBSPOT_STATE_OPTIONS = [...Object.values(US_STATE_NAMES).sort(), 'N/A'] as const;
+
+/** Convert Deal Radar's two-letter state code to the full name HubSpot's `state_` dropdown requires. Returns null for anything not a recognized US state/DC (a non-US HQ, or bad data like "??") — never guessed, the field is simply left unset. */
+export function mapStateToHubSpot(state: string | null | undefined): string | null {
+  if (!state) return null;
+  return US_STATE_NAMES[state.trim().toUpperCase()] ?? null;
+}
+
+/**
+ * Bucket a free-text stage into one of HubSpot's fixed
+ * `round_currently_raising` options. Deal Radar's Stage type includes
+ * states (Stealth, Bootstrapped, Grant-funded, Pre-launch, "round not
+ * publicly disclosed", "manual review required") that have no honest
+ * fundraising-round bucket — those return null rather than guess.
+ */
+export function mapStageToRound(stage: string): (typeof HUBSPOT_ROUND_OPTIONS)[number] | null {
+  switch (stage) {
+    case 'Pre-seed': return 'Pre-Seed / Pre-Seed+';
+    case 'Seed': return 'Seed / Seed+';
+    case 'Series A': return 'Series A / Series A+';
+    case 'Series B+': return 'Series B / Series B+';
+    default: return null;
+  }
+}
+
+/**
+ * Bucket a free-text raise amount (e.g. "$3.5M seed", "$500K") into one
+ * of HubSpot's fixed `total_raising_for_round` ranges. Returns null
+ * when no dollar figure can be confidently parsed out — never a guess.
+ */
+export function bucketRaiseAmount(raising: string | null | undefined): (typeof HUBSPOT_RAISE_RANGE_OPTIONS)[number] | null {
+  if (!raising) return null;
+  const m = raising.match(/\$\s*([\d,.]+)\s*([kKmM])?/);
+  if (!m) return null;
+  const num = parseFloat(m[1].replace(/,/g, ''));
+  if (!Number.isFinite(num)) return null;
+  const unit = m[2]?.toLowerCase();
+  const dollars = unit === 'k' ? num * 1_000 : unit === 'm' ? num * 1_000_000 : num;
+  if (dollars < 1_000_000) return '$0-1,000,000';
+  if (dollars < 5_000_000) return '$1,000,000-5,000,000';
+  if (dollars < 10_000_000) return '$5,000,000-10,000,000';
+  if (dollars < 20_000_000) return '$10,000,000-20,000,000';
+  return '$20,000,000+';
+}
+
+/** Match a free-text accelerator name against HubSpot's fixed list. Returns null (never "Other") on no confident match — the real name still reaches the sync Note. */
+export function matchAcceleratorOption(accelerator: string | null | undefined): (typeof HUBSPOT_ACCELERATOR_OPTIONS)[number] | null {
+  if (!accelerator) return null;
+  const norm = accelerator.trim().toLowerCase();
+  return HUBSPOT_ACCELERATOR_OPTIONS.find((opt) => norm.includes(opt.toLowerCase()) || opt.toLowerCase().includes(norm)) ?? null;
+}
+
+/**
+ * Map verified founder demographic indicators onto HubSpot's single-
+ * select `diverse_group` dropdown. Only ever reads VerifiedDemographic
+ * entries that already passed verifiedDemographicSchema (named source +
+ * basis) — nothing is inferred here, only translated into the fixed
+ * option list HubSpot requires. The field is single-select, so when
+ * multiple distinct indicators exist across founders, the first one
+ * found wins; the rest still appear in the sync Note.
+ */
+export function mapDiverseGroup(demographics: VerifiedDemographic[]): { diverseGroup: string | null; diverseGroupOther: string | null } {
+  if (demographics.length === 0) return { diverseGroup: null, diverseGroupOther: null };
+  const KEYWORDS: [RegExp, (typeof HUBSPOT_DIVERSE_GROUP_OPTIONS)[number]][] = [
+    [/latin|hispanic/i, 'Hispanic'],
+    [/female|women/i, 'Women'],
+    [/black|african/i, 'Black or African American'],
+    [/veteran/i, 'Veteran'],
+    [/lgbtq/i, 'LGBTQ+'],
+    [/asian/i, 'Asian'],
+    [/disab/i, 'Disabled Person'],
+    [/middle east/i, 'Middle Eastern or Middle Eastern American'],
+    [/pacific islander|native hawaiian/i, 'Native Hawaiian or other Pacific Islander'],
+    [/native american|american indian|alaska/i, 'American Indian or Alaskan Native'],
+    [/first.gen/i, 'First-generation college student'],
+    [/caucasian|white/i, 'Caucasian'],
+  ];
+  const indicator = demographics[0].indicator;
+  const matched = KEYWORDS.find(([re]) => re.test(indicator));
+  return matched ? { diverseGroup: matched[1], diverseGroupOther: null } : { diverseGroup: 'Other', diverseGroupOther: indicator };
+}
 
 export const hubspotContactRecordSchema = z.object({
   firstName: z.string().min(1),
@@ -86,7 +256,6 @@ export const hubspotContactRecordSchema = z.object({
   companyName: z.string(),
   infoSource: z.string(),
   verificationStatus: z.enum(['Verified', 'Unverified']),
-  relationshipOwner: z.string().nullable(),
   lastOutreachDate: z.string().nullable(),
   /** Optional; every entry must independently satisfy the guardrail schema. */
   demographics: z.array(verifiedDemographicSchema).default([]),
@@ -144,8 +313,6 @@ export const hubspotDealRecordSchema = z.object({
   policyException: z.string().nullable(),
   sourcingStatus: z.string(),
   dateSurfaced: z.string(),
-  nextAction: z.string(),
-  relationshipOwner: z.string().nullable(),
   dealRadarId: z.string(),
   dealRadarUrl: z.string(),
   /** Plain-language scoring explanation (model version + strongest/weakest components). */
@@ -159,25 +326,53 @@ export const hubspotDealRecordSchema = z.object({
 export type HubSpotDealRecord = z.infer<typeof hubspotDealRecordSchema>;
 
 // ── Radar → HubSpot pipeline mapping ─────────────────────────────
-
+//
+// These are Vamos's own real HubSpot deal-stage names (confirmed
+// 2026-09-01), not Deal Radar's invention — the whole point of naming
+// them identically is that there is nothing left to "translate" when
+// picking a sync target. They span TWO real pipelines: most of a deal's
+// life happens in Live Deals Pipeline, but a deal that doesn't fit
+// moves to Passed/Revisit Deals Pipeline — a real, common outcome, so
+// both pipelines' stages are valid sync targets, not just the first one.
 export const RADAR_HUBSPOT_STAGES = [
-  'Surfaced',
-  'Needs Review',
-  'Approved to Track',
-  'Outreach Approved',
-  'Outreach Drafted',
-  'Founder Contacted',
-  'Meeting Scheduled',
-  'Active Diligence',
-  'Monitor',
-  'Passed',
+  // Live Deals Pipeline
+  'To Be Reviewed',
+  'Intro Meeting',
+  'Company Dilligence',
+  'Negotiations',
+  'Legal Dilligence',
+  'Fund Onboarding',
+  'Portfolio Company',
+  // Passed/Revisit Deals Pipeline
+  'Not A Fit',
+  'Revisit in 6 months',
+  'Revisit in 1 year',
+  'Revisit in + 1 year',
 ] as const;
 export type RadarHubSpotStage = (typeof RADAR_HUBSPOT_STAGES)[number];
 
-export const hubspotPipelineMappingSchema = z.object({
+/** Display grouping only (which real pipeline each stage name belongs to) — for rendering `<optgroup>`s so a reviewer never mistakes a Passed/Revisit stage for one in the active deal pipeline. */
+export const RADAR_HUBSPOT_STAGE_GROUPS = [
+  { pipelineLabel: 'Live Deals Pipeline', stages: ['To Be Reviewed', 'Intro Meeting', 'Company Dilligence', 'Negotiations', 'Legal Dilligence', 'Fund Onboarding', 'Portfolio Company'] as const },
+  { pipelineLabel: 'Passed/Revisit Deals Pipeline', stages: ['Not A Fit', 'Revisit in 6 months', 'Revisit in 1 year', 'Revisit in + 1 year'] as const },
+] as const;
+
+/**
+ * Each stage name maps to its own {pipelineId, stageId} — deliberately
+ * NOT one shared pipeline for the whole mapping, since Vamos's real
+ * stages span two different pipelines. Moving a HubSpot deal to a stage
+ * in a different pipeline requires setting both dealstage AND pipeline
+ * together (see buildDealProperties) — carrying the pipelineId
+ * per-stage is what makes that possible.
+ */
+export const hubspotStageTargetSchema = z.object({
   pipelineId: z.string().min(1),
-  pipelineLabel: z.string(),
-  stages: z.record(z.string(), z.string()), // RadarHubSpotStage -> HubSpot stage id
+  stageId: z.string().min(1),
+});
+export type HubSpotStageTarget = z.infer<typeof hubspotStageTargetSchema>;
+
+export const hubspotPipelineMappingSchema = z.object({
+  stages: z.record(z.string(), hubspotStageTargetSchema), // RadarHubSpotStage -> {pipelineId, stageId}
 });
 export type HubSpotPipelineMapping = z.infer<typeof hubspotPipelineMappingSchema>;
 
@@ -261,8 +456,8 @@ export interface DuplicateMatch {
   recordId: string;
   name: string;
   domain: string | null;
-  /** What matched: existing radar link, Vamos property, domain, name, or founder email. */
-  matchedOn: 'radar-id' | 'domain' | 'name' | 'founder-email';
+  /** What matched: domain, name, or founder email. Idempotency for a record Deal Radar already synced is handled separately, via its own locally-persisted hubspot_company_id/hubspot_deal_id link — not a HubSpot-side property. */
+  matchedOn: 'domain' | 'name' | 'founder-email';
   url: string | null; // link into HubSpot when live
   demo: boolean;
 }

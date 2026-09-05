@@ -54,6 +54,71 @@ describe('successful source runs (validated external responses)', () => {
     expect(res.candidates[0].confidence).toBeLessThan(0.5); // engineering signal only
   });
 
+  it('GitHub: folds README text into evidence, since the search description alone is often too terse to classify', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/search/repositories')) {
+        return jsonResponse({
+          items: [
+            { name: 'ledger-core', html_url: 'https://github.com/acme-labs/ledger-core', description: 'a cli tool', pushed_at: '2026-07-01T00:00:00Z', owner: { login: 'acme-labs', type: 'Organization', html_url: 'https://github.com/acme-labs' } },
+          ],
+        });
+      }
+      if (url.endsWith('/repos/acme-labs/ledger-core/readme')) {
+        return new Response('# Acme Labs\n\nWe build climate tech carbon removal infrastructure for industrial plants.', { status: 200 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await runSource('github', q(), 10);
+    expect(res.mode).toBe('live');
+    expect(res.candidates[0].evidence[0].claim).toContain('carbon removal infrastructure');
+    expect(res.apiCalls).toBe(2); // 1 search + 1 README
+  });
+
+  it('GitHub: a missing README degrades gracefully instead of failing the lead', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/search/repositories')) {
+        return jsonResponse({
+          items: [
+            { name: 'ledger-core', html_url: 'https://github.com/acme-labs/ledger-core', description: 'Ledger infra', pushed_at: '2026-07-01T00:00:00Z', owner: { login: 'acme-labs', type: 'Organization', html_url: 'https://github.com/acme-labs' } },
+          ],
+        });
+      }
+      if (url.endsWith('/readme')) {
+        return new Response('Not Found', { status: 404 });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await runSource('github', q(), 10);
+    expect(res.mode).toBe('live');
+    expect(res.candidates).toHaveLength(1); // the lead still exists, just without a README excerpt
+    expect(res.candidates[0].companyName).toBe('acme-labs');
+    // No " README: " suffix — the fetch failed and nothing was appended.
+    expect(res.candidates[0].evidence[0].claim).not.toContain('README:');
+  });
+
+  it('GitHub: README fetches stay within the remaining API-call budget', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('/search/repositories')) {
+        return jsonResponse({
+          items: [
+            { name: 'repo-a', html_url: 'https://github.com/org-a/repo-a', description: 'x', owner: { login: 'org-a', type: 'Organization', html_url: 'https://github.com/org-a' } },
+            { name: 'repo-b', html_url: 'https://github.com/org-b/repo-b', description: 'x', owner: { login: 'org-b', type: 'Organization', html_url: 'https://github.com/org-b' } },
+            { name: 'repo-c', html_url: 'https://github.com/org-c/repo-c', description: 'x', owner: { login: 'org-c', type: 'Organization', html_url: 'https://github.com/org-c' } },
+          ],
+        });
+      }
+      if (url.endsWith('/readme')) return new Response('some readme text', { status: 200 });
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    // Budget of 2 total: 1 for the search, leaving only 1 for a README.
+    const res = await runSource('github', q(), 2);
+    expect(res.candidates).toHaveLength(3); // every repo still becomes a lead
+    expect(res.apiCalls).toBe(2); // search + exactly one README, not three
+  });
+
   it('SBIR: public award records become leads with amounts and locations', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([
       { firm: 'Acme Diagnostics LLC', award_title: 'Point-of-care assay', agency: 'HHS', program: 'SBIR', phase: 'I', award_amount: '256,000', award_year: 2026, city: 'Albuquerque', state: 'NM', company_url: 'acmediagnostics.com', award_link: 'https://www.sbir.gov/awards/12345' },

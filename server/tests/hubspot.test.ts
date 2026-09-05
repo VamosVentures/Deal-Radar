@@ -4,6 +4,7 @@ import {
   buildCompanyProperties,
   buildContactProperties,
   buildDealProperties,
+  buildSyncNoteBody,
   HUBSPOT_OAUTH_SCOPES,
   hubspotService,
 } from '../services/hubspot';
@@ -27,11 +28,13 @@ const company = (over: Partial<HubSpotCompanyRecord> = {}): HubSpotCompanyRecord
   website: 'https://solcarehealth.example.com',
   city: 'Austin', state: 'TX', country: 'United States',
   description: 'AI care-navigation for bilingual Medicaid populations.',
-  vertical: 'Health & Wellness', subcategory: 'Personalized care', stage: 'Seed',
-  accelerator: null, fundingRaised: '$3.5M seed',
-  dateFirstSurfaced: '2026-04-12', lastRefreshed: '2026-07-14',
-  primarySource: 'Company press release',
-  policyException: null,
+  industry: 'Health & Wellness',
+  roundCurrentlyRaising: 'Seed / Seed+',
+  totalRaisingForRound: '$1,000,000-5,000,000',
+  acceleratorParticipation: null,
+  diverseGroup: null, diverseGroupOther: null,
+  businessModel: null, immigrantBackground: null, previousCompanyName: null,
+  founders: [{ name: 'Mariana Otero', email: 'mariana@solcarehealth.example.com', linkedin: null, jobTitle: 'CEO' }],
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
   ...over,
 });
@@ -41,7 +44,7 @@ const contact = (over: Partial<HubSpotContactRecord> = {}): HubSpotContactRecord
   email: 'mariana@solcarehealth.example.com',
   jobTitle: 'CEO', linkedinUrl: null, companyName: 'SolCare Health',
   infoSource: 'Company press-release media contact',
-  verificationStatus: 'Verified', relationshipOwner: 'DR', lastOutreachDate: null,
+  verificationStatus: 'Verified', lastOutreachDate: null,
   demographics: [],
   ...over,
 });
@@ -54,7 +57,6 @@ const deal = (over: Partial<HubSpotDealRecord> = {}): HubSpotDealRecord => ({
   rationale: 'Direct thesis match.', risks: 'None flagged.',
   evidenceQualityScore: 8, policyException: null,
   sourcingStatus: 'Surfaced by Deal Radar', dateSurfaced: '2026-04-12',
-  nextAction: 'Approve outreach', relationshipOwner: 'DR',
   dealRadarId: 'c-solcare', dealRadarUrl: 'http://localhost:5173/?company=c-solcare',
   scoreExplanation: 'VamosVentures Fit Score 8.7/10 (test fixture explanation).',
   approvedBy: 'DR', approvalDate: '2026-07-18',
@@ -115,32 +117,74 @@ describe('duplicate detection (in-memory fixture)', () => {
     });
     const second = await svc.syncCompany({
       company: company({ description: 'Updated description' }), contacts: [], deal: deal(),
-      stageId: 's', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: null,
+      stageId: 's', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: first.dealId,
     });
     expect(second.action).toBe('updated');
     expect(second.companyId).toBe(first.companyId);
     const companies = store.raw.mockHubSpot.filter((o) => o.type === 'company');
     expect(companies).toHaveLength(1);
     expect(companies[0].properties.description).toBe('Updated description');
-    // The deal is idempotent too: found via vamos_deal_radar_id and
-    // updated in place, never duplicated.
+    // The deal is idempotent too: identified by the caller's own
+    // persisted hubspot_deal_id link, and updated in place, never
+    // duplicated — there is no HubSpot-side property to search by instead.
     expect(second.dealId).toBe(first.dealId);
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
   });
 });
 
 describe('payload builders', () => {
-  it('builds the full company payload', () => {
-    const p = buildCompanyProperties(company({ policyException: 'DeFi-adjacent' }));
+  it('builds the company payload from Vamos\'s own existing properties — no vamos_* property', () => {
+    const p = buildCompanyProperties(company());
     expect(p.name).toBe('SolCare Health');
     expect(p.domain).toBe('solcarehealth.example.com');
-    expect(p.vamos_vertical).toBe('Health & Wellness');
-    expect(p.vamos_funding_raised).toBe('$3.5M seed');
-    expect(p.vamos_policy_exception).toBe('DeFi-adjacent');
-    expect(p.vamos_deal_radar_id).toBe('c-solcare');
+    expect(p.industry_).toBe('Health & Wellness');
+    expect(p.round_currently_raising).toBe('Seed / Seed+');
+    expect(p.total_raising_for_round).toBe('$1,000,000-5,000,000');
+    expect(p.inbound_outbound).toBe('Outbound');
+    expect(p.founder_name__1).toBe('Mariana Otero');
+    expect(p.founder__1_job_title).toBe('CEO');
+    expect(p.hubspot_owner_id).toBe('48549163'); // Health & Wellness → Ashley Ryder
+    expect(Object.keys(p).some((k) => k.startsWith('vamos_'))).toBe(false);
   });
 
-  it('builds contact payload with verified demographics serialized with basis + source', () => {
+  it('omits fields Deal Radar has no data for, rather than sending an explicit null', () => {
+    const p = buildCompanyProperties(company({ acceleratorParticipation: null, diverseGroup: null }));
+    expect('top_accelerator_participation' in p).toBe(false);
+    expect('diverse_group' in p).toBe(false);
+  });
+
+  it('always fills in the fields Deal Radar knows about its own sourcing process — outbound, no referral', () => {
+    const p = buildCompanyProperties(company());
+    expect(p.were_you_referred_to_us_).toBe('No');
+    expect(p.were_you_referred_by_a_vamosventures_team_member_).toBe('Not applicable');
+  });
+
+  it('approximates US incorporated from whether the HQ state resolved to a real US state', () => {
+    expect(buildCompanyProperties(company({ state: 'California' })).c_corp).toBe('Yes');
+    expect(buildCompanyProperties(company({ state: null })).c_corp).toBe('No');
+  });
+
+  it('writes business model only when a reviewer picked one — never a Deal Radar guess', () => {
+    expect(buildCompanyProperties(company({ businessModel: null })).business_model).toBeUndefined();
+    expect(buildCompanyProperties(company({ businessModel: 'B2B' })).business_model).toBe('B2B');
+  });
+
+  it('writes immigrant background only from a founder\'s own verified identity, never "Not applicable"', () => {
+    expect(buildCompanyProperties(company({ immigrantBackground: null })).immigrant_background).toBeUndefined();
+    expect(buildCompanyProperties(company({ immigrantBackground: 'First-generation immigrant' })).immigrant_background).toBe('First-generation immigrant');
+  });
+
+  it('only asserts "previously started a company" as Yes with a name — never as a negative guess', () => {
+    const unverified = buildCompanyProperties(company({ previousCompanyName: null }));
+    expect('have_you_or_your_co_founders_previously_started_a_company_' in unverified).toBe(false);
+    expect('if_yes__please_provide_previous_company_name' in unverified).toBe(false);
+
+    const verified = buildCompanyProperties(company({ previousCompanyName: 'Prior Startup Inc.' }));
+    expect(verified.have_you_or_your_co_founders_previously_started_a_company_).toBe('Yes');
+    expect(verified.if_yes__please_provide_previous_company_name).toBe('Prior Startup Inc.');
+  });
+
+  it('builds contact payload with only the three properties Vamos actually uses on Contact', () => {
     const p = buildContactProperties(contact({
       demographics: [{
         indicator: 'Latino-led', basis: 'Self-identified',
@@ -149,32 +193,27 @@ describe('payload builders', () => {
         verificationStatus: 'Self-reported',
       }],
     }));
-    expect(p.firstname).toBe('Mariana');
-    expect(p.vamos_verified_demographics).toContain('Latino-led');
-    expect(p.vamos_verified_demographics).toContain('Self-identified');
-    expect(p.vamos_verified_demographics).toContain('Founder bio on company site');
+    expect(p).toEqual({ firstname: 'Mariana', lastname: 'Otero', email: 'mariana@solcarehealth.example.com' });
   });
 
-  it('leaves demographics null when none are verified — never inferred', () => {
-    const p = buildContactProperties(contact());
-    expect(p.vamos_verified_demographics).toBeNull();
-  });
-
-  it('builds deal payload preserving score breakdown and policy exception', () => {
-    const p = buildDealProperties(deal({ policyException: 'Hardware-heavy — partner sign-off required' }), 'stage-1', 'pipe-1');
+  it('builds the deal payload from name, pipeline, stage, and owner only — no vamos_* property', () => {
+    const p = buildDealProperties(deal(), 'stage-1', 'pipe-1');
+    expect(p.dealname).toBe('SolCare Health');
     expect(p.dealstage).toBe('stage-1');
     expect(p.pipeline).toBe('pipe-1');
-    expect(p.vamos_fit_score).toBe(8.7);
-    expect(p.vamos_score_breakdown).toContain('Thesis / vertical fit: 25/25');
-    expect(p.vamos_policy_exception).toContain('Hardware-heavy');
+    expect(p.hubspot_owner_id).toBe('48549163'); // Health & Wellness → Ashley Ryder
+    expect(Object.keys(p).some((k) => k.startsWith('vamos_'))).toBe(false);
   });
 
-  it('records reviewer, approval date, score explanation, and source URLs on the deal', () => {
-    const p = buildDealProperties(deal(), 's', 'p');
-    expect(p.vamos_reviewer).toBe('DR');
-    expect(p.vamos_approval_date).toBe('2026-07-18');
-    expect(p.vamos_score_explanation).toContain('VamosVentures Fit Score');
-    expect(p.vamos_source_urls).toContain('https://example.com/solcare-pilot');
+  it('folds fit score, rationale, risks, evidence, sourcing status, approver, and source URLs into the sync Note — no property home for any of it', () => {
+    const body = buildSyncNoteBody(deal({ policyException: 'Hardware-heavy — partner sign-off required' }), false);
+    expect(body).toContain('8.7/10');
+    expect(body).toContain('Direct thesis match');
+    expect(body).toContain('Hardware-heavy');
+    expect(body).toContain('Approved by DR on 2026-07-18');
+    expect(body).toContain('VamosVentures Fit Score'); // scoreExplanation
+    expect(body).toContain('https://example.com/solcare-pilot');
+    expect(body).toContain('http://localhost:5173/?company=c-solcare');
   });
 });
 
@@ -262,7 +301,34 @@ describe('fixture behavior (tests only)', () => {
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'contact')).toHaveLength(1);
   });
 
-  it('a repeated sync-company call results in exactly one company, one deal, and one contact', async () => {
+  /**
+   * There is no HubSpot-side property for syncCompany to search a
+   * prior record by, so a repeated create-new call with no id creates a
+   * fresh company/deal each time — that guarantee now lives one layer
+   * up, in server/routes/hubspot.ts's performSync (via the radar
+   * record's own persisted hubspot_company_id/hubspot_deal_id link; see
+   * workflow.test.ts's HTTP-level idempotency test). Contacts still
+   * dedupe by email regardless, since that lookup was never tied to the
+   * removed property.
+   */
+  it('with an explicit existing id, a repeat sync-company call reuses the same company, deal, and contact', async () => {
+    const svc = new MockHubSpot();
+    const first = await svc.syncCompany({
+      company: company(), contacts: [contact()], deal: deal(),
+      stageId: 's', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
+    });
+    const second = await svc.syncCompany({
+      company: company(), contacts: [contact()], deal: deal(),
+      stageId: 's', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: first.dealId,
+    });
+    expect(second.companyId).toBe(first.companyId);
+    expect(second.dealId).toBe(first.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'company')).toHaveLength(1);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'contact')).toHaveLength(1);
+  });
+
+  it('without an existing id, a repeat create-new call creates a fresh company and deal — contacts still dedupe by email', async () => {
     const svc = new MockHubSpot();
     const args = {
       company: company(), contacts: [contact()], deal: deal(),
@@ -270,10 +336,10 @@ describe('fixture behavior (tests only)', () => {
     };
     const first = await svc.syncCompany(args);
     const second = await svc.syncCompany(args);
-    expect(second.companyId).toBe(first.companyId);
-    expect(second.dealId).toBe(first.dealId);
-    expect(store.raw.mockHubSpot.filter((o) => o.type === 'company')).toHaveLength(1);
-    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
+    expect(second.companyId).not.toBe(first.companyId);
+    expect(second.dealId).not.toBe(first.dealId);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'company')).toHaveLength(2);
+    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(2);
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'contact')).toHaveLength(1);
   });
 
@@ -289,24 +355,6 @@ describe('fixture behavior (tests only)', () => {
     const second = await svc.syncCompany({
       company: company(), contacts: [], deal: deal(),
       stageId: 'stage-approved', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: first.dealId,
-    });
-    expect(second.dealId).toBe(first.dealId);
-    expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
-    const dealObj = store.raw.mockHubSpot.find((o) => o.id === first.dealId)!;
-    expect(dealObj.properties.dealstage).toBe('stage-approved');
-  });
-
-  it('falls back to a live search by vamos_deal_radar_id when no deal id was persisted (pre-fix records)', async () => {
-    const svc = new MockHubSpot();
-    const first = await svc.syncCompany({
-      company: company(), contacts: [], deal: deal(),
-      stageId: 'stage-surfaced', pipelineId: 'p', resolution: 'create-new', existingRecordId: null, existingDealId: null,
-    });
-    // Simulate a record synced before hubspot_deal_id was tracked: the
-    // caller has no saved deal id to pass, only the radar/company link.
-    const second = await svc.syncCompany({
-      company: company(), contacts: [], deal: deal(),
-      stageId: 'stage-approved', pipelineId: 'p', resolution: 'update-existing', existingRecordId: first.companyId, existingDealId: null,
     });
     expect(second.dealId).toBe(first.dealId);
     expect(store.raw.mockHubSpot.filter((o) => o.type === 'deal')).toHaveLength(1);
@@ -387,19 +435,15 @@ describe('founder contacts written to HubSpot', () => {
     // mapping is seeded directly rather than driven through the portal.
     const { setConfig } = await import('../db/repos/operations');
     setConfig('hubspot-pipeline-mapping', {
-      pipelineId: 'p-1',
-      pipelineLabel: 'Test pipeline',
-      stages: Object.fromEntries(RADAR_HUBSPOT_STAGES.map((st) => [st, 's-1'])),
+      stages: Object.fromEntries(RADAR_HUBSPOT_STAGES.map((st) => [st, { pipelineId: 'p-1', stageId: 's-1' }])),
     });
 
     const res = await agent.post('/api/hubspot/sync-company').send({
       company: {
         dealRadarId: 'c-guard-1', name: 'Guard Co', domain: 'guard.example.com',
-        website: 'https://guard.example.com', vertical: 'Health & Wellness', subcategory: 'Care',
-        stage: 'Seed', city: 'Austin', state: 'TX', description: 'A company.',
-        accelerator: null, fundingRaised: null,
-        dateFirstSurfaced: '2026-07-01', lastRefreshed: '2026-07-30',
-        primarySource: 'company-site', policyException: '', dealRadarUrl: 'https://radar.local/c-guard-1',
+        website: 'https://guard.example.com', industry: 'Health & Wellness',
+        city: 'Austin', state: 'TX', description: 'A company.',
+        dealRadarUrl: 'https://radar.local/c-guard-1',
       },
       contacts: [
         {
@@ -415,13 +459,13 @@ describe('founder contacts written to HubSpot', () => {
       ],
       deal: {
         companyName: 'Guard Co', fitScore: 7, recommendation: 'Track', vertical: 'Health & Wellness',
-        stage: 'Seed', scoreBreakdown: [], rationale: 'x', risks: '', nextAction: 'y',
+        stage: 'Seed', scoreBreakdown: [], rationale: 'x', risks: '',
         sourceEvidence: [], reviewer: null,
         evidenceQualityScore: 5, policyException: '', sourcingStatus: 'Approved to Track',
         dateSurfaced: '2026-07-01', relationshipOwner: '', dealRadarId: 'c-guard-1',
         dealRadarUrl: 'https://radar.local/c-guard-1',
       },
-      radarStage: 'Approved to Track',
+      radarStage: 'To Be Reviewed',
       duplicateResolution: 'create-new',
       existingRecordId: null,
     });

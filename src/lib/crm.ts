@@ -4,13 +4,20 @@ import { verticalById } from '../data/taxonomy';
 import { flagLabel } from './scoring';
 import { HOT_THRESHOLD, TRACK_THRESHOLD } from '../../shared/scoringThresholds';
 import {
+  bucketRaiseAmount,
   cleanJobTitle,
+  HUBSPOT_MAX_FOUNDER_SLOTS,
   isSyncableContactName,
+  mapDiverseGroup,
+  mapStageToRound,
+  mapStateToHubSpot,
+  matchAcceleratorOption,
   normalizeDomain,
   type EmailGenContext,
   type HubSpotCompanyRecord,
   type HubSpotContactRecord,
   type HubSpotDealRecord,
+  type HubSpotFounderSlot,
   type VerifiedDemographic,
 } from '../../shared/integrations';
 
@@ -27,24 +34,40 @@ export function recommendationFor(score: number): string {
   return 'Review — weak fit';
 }
 
+/** Founder slots for HubSpot's founder_name__N/founder_email__N/founder_linkedin__N/founder__N_job_title (up to 5). Same placeholder guardrail as Contact creation: an unverified/placeholder name is withheld rather than written into a shared company record. */
+export function founderSlotsForHubSpot(c: Company): HubSpotFounderSlot[] {
+  return c.founders
+    .filter((f) => isSyncableContactName(f.name))
+    .slice(0, HUBSPOT_MAX_FOUNDER_SLOTS)
+    .map((f) => ({
+      name: f.name,
+      email: f.email ?? null,
+      linkedin: f.linkedin ?? null,
+      jobTitle: cleanJobTitle(f.role),
+    }));
+}
+
 export function companyToHubSpot(c: Company): HubSpotCompanyRecord {
+  const demographics = c.founders.flatMap((f) => founderDemographics(f));
+  const { diverseGroup, diverseGroupOther } = mapDiverseGroup(demographics);
   return {
     name: c.name,
     domain: normalizeDomain(c.website ?? null),
     website: c.website ?? null,
     city: c.city,
-    state: c.state,
+    state: mapStateToHubSpot(c.state),
     country: 'United States',
     description: c.oneLiner,
-    vertical: verticalById(c.vertical).name,
-    subcategory: c.subcategory,
-    stage: c.stage,
-    accelerator: c.accelerator ?? null,
-    fundingRaised: c.raising ?? null,
-    dateFirstSurfaced: c.dateFirstSurfaced ?? TODAY(),
-    lastRefreshed: c.lastRefreshed ?? TODAY(),
-    primarySource: c.evidence[0]?.source ?? 'Deal Radar',
-    policyException: policyExceptionText(c),
+    industry: verticalById(c.vertical).name,
+    roundCurrentlyRaising: mapStageToRound(c.stage),
+    totalRaisingForRound: bucketRaiseAmount(c.raising ?? null),
+    acceleratorParticipation: matchAcceleratorOption(c.accelerator ?? null),
+    diverseGroup,
+    diverseGroupOther,
+    businessModel: null,
+    immigrantBackground: c.founders.map((f) => f.identity?.immigrantBackground).find((v): v is 'Immigrant' | 'First-generation immigrant' => !!v) ?? null,
+    previousCompanyName: c.founders.map((f) => f.identity?.previousCompanyName).find((v): v is string => !!v) ?? null,
+    founders: founderSlotsForHubSpot(c),
     dealRadarId: c.id,
     dealRadarUrl: `${window.location.origin}/?company=${c.id}`,
   };
@@ -92,7 +115,7 @@ export function isSyncableFounder(f: Founder): boolean {
   return isSyncableContactName(f.name);
 }
 
-export function founderToHubSpot(c: Company, f: Founder, owner: string | null): HubSpotContactRecord {
+export function founderToHubSpot(c: Company, f: Founder): HubSpotContactRecord {
   const [firstName, ...rest] = f.name.split(' ');
   return {
     firstName,
@@ -103,13 +126,12 @@ export function founderToHubSpot(c: Company, f: Founder, owner: string | null): 
     companyName: c.name,
     infoSource: f.emailSource ?? c.evidence[0]?.source ?? 'Deal Radar',
     verificationStatus: f.email ? 'Verified' : 'Unverified',
-    relationshipOwner: owner,
     lastOutreachDate: null,
     demographics: founderDemographics(f),
   };
 }
 
-export function dealToHubSpot(c: Company, owner: string | null, nextAction: string, reviewer?: string | null): HubSpotDealRecord {
+export function dealToHubSpot(c: Company, approvedBy: string | null): HubSpotDealRecord {
   const fit = scoreCompany(c);
   const evidenceQuality = fit.components.find((x) => x.key === 'evidence')?.points ?? 0;
   const risks = [
@@ -129,12 +151,10 @@ export function dealToHubSpot(c: Company, owner: string | null, nextAction: stri
     policyException: policyExceptionText(c),
     sourcingStatus: 'Surfaced by Deal Radar',
     dateSurfaced: c.dateFirstSurfaced ?? TODAY(),
-    nextAction,
-    relationshipOwner: owner,
     dealRadarId: c.id,
     dealRadarUrl: `${window.location.origin}/?company=${c.id}`,
     scoreExplanation: fit.explanation,
-    approvedBy: reviewer ?? owner,
+    approvedBy,
     approvalDate: TODAY(),
     sourceUrls: c.evidence.map((e) => e.url),
   };

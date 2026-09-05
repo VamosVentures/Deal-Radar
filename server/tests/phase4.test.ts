@@ -3,7 +3,8 @@ import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
 import {
-  cancelDiscovery, detectDuplicate, discoveryRuns, existingCandidates, importCandidates, runDiscovery,
+  cancelDiscovery, detectDuplicate, discoveryRuns, dismissCandidate, existingCandidates, importCandidates,
+  runDiscovery, setCandidateVertical,
 } from '../services/discovery';
 import { discoveryCandidateSchema } from '../../shared/discovery';
 import { generateHypothesis, listSignals, patchSignal } from '../services/stealth';
@@ -179,6 +180,33 @@ describe('discovery pipeline (fixture sources injected — no network in tests)'
     expect(res.body.sourceResults.length).toBe(BASE_QUERY.sources.length);
     expect(res.body.errors).toBeInstanceOf(Array);
   });
+
+  /**
+   * By explicit request: a manual run from the Discovery page (the HTTP
+   * route, not the runDiscovery() service call other tests use directly)
+   * no longer waits on a human import click — it auto-imports its own
+   * new, non-duplicate candidates the same way a scheduled run already
+   * did. Contrast the very first test in this file, which calls
+   * runDiscovery() directly and still asserts nothing auto-imports —
+   * that invariant is unchanged; only the HTTP route gained this step.
+   */
+  it('a manual run via the HTTP route auto-imports its own new candidates to Awaiting Review', async () => {
+    const app = createApp();
+    const agent = await adminAgent(app);
+    const res = await agent.post('/api/discovery/run').send({ ...BASE_QUERY, actor: 'andrew' });
+    expect(res.status).toBe(200);
+    const runId = res.body.id;
+
+    const stillPending = existingCandidates().filter((c) => c.runId === runId && c.status === 'pending');
+    // Anything left pending must be a duplicate awaiting a human decision
+    // (merge / import-anyway) — never a plain new candidate.
+    expect(stillPending.every((c) => c.duplicateStatus !== 'none')).toBe(true);
+
+    const meta = Object.values(companyMetaView());
+    const imported = existingCandidates().filter((c) => c.runId === runId && c.status === 'imported');
+    expect(imported.length).toBeGreaterThan(0);
+    expect(meta.filter((m) => m.reviewStatus === 'Awaiting Review').length).toBeGreaterThanOrEqual(imported.length);
+  });
 });
 
 describe('duplicate detection & evidence merge', () => {
@@ -281,6 +309,166 @@ describe('selective import → Awaiting Review (human gates intact)', () => {
     expect(outcome.imported).toHaveLength(0);
     expect(outcome.skipped[0].code).toBe('unclassifiable-sector');
     expect(outcome.skipped[0].reason).toMatch(/no sector signal/i);
+  });
+
+  describe('manual vertical assignment (the only way an unclassifiable candidate becomes importable)', () => {
+    it('a human assigning a vertical unlocks import for a candidate the classifier refused', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.vertical = 'Unknown';
+      cand.companyName = 'Generic Holdings';
+      cand.pitch = 'Unknown';
+      cand.subcategory = 'Unknown';
+      store.raw.discoveryCandidates = [cand];
+
+      // Confirm it's genuinely refused first.
+      expect(importCandidates({ candidateIds: [cand.id] }).skipped[0].code).toBe('unclassifiable-sector');
+
+      const set = setCandidateVertical(cand.id, 'fintech', 'andrew');
+      expect(set.vertical).toBe('fintech');
+
+      const outcome = importCandidates({ candidateIds: [cand.id] });
+      expect(outcome.imported).toHaveLength(1);
+      expect(outcome.skipped).toHaveLength(0);
+    });
+
+    it('refuses to reclassify a candidate that already imported or merged', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.pitch = 'Robots that install solar panels.';
+      store.raw.discoveryCandidates = [cand];
+      importCandidates({ candidateIds: [cand.id] });
+      expect(existingCandidates()[0].status).toBe('imported');
+
+      expect(() => setCandidateVertical(cand.id, 'health', 'andrew')).toThrow(/already imported/i);
+    });
+
+    it('rejects an unknown candidate id', () => {
+      expect(() => setCandidateVertical('does-not-exist', 'health', 'andrew')).toThrow(/not found/i);
+    });
+
+    it('is audited as a human decision, distinct from the automated classifier', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.vertical = 'Unknown';
+      store.raw.discoveryCandidates = [cand];
+      setCandidateVertical(cand.id, 'sustainability', 'andrew');
+
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const audit = await agent.get('/api/audit');
+      const entry = audit.body.find((e: { action: string }) => e.action === 'candidate-set-vertical');
+      expect(entry.detail).toMatch(/andrew/);
+      expect(entry.detail).toMatch(/human decision/i);
+    });
+
+    it('HTTP: PUT /discovery/candidates/:id/vertical rejects a value outside the five approved verticals', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const res = await agent.put(`/api/discovery/candidates/${cand.id}/vertical`).send({ vertical: 'not-a-real-vertical' });
+      expect(res.status).toBe(400);
+    });
+
+    it('HTTP: a full round trip through the route makes the candidate importable', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.vertical = 'Unknown';
+      cand.pitch = 'Unknown';
+      cand.subcategory = 'Unknown';
+      store.raw.discoveryCandidates = [cand];
+
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const setRes = await agent.put(`/api/discovery/candidates/${cand.id}/vertical`).send({ vertical: 'frontier', actor: 'andrew' });
+      expect(setRes.status).toBe(200);
+      expect(setRes.body.candidate.vertical).toBe('frontier');
+
+      const importRes = await agent.post('/api/discovery/import').send({ candidateIds: [cand.id], actor: 'andrew' });
+      expect(importRes.body.imported).toHaveLength(1);
+    });
+  });
+
+  describe('dismissing a candidate (removes it from Candidate Preview without importing)', () => {
+    it('sets status to dismissed, records a review decision, and audits it as a human action', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      store.raw.discoveryCandidates = [cand];
+
+      const dismissed = dismissCandidate(cand.id, 'andrew');
+      expect(dismissed.status).toBe('dismissed');
+
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const audit = await agent.get('/api/audit');
+      const entry = audit.body.find((e: { action: string }) => e.action === 'candidate-dismiss');
+      expect(entry.detail).toMatch(/andrew/);
+      expect(entry.detail).toMatch(/no company record was ever created/i);
+    });
+
+    it('drops out of the pending list, so it no longer shows in Candidate Preview', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      store.raw.discoveryCandidates = [cand];
+      dismissCandidate(cand.id, 'andrew');
+      expect(existingCandidates().filter((c) => c.status === 'pending')).toHaveLength(0);
+    });
+
+    it('a dismissed candidate can never be imported afterward', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.pitch = 'Robots that install solar panels.'; // would otherwise classify and import cleanly
+      store.raw.discoveryCandidates = [cand];
+      dismissCandidate(cand.id, 'andrew');
+
+      const outcome = importCandidates({ candidateIds: [cand.id], actor: 'andrew' });
+      expect(outcome.imported).toHaveLength(0);
+      expect(outcome.skipped[0].code).toBe('terminal-status');
+    });
+
+    it('refuses to dismiss a candidate that already imported', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      cand.pitch = 'Robots that install solar panels.';
+      store.raw.discoveryCandidates = [cand];
+      importCandidates({ candidateIds: [cand.id] });
+
+      expect(() => dismissCandidate(cand.id, 'andrew')).toThrow(/already imported/i);
+    });
+
+    it('rejects an unknown candidate id', () => {
+      expect(() => dismissCandidate('does-not-exist', 'andrew')).toThrow(/not found/i);
+    });
+
+    it('a dismissed candidate is excluded from future duplicate-matching', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      store.raw.discoveryCandidates = [cand];
+      dismissCandidate(cand.id, 'andrew');
+
+      // A separately-discovered candidate with the SAME company name.
+      // detectDuplicate builds its pool from candidateRecords(), which
+      // filters out dismissed ones (server/sourcing/dedupe.ts) — the
+      // exact behavior the schema and dedupe pool anticipated before
+      // this function ever existed to actually produce one.
+      const rediscovered = { ...cand, id: 'cand-rediscovered', status: 'pending' as const };
+      const hit = detectDuplicate(rediscovered);
+      expect(hit.duplicateStatus).toBe('none');
+    });
+
+    it('HTTP: POST /discovery/candidates/:id/dismiss removes it from the pending list', async () => {
+      await runDiscovery({ ...BASE_QUERY, sources: ['grants'] }, 'tester');
+      const cand = existingCandidates()[0];
+      const app = createApp();
+      const agent = await adminAgent(app);
+      const res = await agent.post(`/api/discovery/candidates/${cand.id}/dismiss`).send({ actor: 'andrew' });
+      expect(res.status).toBe(200);
+      expect(res.body.candidate.status).toBe('dismissed');
+
+      const list = await agent.get('/api/discovery/candidates?status=pending');
+      expect(list.body.candidates.find((c: { id: string }) => c.id === cand.id)).toBeUndefined();
+    });
   });
 
   it('DOES import a candidate whose published text plainly states its sector', async () => {

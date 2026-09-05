@@ -271,18 +271,17 @@ describe('company status lifecycle', () => {
       company: {
         name: 'Status Test Co', domain: 'statustest.example.com', website: 'https://statustest.example.com',
         city: 'Austin', state: 'TX', country: 'United States', description: 'x',
-        vertical: 'FinTech', subcategory: 'Payments', stage: 'Seed', accelerator: null, fundingRaised: null,
-        dateFirstSurfaced: '2026-06-01', lastRefreshed: '2026-06-01', primarySource: 'src', policyException: null,
+        industry: 'FinTech',
         dealRadarId: 'sync-me', dealRadarUrl: 'http://localhost:5173/?company=sync-me',
       },
       contacts: [],
       deal: {
         companyName: 'Status Test Co', fitScore: 7, recommendation: 'Track', vertical: 'FinTech', stage: 'Seed',
         scoreBreakdown: [], rationale: 'r', risks: 'none', evidenceQualityScore: 5, policyException: null,
-        sourcingStatus: 'Surfaced', dateSurfaced: '2026-06-01', nextAction: 'Review', relationshipOwner: 'team',
+        sourcingStatus: 'Surfaced', dateSurfaced: '2026-06-01',
         dealRadarId: 'sync-me', dealRadarUrl: 'http://localhost:5173/?company=sync-me',
       },
-      radarStage: 'Approved to Track', duplicateResolution: 'create-new', existingRecordId: null,
+      radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,
     });
     expect(res.status).toBe(200);
     expect(companyMetaView()['sync-me'].reviewStatus).toBe('Synced to HubSpot');

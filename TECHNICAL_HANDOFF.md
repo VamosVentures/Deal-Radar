@@ -531,9 +531,14 @@ this does not confirm it was sent or replied to.
   failing its Zod minimum-length constraint (e.g. `oneLiner`/founder
   `background` under 3 characters) — validation failures are silent skips,
   by design, not errors that abort the whole file.
-- **HubSpot sync fails immediately in a real portal** → the `vamos_*`
-  custom properties likely don't exist yet in that portal; create them
-  first (see the README's recommended property set).
+- **HubSpot sync fails immediately in a real portal** → Deal Radar writes
+  onto Vamos's own existing Company/Deal/Contact properties (no custom
+  `vamos_*` property is ever created — see `shared/integrations.ts` and
+  `server/services/hubspot.ts`'s `buildCompanyProperties`/
+  `buildDealProperties` for the exact internal property names). A
+  different portal without that same property schema will fail on the
+  unrecognized property names; there is nothing to "create first" — the
+  mapping needs to be redone against that portal's actual properties.
 - **Scheduled jobs never run automatically** → `RUN_SCHEDULER` is `false`
   (the default) or the backend process isn't staying up continuously. The
   UI's "Configured but inactive" label is accurate, not a bug.

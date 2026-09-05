@@ -1365,6 +1365,31 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE companies ADD COLUMN hubspot_deal_id TEXT;
     `,
   },
+  {
+    version: 22,
+    name: 'persist-thesis-and-quality-filter-counts',
+    sql: `
+      -- runDiscovery has always COUNTED these two, and the run's audit
+      -- entry has always reported them correctly — but source_runs had
+      -- no column for either, so saveRun silently dropped them and
+      -- listRuns fell through to the schema's .default(0). Run history
+      -- therefore showed "0 filtered by thesis" on every run ever
+      -- recorded, including runs where the thesis filter was the single
+      -- largest thing that happened (6 of 13 on run-6, 9 on run-2).
+      --
+      -- That is the wrong answer, not a missing one: "the sources found
+      -- little" and "the filter rejected most of it" call for opposite
+      -- responses, and a misfiring thesis filter quietly discarding good
+      -- companies would have produced no signal here at all.
+      --
+      -- Rows written before this migration genuinely cannot be
+      -- recovered from source_runs (the numbers were never stored), so
+      -- they keep the 0 default and stay indistinguishable from a real
+      -- zero. The audit log is the only record of their true values.
+      ALTER TABLE source_runs ADD COLUMN filtered_by_thesis INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE source_runs ADD COLUMN filtered_by_quality INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

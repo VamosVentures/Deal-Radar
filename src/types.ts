@@ -56,6 +56,10 @@ export interface VerifiedIdentity {
   latinoLed?: boolean;
   femaleLed?: boolean;
   otherUnderrepresented?: string; // e.g. "Black-led", "veteran-led"
+  /** HubSpot's own two positive enum values for immigrant_background — never "Not applicable", which is never asserted. */
+  immigrantBackground?: 'Immigrant' | 'First-generation immigrant';
+  /** A founder's own prior company, when their bio/statement names it explicitly — never inferred. */
+  previousCompanyName?: string;
   basis: 'Self-identified' | 'Verified public statement';
   source: string; // where the verification lives
 }

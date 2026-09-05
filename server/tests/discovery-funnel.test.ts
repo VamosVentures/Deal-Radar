@@ -140,6 +140,53 @@ describe('two-stage funnel inside the discovery pipeline', () => {
 });
 
 /**
+ * Every funnel counter has to survive the DATABASE, not just the return
+ * value of runDiscovery.
+ *
+ * This is the gap the missing filtered_by_thesis/filtered_by_quality
+ * columns lived in: every assertion above reads the in-memory run object,
+ * which was always correct, while source_runs had no column for either
+ * count and listRuns fell through to the schema's .default(0). Run
+ * history reported "0 filtered by thesis" on every run ever recorded —
+ * including live runs where the filter dropped 6 of 13 candidates.
+ *
+ * A zero default makes "never stored" and "genuinely zero" identical, so
+ * these must be asserted against a NON-zero value read back out.
+ */
+describe('funnel counters survive the run-history round trip', () => {
+  it('persists filteredByThesis rather than defaulting it to 0 on read', async () => {
+    __setSourceRunnerForTests(runnerWith([STRONG, CONSULTANCY, FUND]));
+    const run = await runDiscovery({ sources: ['yc'], maxResults: 20, maxApiCalls: 5 }, 'tester');
+    expect(run.filteredByThesis).toBe(2);
+
+    const persisted = listRuns().find((r) => r.id === run.id)!;
+    expect(persisted.filteredByThesis).toBe(2);
+  });
+
+  it('persists filteredByQuality rather than defaulting it to 0 on read', async () => {
+    __setSourceRunnerForTests(runnerWith([STRONG, HYPE]));
+    const run = await runDiscovery(
+      { sources: ['yc'], maxResults: 20, maxApiCalls: 5, minQualityPriority: 40 },
+      'tester',
+    );
+    expect(run.filteredByQuality).toBe(1);
+
+    const persisted = listRuns().find((r) => r.id === run.id)!;
+    expect(persisted.filteredByQuality).toBe(1);
+  });
+
+  it('agrees with the audit entry, which was the only correct record before', async () => {
+    __setSourceRunnerForTests(runnerWith([STRONG, CONSULTANCY, FUND]));
+    const run = await runDiscovery({ sources: ['yc'], maxResults: 20, maxApiCalls: 5 }, 'tester');
+    const audited = store.raw.audit.find((a) => a.action === 'discovery-run')!;
+    const persisted = listRuns().find((r) => r.id === run.id)!;
+    // The divergence between these two is precisely what the live
+    // deployment showed: audit said 6, run history said 0.
+    expect(audited.detail).toMatch(new RegExp(`${persisted.filteredByThesis} filtered by thesis eligibility`));
+  });
+});
+
+/**
  * The default-on thesis filter, exercised through the real pipeline.
  *
  * Two symmetric properties, and the second is the one that makes the

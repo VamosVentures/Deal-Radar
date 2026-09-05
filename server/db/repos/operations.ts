@@ -17,12 +17,14 @@ export function saveRun(run: DiscoveryRun): void {
   const db = getDb();
   db.prepare(`
     INSERT OR REPLACE INTO source_runs (id, at, completed_at, run_type, mode, query, discovered, updated_existing,
-      duplicates_skipped, duplicates_identified, filtered_by_policy, rejected_by_validation, imported, errors,
+      duplicates_skipped, duplicates_identified, filtered_by_policy, filtered_by_thesis, filtered_by_quality,
+      rejected_by_validation, imported, errors,
       api_calls, model_calls, estimated_tokens, estimated_cost_usd, duration_ms, status, initiated_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     run.id, run.at, run.completedAt, run.runType, run.mode, JSON.stringify(run.query), run.discovered, run.updatedExisting,
-    run.duplicatesSkipped, run.duplicatesIdentified, run.filteredByPolicy, run.rejectedByValidation, run.imported,
+    run.duplicatesSkipped, run.duplicatesIdentified, run.filteredByPolicy, run.filteredByThesis, run.filteredByQuality,
+    run.rejectedByValidation, run.imported,
     JSON.stringify(run.errors), run.apiCalls, run.modelCalls, run.estimatedTokens, run.estimatedCostUsd,
     run.durationMs, run.status, run.initiatedBy,
   );
@@ -50,6 +52,12 @@ export function listRuns(limit = 100): DiscoveryRun[] {
       })),
       discovered: r.discovered, updatedExisting: r.updated_existing, duplicatesSkipped: r.duplicates_skipped,
       duplicatesIdentified: r.duplicates_identified ?? 0, filteredByPolicy: r.filtered_by_policy ?? 0,
+      // Rows predating migration v22 never stored these two, so `?? 0`
+      // here is a genuinely unknown count rendering as zero — the same
+      // silent default that hid the missing columns in the first place.
+      // It is correct only for rows written since; the audit entry for
+      // each older run holds its real numbers.
+      filteredByThesis: r.filtered_by_thesis ?? 0, filteredByQuality: r.filtered_by_quality ?? 0,
       rejectedByValidation: r.rejected_by_validation, imported: r.imported, errors: JSON.parse(r.errors as string),
       apiCalls: r.api_calls, modelCalls: r.model_calls, estimatedTokens: r.estimated_tokens,
       estimatedCostUsd: r.estimated_cost_usd, durationMs: r.duration_ms, status: r.status, initiatedBy: r.initiated_by,

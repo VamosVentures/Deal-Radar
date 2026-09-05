@@ -235,19 +235,33 @@ export const demoApi: Api = {
     search: () => Promise.resolve<{ hits: HubSpotSearchHit[]; demo: boolean }>({ hits: [], demo: true }),
     checkDuplicate: () => Promise.resolve({ matches: [], demo: true }),
     pipelines: () => Promise.resolve({
-      pipelines: [{
-        id: 'demo-pipeline', label: 'Deal Radar Pipeline (demo/synthetic)',
-        stages: [
-          { id: 'surfaced', label: 'Surfaced' }, { id: 'needs-review', label: 'Needs Review' },
-          { id: 'approved-to-track', label: 'Approved to Track' }, { id: 'outreach-approved', label: 'Outreach Approved' },
-          { id: 'outreach-drafted', label: 'Outreach Drafted' }, { id: 'founder-contacted', label: 'Founder Contacted' },
-          { id: 'meeting-scheduled', label: 'Meeting Scheduled' }, { id: 'active-diligence', label: 'Active Diligence' },
-          { id: 'monitor', label: 'Monitor' }, { id: 'passed', label: 'Passed' },
-        ],
-      }],
+      pipelines: [
+        {
+          id: 'demo-pipeline-live', label: 'Live Deals Pipeline (demo/synthetic)',
+          stages: [
+            { id: 'to-be-reviewed', label: 'To Be Reviewed' }, { id: 'intro-meeting', label: 'Intro Meeting' },
+            { id: 'company-dilligence', label: 'Company Dilligence' }, { id: 'negotiations', label: 'Negotiations' },
+            { id: 'legal-dilligence', label: 'Legal Dilligence' }, { id: 'fund-onboarding', label: 'Fund Onboarding' },
+            { id: 'portfolio-company', label: 'Portfolio Company' },
+          ],
+        },
+        {
+          id: 'demo-pipeline-passed', label: 'Passed/Revisit Deals Pipeline (demo/synthetic)',
+          stages: [
+            { id: 'not-a-fit', label: 'Not A Fit' }, { id: 'revisit-6mo', label: 'Revisit in 6 months' },
+            { id: 'revisit-1yr', label: 'Revisit in 1 year' }, { id: 'revisit-1yr-plus', label: 'Revisit in + 1 year' },
+          ],
+        },
+      ],
       demo: true,
     }),
-    getMapping: () => Promise.resolve({ mapping: null, radarStages: ['Surfaced', 'Needs Review', 'Approved to Track', 'Outreach Approved', 'Outreach Drafted', 'Founder Contacted', 'Meeting Scheduled', 'Active Diligence', 'Monitor', 'Passed'] }),
+    getMapping: () => Promise.resolve({
+      mapping: null,
+      radarStages: [
+        'To Be Reviewed', 'Intro Meeting', 'Company Dilligence', 'Negotiations', 'Legal Dilligence',
+        'Fund Onboarding', 'Portfolio Company', 'Not A Fit', 'Revisit in 6 months', 'Revisit in 1 year', 'Revisit in + 1 year',
+      ],
+    }),
     saveMapping: () => disabled(),
     syncCompany: () => disabled(),
     logActivity: () => disabled(),
@@ -299,6 +313,8 @@ export const demoApi: Api = {
     candidates: () => Promise.resolve({ candidates: DEMO_DISCOVERY_CANDIDATES }),
     import: () => disabled(),
     runs: () => Promise.resolve({ runs: DEMO_DISCOVERY_RUNS }),
+    setVertical: () => disabled(),
+    dismiss: () => disabled(),
   },
 
   stealth: {

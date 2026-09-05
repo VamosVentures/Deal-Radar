@@ -191,7 +191,7 @@ const liveApi = {
         method: 'POST',
         body: JSON.stringify({ query, type }),
       }),
-    checkDuplicate: (input: { name: string; domain: string | null; founderEmails?: string[]; dealRadarId?: string }) =>
+    checkDuplicate: (input: { name: string; domain: string | null; founderEmails?: string[] }) =>
       call<{ matches: DuplicateMatch[]; demo: boolean }>('/api/hubspot/check-duplicate', {
         method: 'POST',
         body: JSON.stringify(input),
@@ -281,6 +281,16 @@ const liveApi = {
         body: JSON.stringify({ candidateIds, actor, duplicateAction }),
       }),
     runs: () => call<{ runs: DiscoveryRun[] }>('/api/discovery/runs'),
+    setVertical: (candidateId: string, vertical: string, actor: string) =>
+      call<{ candidate: DiscoveryCandidate }>(`/api/discovery/candidates/${candidateId}/vertical`, {
+        method: 'PUT',
+        body: JSON.stringify({ vertical, actor }),
+      }),
+    dismiss: (candidateId: string, actor: string) =>
+      call<{ candidate: DiscoveryCandidate }>(`/api/discovery/candidates/${candidateId}/dismiss`, {
+        method: 'POST',
+        body: JSON.stringify({ actor }),
+      }),
   },
 
   stealth: {

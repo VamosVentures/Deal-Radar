@@ -149,9 +149,7 @@ describe('HubSpot search + OAuth (fixtures / offline)', () => {
       company: {
         name: 'SolCare Health', domain: 'solcarehealth.example.com', website: null,
         city: 'Austin', state: 'TX', country: 'United States', description: 'x',
-        vertical: 'Health', subcategory: 'Care', stage: 'Seed', accelerator: null,
-        fundingRaised: null, dateFirstSurfaced: '2026-01-01', lastRefreshed: '2026-01-01',
-        primarySource: 'src', policyException: null, dealRadarId: 'c-solcare',
+        industry: 'Health & Wellness', dealRadarId: 'c-solcare',
         dealRadarUrl: 'http://localhost:5173',
       },
       contacts: [{
@@ -163,10 +161,10 @@ describe('HubSpot search + OAuth (fixtures / offline)', () => {
         companyName: 'SolCare Health', fitScore: 8, recommendation: 'Track', vertical: 'Health',
         stage: 'Seed', scoreBreakdown: [], rationale: '', risks: '', evidenceQualityScore: 5,
         policyException: null, sourcingStatus: 'Surfaced', dateSurfaced: '2026-01-01',
-        nextAction: 'Review', relationshipOwner: null, dealRadarId: 'c-solcare',
+        dealRadarId: 'c-solcare',
         dealRadarUrl: 'http://localhost:5173',
       },
-      radarStage: 'Surfaced', duplicateResolution: 'create-new', existingRecordId: null,
+      radarStage: 'To Be Reviewed', duplicateResolution: 'create-new', existingRecordId: null,
     });
     const companies = await agent.post('/api/hubspot/search').send({ query: 'solcare', type: 'companies' });
     expect(companies.body.demo).toBe(true);
