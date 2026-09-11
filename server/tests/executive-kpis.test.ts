@@ -69,16 +69,18 @@ function insertFounder(companyId: string, personKey: string, runId: string | und
 }
 
 describe('Executive Overview KPIs — Companies', () => {
-  it('Cumulative: counts only sourced companies, broken down by vertical, reconciling to the total', () => {
+  it('Cumulative: counts every retained company regardless of origin, broken down by vertical, reconciling to the total', () => {
     saveCompany(fixtureCompany({ id: 'co-health-1', vertical: 'health' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     saveCompany(fixtureCompany({ id: 'co-health-2', vertical: 'health' }), { origin: 'extracted', source: 'discovery:sec', discoverySource: 'sec' });
     saveCompany(fixtureCompany({ id: 'co-fintech-1', vertical: 'fintech' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    // Manually imported (CSV) — no discoverySource — must be excluded from Cumulative.
+    // Manually imported (CSV) — no discoverySource — still counts: Cumulative
+    // answers "how many companies are in the tool", not "how many did
+    // Deal Discovery surface" (that's lastRun/discoveredThisWeek).
     saveCompany(fixtureCompany({ id: 'co-manual-1', vertical: 'health' }), { origin: 'user-entered', source: 'local-csv' });
 
     const kpis = computeCompanyKpis(NOW);
-    expect(kpis.cumulative.total).toBe(3);
-    expect(kpis.cumulative.byVertical.health).toBe(2);
+    expect(kpis.cumulative.total).toBe(4);
+    expect(kpis.cumulative.byVertical.health).toBe(3);
     expect(kpis.cumulative.byVertical.fintech).toBe(1);
     expect(kpis.cumulative.byVertical.frontier).toBe(0); // zero-count verticals still present
     expect(kpis.cumulative.unassigned).toBe(0);
