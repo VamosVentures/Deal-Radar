@@ -240,18 +240,23 @@ export function computeCompanyKpis(now: number = Date.now()): EntityKpis {
   // this file excludes only confirmed-duplicate merges — every pipeline
   // disposition, including Passed/Monitor/Approved/Synced, is included.
   //
-  // Cumulative: every company that came from sourcing (as opposed to a
-  // CSV import or another manual path, which never set discovery_source),
-  // regardless of its current pipeline disposition. This is the
+  // Cumulative: every retained active company, regardless of how it
+  // entered the database (Deal Discovery OR a CSV/manual import) and
+  // regardless of its current pipeline disposition. Company origin is
+  // still visible per-row elsewhere (discovery_source is null for a CSV
+  // import); this KPI answers "how many companies are in the tool",
+  // which a reviewer expects to reconcile with Awaiting Review/Stale —
+  // it does not answer "how many did Deal Discovery surface" (that
+  // question belongs to lastRun/discoveredThisWeek above, which are
+  // already scoped to discovery_source-bearing rows). This is the
   // ALL-TIME figure; see computeCumulativePeriod for the time-filtered
   // versions the Cumulative modal offers. Note: a company can be
   // hard-deleted via the "Clear imported" admin action
   // (server/services/imports.ts clearCompanies) — this count reflects
-  // all RETAINED discovered companies still in the database, not a
+  // all RETAINED companies still in the database, not a
   // separately-tracked ledger, and cannot recover anything hard-deleted
   // before this reads.
-  const sourced = rows.filter((c) => !!c.discovery_source);
-  const cumulative = buildBreakdown(sourced.map((c) => c.vertical));
+  const cumulative = buildBreakdown(rows.map((c) => c.vertical));
 
   // Stale: fixed 7-day rule, HUMAN review only (see lastTouchMs).
   // Never-reviewed counts as stale once it has existed 7+ days; a
@@ -465,7 +470,11 @@ export function computeCumulativePeriod(entity: 'companies' | 'founders', period
   const inPeriod = (t: number) => (fromMs === null || t >= fromMs) && (toMs === null || t < toMs);
 
   if (entity === 'companies') {
-    const rows = companyRows(db).filter((c) => !!c.discovery_source);
+    // Matches computeCompanyKpis' cumulative above: every retained active
+    // company, not only ones with a discovery_source. A CSV/manual import
+    // without a discovered_at falls back to created_at via
+    // companyDiscoveryMs, so period filtering still applies to it.
+    const rows = companyRows(db);
     const filtered = rows.filter((c) => inPeriod(companyDiscoveryMs(c)));
     return { ...buildBreakdown(filtered.map((c) => c.vertical)), period, from, to };
   }
