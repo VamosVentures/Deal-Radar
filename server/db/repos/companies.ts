@@ -504,8 +504,18 @@ export function markRefreshed(ids: string[], date: string): number {
   return updated;
 }
 
-export function clearCompanies(): void {
-  getDb().exec('DELETE FROM companies'); // founders/evidence/etc. cascade
+/**
+ * Deletes only companies that did NOT come from Deal Discovery — i.e.
+ * CSV/manual imports (discovery_source is set exclusively by the
+ * discovery pipeline, server/services/discovery.ts; see saveCompany's
+ * SaveOptions). Named and scoped this way on purpose: the Settings page
+ * button this backs is labeled "Clear imported companies", and it must
+ * only ever undo what a CSV upload added — never a company Deal
+ * Discovery surfaced, however that company's review/HubSpot status has
+ * since changed. founders/evidence/etc. still cascade for each deleted row.
+ */
+export function clearCsvImportedCompanies(): void {
+  getDb().exec('DELETE FROM companies WHERE discovery_source IS NULL');
 }
 
 /** Pool for the identity-matching service. */

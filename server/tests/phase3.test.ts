@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { store } from '../lib/store';
 import { resetIdempotencyForTests } from '../lib/guard';
 import { createApp } from '../app';
-import { importCompaniesCsv, importedCompanies, parseCsv } from '../services/imports';
-import { companyMetaView } from '../db/repos/companies';
+import { clearImportedCompanies, importCompaniesCsv, importedCompanies, parseCsv } from '../services/imports';
+import { companyMetaView, saveCompany } from '../db/repos/companies';
 import { runRefresh, listConnectors, cancelRefresh, setConnectorEnabled } from '../services/refresh';
 import { explainFit, comparePortfolio } from '../services/analysis';
 import { installMockIntegrations, installTestPipelineMapping, uninstallMockIntegrations } from './mocks/install';
@@ -68,6 +68,25 @@ describe('local CSV import', () => {
     importCompaniesCsv(csv);
     importCompaniesCsv(csv);
     expect(importedCompanies()).toHaveLength(1);
+  });
+
+  it('"Clear imported companies" removes only CSV-imported rows, never a Deal Discovery company', () => {
+    saveCompany({
+      id: 'discovery-co', name: 'Discovery Co', oneLiner: 'Fixture pitch', vertical: 'health',
+      subcategory: 'Care', stage: 'Seed', city: 'Austin', state: 'TX', foundedYear: 2024, teamSize: 3,
+      traction: { level: 5, note: 'Fixture' },
+      founders: [{ name: 'Founder One', role: 'CEO', background: 'Fixture' }],
+      evidence: [{ claim: 'Fixture claim', source: 'Fixture', url: 'https://example.com/x', date: '2026-07-01', type: 'News' }],
+      flags: [], imported: true,
+    }, { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+    importCompaniesCsv([CSV_HEADER, GOOD_ROW].join('\n'));
+    expect(importedCompanies()).toHaveLength(2);
+
+    clearImportedCompanies();
+
+    const remaining = importedCompanies();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].id).toBe('discovery-co');
   });
 
   it('imported companies are exposed over HTTP', async () => {
