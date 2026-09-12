@@ -4,7 +4,7 @@ import { audit } from '../lib/guard';
 import { portfolioCompanySchema } from '../../shared/integrations';
 import { VERTICAL_ID_VALUES } from '../../shared/discovery';
 import {
-  addPossibleDuplicate, clearCompanies, listCompanies, matchRecords, saveCompany,
+  addPossibleDuplicate, clearCsvImportedCompanies, listCompanies, matchRecords, saveCompany,
 } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';
 import { matchCompany } from '../sourcing/identity';
@@ -218,8 +218,9 @@ export function importedCompanies(): ImportedCompany[] {
   return listCompanies();
 }
 
+/** Undoes a CSV import — and ONLY a CSV import. A company Deal Discovery surfaced is never touched here, regardless of its current review/HubSpot status. */
 export function clearImportedCompanies(): void {
-  clearCompanies();
+  clearCsvImportedCompanies();
 }
 
 export function savePortfolio(raw: unknown): { count: number } {

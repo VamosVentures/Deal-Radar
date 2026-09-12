@@ -250,10 +250,11 @@ export function computeCompanyKpis(now: number = Date.now()): EntityKpis {
   // question belongs to lastRun/discoveredThisWeek above, which are
   // already scoped to discovery_source-bearing rows). This is the
   // ALL-TIME figure; see computeCumulativePeriod for the time-filtered
-  // versions the Cumulative modal offers. Note: a company can be
-  // hard-deleted via the "Clear imported" admin action
-  // (server/services/imports.ts clearCompanies) — this count reflects
-  // all RETAINED companies still in the database, not a
+  // versions the Cumulative modal offers. Note: a CSV-imported company
+  // (and ONLY a CSV-imported one — never a Deal Discovery company) can
+  // be hard-deleted via the "Clear imported companies" admin action
+  // (server/db/repos/companies.ts clearCsvImportedCompanies) — this
+  // count reflects all RETAINED companies still in the database, not a
   // separately-tracked ledger, and cannot recover anything hard-deleted
   // before this reads.
   const cumulative = buildBreakdown(rows.map((c) => c.vertical));
@@ -394,9 +395,9 @@ export function computeFounderKpis(now: number = Date.now()): EntityKpis {
   // DELETE CASCADE (server/db/migrations.ts), and this database runs
   // with `PRAGMA foreign_keys = ON` (server/db/client.ts) — proven with
   // an isolated in-memory test, not assumed — so hard-deleting a company
-  // (clearCompanies()) silently cascade-deletes its founder_candidates
-  // rows too. This count reflects what still exists, not an append-only
-  // ledger of everything ever sourced.
+  // (clearCsvImportedCompanies()) silently cascade-deletes its
+  // founder_candidates rows too. This count reflects what still exists,
+  // not an append-only ledger of everything ever sourced.
   const cumulative = buildBreakdown(rows.map((f) => f.vertical));
 
   // Stale: fixed 7-day rule, human review only. founder_candidates.

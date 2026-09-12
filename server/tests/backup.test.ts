@@ -89,10 +89,13 @@ describe('SQLite backup/restore', () => {
     expect(list).toHaveLength(1);
     expect(list[0].file).toBe(backupResult.backup.file);
 
-    // 4) Mutate the active database (simulating drift since the backup)...
+    // 4) Mutate the active database (simulating drift since the backup) —
+    // a raw delete, not clearCsvImportedCompanies(): this test is proving
+    // restore recovers lost data in general, not exercising the CSV-clear
+    // feature's own (deliberately narrower) scope.
     runScript(dir, dbPath, `
-      const { clearCompanies } = await import('${projectRootUrl}/server/db/repos/companies');
-      clearCompanies();
+      const { getDb } = await import('${projectRootUrl}/server/db/client');
+      getDb().exec('DELETE FROM companies');
       console.log('CLEARED');
     `);
     const afterClear = runScript(dir, dbPath, `

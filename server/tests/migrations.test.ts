@@ -129,7 +129,7 @@ describe('migrations', () => {
     `).run(now, now, now);
 
     expect((db.prepare('SELECT COUNT(*) as n FROM founder_candidates').get() as { n: number }).n).toBe(1);
-    db.exec("DELETE FROM companies WHERE id = 'cascade-co'"); // the same statement clearCompanies() runs, scoped to one row here
+    db.exec("DELETE FROM companies WHERE id = 'cascade-co'"); // same cascade clearCsvImportedCompanies() relies on, scoped to one row here
     expect((db.prepare('SELECT COUNT(*) as n FROM founder_candidates').get() as { n: number }).n).toBe(0);
   });
 });
