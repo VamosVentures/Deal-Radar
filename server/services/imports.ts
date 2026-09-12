@@ -83,32 +83,47 @@ export const CSV_COLUMNS = [
   'evidenceClaim', 'evidenceSource', 'evidenceUrl', 'evidenceDate', 'evidenceType',
 ] as const;
 
-/** Minimal CSV parser: comma-separated with double-quote escaping. */
+/**
+ * Minimal CSV parser: comma-separated with double-quote escaping.
+ *
+ * Parses the WHOLE text as one character stream rather than splitting on
+ * newlines first — a quoted cell is allowed to contain a literal line
+ * break (common in multi-paragraph descriptions), and only an unquoted
+ * `\n` ends a row. An earlier version split on `\n` before interpreting
+ * quotes at all, which silently shredded any such cell into extra rows
+ * and misaligned every column after it.
+ */
 export function parseCsv(text: string): Record<string, string>[] {
-  const lines = text.replace(/\r\n?/g, '\n').split('\n').filter((l) => l.trim().length > 0);
-  if (lines.length < 2) return [];
-  const parseLine = (line: string): string[] => {
-    const cells: string[] = [];
-    let cur = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (inQuotes) {
-        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-        else if (ch === '"') inQuotes = false;
-        else cur += ch;
-      } else if (ch === '"') inQuotes = true;
-      else if (ch === ',') { cells.push(cur); cur = ''; }
+  const normalized = text.replace(/\r\n?/g, '\n');
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  const pushCell = () => { row.push(cur); cur = ''; };
+  const pushRow = () => { pushCell(); rows.push(row); row = []; };
+
+  for (let i = 0; i < normalized.length; i++) {
+    const ch = normalized[i];
+    if (inQuotes) {
+      if (ch === '"' && normalized[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') inQuotes = false;
       else cur += ch;
-    }
-    cells.push(cur);
-    return cells.map((c) => c.trim());
-  };
-  const header = parseLine(lines[0]);
-  return lines.slice(1).map((line) => {
-    const cells = parseLine(line);
-    return Object.fromEntries(header.map((h, i) => [h, cells[i] ?? '']));
-  });
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ',') pushCell();
+    else if (ch === '\n') pushRow();
+    else cur += ch;
+  }
+  if (cur.length > 0 || row.length > 0) pushRow();
+
+  // Trim every cell, and drop fully-blank rows — matches the previous
+  // behavior of filtering out blank lines (e.g. a trailing newline at EOF).
+  const trimmedRows = rows
+    .map((r) => r.map((c) => c.trim()))
+    .filter((r) => !(r.length === 1 && r[0] === ''));
+  if (trimmedRows.length < 2) return [];
+
+  const [header, ...dataRows] = trimmedRows;
+  return dataRows.map((cells) => Object.fromEntries(header.map((h, i) => [h, cells[i] ?? ''])));
 }
 
 export interface ImportReport {

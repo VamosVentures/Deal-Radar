@@ -27,6 +27,19 @@ describe('local CSV import', () => {
     expect(rows[0].a).toBe('x, y');
   });
 
+  it('parses a quoted cell containing a literal line break without shredding the row', () => {
+    // A multi-paragraph description is a realistic cell value (e.g. a
+    // company one-liner exported from a richer record) — the parser must
+    // treat the embedded newline as part of the quoted field, not as a
+    // row boundary.
+    const rows = parseCsv('a,b\n"line one\nline two",z\nsecond,row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].a).toBe('line one\nline two');
+    expect(rows[0].b).toBe('z');
+    expect(rows[1].a).toBe('second');
+    expect(rows[1].b).toBe('row');
+  });
+
   it('imports valid rows and rejects invalid ones with row-level issues', () => {
     const bad = GOOD_ROW.replace('https://example.com/nueva', 'not-a-url'); // evidence url invalid
     const report = importCompaniesCsv([CSV_HEADER, GOOD_ROW, bad].join('\n'));
