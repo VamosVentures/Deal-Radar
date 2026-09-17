@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { adminAgent } from './testAuth';
 import { z } from 'zod';
@@ -11,7 +11,8 @@ import { installMockIntegrations, installTestPipelineMapping, uninstallMockInteg
 import { installFixtureSources, uninstallFixtureSources } from './fixtures/sources';
 import { __setSourceRunnerForTests } from '../services/sources';
 import { runDiscovery } from '../services/discovery';
-import { saveJob, runJobNow, listJobs } from '../services/schedule';
+import { saveJob, runJobNow, listJobs, __setEnrichmentRunnerForTests } from '../services/schedule';
+import type { runEnrichment } from '../services/enrichment';
 import { saveCompany, getCompany, companyMetaView, markRefreshed } from '../db/repos/companies';
 import { importCompaniesCsv } from '../services/imports';
 import type { ImportedCompany } from '../services/imports';
@@ -179,6 +180,32 @@ describe('administrator "Run sourcing now"', () => {
     const run = await runJobNow(job.id, 'admin');
     expect(run.runType).toBe('scheduled-weekly');
     expect(listJobs().find((j) => j.id === job.id)!.lastRunAt).toBeTruthy();
+  });
+
+  /**
+   * The gap this closes: a scheduled/run-now discovery used to leave its
+   * own newly-imported companies exactly as imported — placeholder
+   * founder, no website — for a human to research later. Real network
+   * calls have no per-test mock at this layer, so the enrichment runner
+   * itself is substituted (see __setEnrichmentRunnerForTests) rather than
+   * letting the real one fire.
+   */
+  it('researches its own newly-imported companies immediately, not just imports them', async () => {
+    const enrichSpy = vi.fn(async (_opts: Parameters<typeof runEnrichment>[0]) => ({
+      runId: 'test-run', mode: 'apply' as const, companies: [], totals: {} as never,
+      sourceErrors: [], requestsSpent: 0, status: 'Completed' as const,
+    }));
+    __setEnrichmentRunnerForTests(enrichSpy);
+    try {
+      const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: { ...BASE_QUERY, sources: ['yc'] } as never, enabled: true });
+      await runJobNow(job.id, 'admin');
+      expect(enrichSpy).toHaveBeenCalledTimes(1);
+      const call = enrichSpy.mock.calls[0][0];
+      expect(call.apply).toBe(true);
+      expect(call.companyIds!.length).toBeGreaterThan(0);
+    } finally {
+      __setEnrichmentRunnerForTests(null);
+    }
   });
 
   it('is reachable over HTTP and 404s for an unknown job', async () => {
