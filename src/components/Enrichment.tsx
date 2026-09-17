@@ -117,7 +117,60 @@ export function FounderCell({ enrichment }: { enrichment: CompanyEnrichment | un
  * "Not yet classified" here contradicted that — a company visibly sorted
  * into "Fintech" showed a blank vertical column. Show the import-time
  * bucket, labelled as unconfirmed, instead of a state that isn't true.
+ *
+ * The bold label is ALWAYS `rawVerticalId`'s name, in both branches —
+ * never Research's own `primaryLabel`. That bucket is what the filter
+ * and every shortlist actually use, and it is exactly what the backend's
+ * own guard (`hasVerticalConflict`, server/services/enrichment.ts)
+ * refuses to let a disagreeing sector silently overwrite. This cell used
+ * to switch to `primaryLabel` the moment Research produced ANY result,
+ * agreeing or not — so a company filed under, and only ever surfaced by
+ * filtering for, FinTech could visibly read "Future of Work": Research's
+ * own opinion, correct nowhere a reviewer was actually looking, and
+ * silently contradicting the row it sat in. When Research disagrees with
+ * the stored bucket, that's exactly what "Sources conflict" already
+ * means elsewhere in this table (see the founder cell) — reused here
+ * rather than a second way to say the same thing.
  */
+/**
+ * The decision `VerticalCell` renders, pulled out as a pure function so
+ * the "always the stored bucket, never Research's own sector" rule is
+ * directly unit-testable without rendering React.
+ */
+export interface VerticalCellView {
+  label: string;
+  detail: string | null;
+  badge: 'conflict' | 'candidate' | { state: ResolutionState; inferred: boolean; confidence?: number } | null;
+  title: string;
+}
+
+export function resolveVerticalCellView(
+  enrichment: CompanyEnrichment | undefined,
+  rawVerticalId: string,
+  rawSubcategory: string | undefined,
+): VerticalCellView {
+  const fallback = verticalById(rawVerticalId);
+  const placeholderSubcategory = rawSubcategory && rawSubcategory !== 'Unclassified — requires manual review' ? rawSubcategory : null;
+
+  const value = enrichment?.vertical.value;
+  if (value) {
+    const v = enrichment!.vertical;
+    const disagrees = value.primaryLabel !== fallback.name;
+    return {
+      label: fallback.name,
+      detail: disagrees ? `Research suggests ${value.primaryLabel}` : value.subvertical ?? null,
+      badge: disagrees ? 'conflict' : v.inferred ? { state: v.state, inferred: true, confidence: v.confidence } : null,
+      title: v.summary,
+    };
+  }
+  return {
+    label: fallback.name,
+    detail: placeholderSubcategory,
+    badge: 'candidate',
+    title: 'Assigned at discovery, not yet verified by Research.',
+  };
+}
+
 export function VerticalCell({
   enrichment,
   rawVerticalId,
@@ -127,23 +180,16 @@ export function VerticalCell({
   rawVerticalId: string;
   rawSubcategory?: string;
 }) {
-  if (enrichment?.vertical.value) {
-    const v = enrichment.vertical;
-    return (
-      <span className="flex flex-col gap-0.5" title={v.summary}>
-        <span className="text-sm font-semibold text-ink">{v.value!.primaryLabel}</span>
-        {v.value!.subvertical && <span className="text-[11px] text-slate-mid">{v.value!.subvertical}</span>}
-        {v.inferred && <ResolutionBadge state={v.state} inferred confidence={v.confidence} />}
-      </span>
-    );
-  }
-  const fallback = verticalById(rawVerticalId);
-  const subcategory = rawSubcategory && rawSubcategory !== 'Unclassified — requires manual review' ? rawSubcategory : undefined;
+  const view = resolveVerticalCellView(enrichment, rawVerticalId, rawSubcategory);
   return (
-    <span className="flex flex-col gap-0.5" title="Assigned at discovery, not yet verified by Research.">
-      <span className="text-sm font-semibold text-ink">{fallback.name}</span>
-      {subcategory && <span className="text-[11px] text-slate-mid">{subcategory}</span>}
-      <ResolutionBadge state="candidate" />
+    <span className="flex flex-col gap-0.5" title={view.title}>
+      <span className="text-sm font-semibold text-ink">{view.label}</span>
+      {view.detail && <span className="text-[11px] text-slate-mid">{view.detail}</span>}
+      {view.badge === 'conflict' && <ResolutionBadge state="conflict" />}
+      {view.badge === 'candidate' && <ResolutionBadge state="candidate" />}
+      {view.badge && typeof view.badge === 'object' && (
+        <ResolutionBadge state={view.badge.state} inferred={view.badge.inferred} confidence={view.badge.confidence} />
+      )}
     </span>
   );
 }
