@@ -11,7 +11,12 @@
  *  - every founder block emitted TWICE, desktop (`hidden gap-4 md:flex`)
  *    and mobile (`md:hidden`), identical content;
  *  - a `Label: Value` sidebar card carrying batch, status, location,
- *    team size, founded year and the company's own website;
+ *    team size and founded year, with the company's own website and
+ *    social links in a SEPARATE `text-linkColor`-wrapped cluster right
+ *    after it — the current real layout (confirmed 2026-09-17 against a
+ *    live fetch of ycombinator.com/companies/dover), after YC's own
+ *    redesign silently broke the previous "Primary Partner" landmark
+ *    this parser depended on and zeroed out `website` for every company;
  *  - a footer link that is NOT the company's site, so "first outbound
  *    link" remains a wrong answer;
  *  - a Company Launches section with traction sentences;
@@ -123,7 +128,7 @@ ${seed.similarCompanies && seed.similarCompanies.length > 0 ? `
 
 <div class="ycdc-card-new space-y-1.5 w-full min-w-[300px]">
   <div class="space-y-1"><div class="text-xl font-medium">
-    <a class="hover:text-linkColor" href="/companies/${seed.slug}">${seed.name}</a>
+    <a class="hover:underline" href="/companies/${seed.slug}">${seed.name}</a>
   </div></div>
   <div class="space-y-2 pt-4">
     <div class="flex flex-row justify-between"><span>Founded:</span><span>${seed.founded}</span></div>
@@ -131,13 +136,11 @@ ${seed.similarCompanies && seed.similarCompanies.length > 0 ? `
     <div class="flex flex-row justify-between"><span>Team Size:</span><span>${seed.teamSize}</span></div>
     <div class="flex flex-row justify-between"><span>Status:</span><span class="flex items-center"><div class="mr-[6px] h-2 w-2 bg-green-500"></div>${seed.status ?? 'Active'}</span></div>
     <div class="flex flex-row justify-between"><span>Location:</span><span>${seed.location}</span></div>
-    <div class="flex flex-row justify-between"><span>Primary Partner:</span>
-      <a class="text-linkColor" href="https://www.ycombinator.com/people/example-partner">Example Partner</a></div>
   </div>
-  <div class="flex flex-wrap items-center gap-3 pt-2">
-    <a class="flex h-9 w-9" href="${seed.website}"><span>site</span></a>
-    <a class="flex h-9 w-9" href="https://www.linkedin.com/company/${seed.slug}/"><span>li</span></a>
-    <a class="flex h-9 w-9" href="https://x.com/${seed.slug}"><span>x</span></a>
+  <div class="group flex flex-row items-center px-3 leading-none text-linkColor ">
+    <a href="${seed.website}" target="_blank" class="mb-2 whitespace-nowrap md:mb-0"><span>site</span></a>
+    <a href="https://www.linkedin.com/company/${seed.slug}/" target="_blank"><span>li</span></a>
+    <a href="https://x.com/${seed.slug}" target="_blank"><span>x</span></a>
   </div>
 </div>
 
