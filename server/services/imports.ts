@@ -3,6 +3,7 @@ import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { portfolioCompanySchema } from '../../shared/integrations';
 import { VERTICAL_ID_VALUES } from '../../shared/discovery';
+import { EMPTY_CATEGORY, subverticalLabelsForSector } from '../enrichment/verticalClassifier';
 import {
   addPossibleDuplicate, clearCsvImportedCompanies, listCompanies, matchRecords, saveCompany,
 } from '../db/repos/companies';
@@ -75,6 +76,50 @@ export type ImportedCompany = z.infer<typeof importedCompanySchema>;
  * ever leaks into a view that forgot to check provenance.
  */
 export const PLACEHOLDER_FOUNDED_YEAR = 1990;
+
+/**
+ * Fields a CSV row supplies a SCHEMA-SATISFYING value for, without
+ * actually stating a fact: an absent optional field, a subcategory typed
+ * as a placeholder ("Unclassified — requires manual review") OR a real
+ * Vamos taxonomy label imported for the WRONG sector (no less unstated
+ * for being real text — Podium's own subcategory, 'consumer wellness',
+ * belongs only to `health`'s taxonomy while its vertical is `fintech`),
+ * the stage enum's own "Unknown" option, a city/state the analyst had no
+ * information for, or a founded year sitting at the schema's floor (see
+ * PLACEHOLDER_FOUNDED_YEAR above).
+ *
+ * `importCompaniesCsv` passes this to `saveCompany`'s `unknownFields`,
+ * which records these as `missing` provenance instead of `user-entered`.
+ * Before this existed, EVERY field on a CSV-imported company — including
+ * ones the analyst had no information for and only filled with a
+ * placeholder to satisfy validation — was stamped `user-entered`, the
+ * second-highest precedence tier in the system. A blank website was
+ * exactly as protected from later automated research as a value someone
+ * had actually verified, so nothing the enrichment pipeline discovered
+ * afterward could ever be written back: a live production company
+ * (Podium) kept a wrong, already-fixed-in-code subcategory, and a
+ * placeholder website that a passing enrichment run had correctly
+ * re-discovered was silently rejected on write.
+ */
+export function placeholderFieldsFor(data: ImportedCompany): (
+  'website' | 'subcategory' | 'stage' | 'city' | 'state' | 'foundedYear' | 'accelerator' | 'raising' | 'lastFundingDate'
+)[] {
+  const fields: (
+    'website' | 'subcategory' | 'stage' | 'city' | 'state' | 'foundedYear' | 'accelerator' | 'raising' | 'lastFundingDate'
+  )[] = [];
+  if (!data.website) fields.push('website');
+  if (EMPTY_CATEGORY.test(data.subcategory) || !subverticalLabelsForSector(data.vertical).has(data.subcategory.trim().toLowerCase())) {
+    fields.push('subcategory');
+  }
+  if (data.stage === 'Unknown') fields.push('stage');
+  if (/^unknown$/i.test(data.city)) fields.push('city');
+  if (data.state === '??' || /^unknown$/i.test(data.state)) fields.push('state');
+  if (data.foundedYear === PLACEHOLDER_FOUNDED_YEAR) fields.push('foundedYear');
+  if (data.accelerator === undefined) fields.push('accelerator');
+  if (data.raising === undefined) fields.push('raising');
+  if (data.lastFundingDate === undefined) fields.push('lastFundingDate');
+  return fields;
+}
 
 export const CSV_COLUMNS = [
   'name', 'oneLiner', 'vertical', 'subcategory', 'stage', 'city', 'state',
@@ -192,7 +237,10 @@ export function importCompaniesCsv(csvText: string): ImportReport {
     const record = match.kind === 'exact' && match.record
       ? { ...parsed.data, id: match.record.id }
       : parsed.data;
-    saveCompany(record, { origin: 'user-entered', source: 'local-csv', reviewStatus: 'New' });
+    saveCompany(record, {
+      origin: 'user-entered', source: 'local-csv', reviewStatus: 'New',
+      unknownFields: placeholderFieldsFor(record),
+    });
     saveScore(record.id, scoreCompany(record as unknown as Company), record.evidence.map((e) => e.url));
     if (match.kind === 'possible' && match.record) {
       addPossibleDuplicate({
