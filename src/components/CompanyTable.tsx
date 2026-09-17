@@ -146,6 +146,11 @@ export function CompanyTable({
   const [publicWarnOnly, setPublicWarnOnly] = useState(false);
   const [fundWarnOnly, setFundWarnOnly] = useState(false);
   const [includeQuarantined, setIncludeQuarantined] = useState(false);
+  // Approved and sent to HubSpot is a terminal outcome for this record —
+  // it stays in the database (and the HubSpot sync link) but has nothing
+  // left to review here, so it defaults to hidden rather than piling up
+  // alongside new deals. One checkbox away, same as quarantined records.
+  const [includeSynced, setIncludeSynced] = useState(false);
   const [evidenceSince, setEvidenceSince] = useState('');
 
   const [duplicates, setDuplicates] = useState<PossibleDuplicateEntry[]>([]);
@@ -176,6 +181,10 @@ export function CompanyTable({
   const quarantinedCount = useMemo(
     () => companies.filter((c) => quarantine[c.id]).length,
     [companies, quarantine],
+  );
+  const syncedCount = useMemo(
+    () => companies.filter((c) => meta[c.id]?.reviewStatus === 'Synced to HubSpot').length,
+    [companies, meta],
   );
 
   /**
@@ -269,6 +278,12 @@ export function CompanyTable({
         // stay one checkbox away rather than being silently erased.
         if (quar && !includeQuarantined) return false;
 
+        // Approved and synced to HubSpot means this record is done with
+        // Deal Radar's review funnel — hide it by default so it doesn't
+        // clutter the working list of new deals as the synced count grows,
+        // same one-checkbox-away treatment as quarantined records.
+        if (meta[c.id]?.reviewStatus === 'Synced to HubSpot' && !includeSynced) return false;
+
         // An unclassified company counts as a lead, never as a deal.
         const cls: OpportunityClass = opp?.classification ?? 'company-lead';
         if (oppClass !== 'all' && cls !== oppClass) return false;
@@ -314,7 +329,7 @@ export function CompanyTable({
       minEvidenceConfidence, notReviewedDays, duplicateCompanyIds, meta,
       opportunities, qualifications, quarantine, oppClass, primarySource, tierFilter,
       liveOnly, leadsOnly, verifiedAmountOnly, verifiedRoundOnly, missingCorroboration,
-      humanReviewOnly, publicWarnOnly, fundWarnOnly, includeQuarantined, evidenceSince, assessedOnly,
+      humanReviewOnly, publicWarnOnly, fundWarnOnly, includeQuarantined, includeSynced, evidenceSince, assessedOnly,
       promisingOnly, needsDiligenceOnly, promisingVerdict]);
 
   const select = 'rounded-[2px] border border-line bg-panel px-2 py-1.5 text-xs transition-colors focus:border-marigold';
@@ -448,6 +463,10 @@ export function CompanyTable({
           <label className="flex items-center gap-1.5">
             <input type="checkbox" checked={possibleDuplicateOnly} onChange={(e) => setPossibleDuplicateOnly(e.target.checked)} />
             Possible duplicate only
+          </label>
+          <label className="flex items-center gap-1.5" title="Approved and sent to HubSpot — done with the review funnel. Hidden by default so it doesn't clutter the working list of new deals.">
+            <input type="checkbox" checked={includeSynced} onChange={(e) => setIncludeSynced(e.target.checked)} />
+            Show synced to HubSpot ({syncedCount})
           </label>
           {!DEMO_MODE && (
             <label className="flex items-center gap-1.5">
