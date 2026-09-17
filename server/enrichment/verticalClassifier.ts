@@ -259,6 +259,20 @@ const DIRECTORY_CATEGORY_MAP: [RegExp, PrimarySector][] = [
 
 /** Placeholder subcategory values that carry no classification signal. */
 const EMPTY_CATEGORY = /^\s*$|unclassified|requires manual review|unknown|n\/?a$/i;
+export { EMPTY_CATEGORY };
+
+/**
+ * The Vamos taxonomy labels that belong to ONE sector's own subvertical
+ * table (e.g. 'consumer wellness' belongs to `health`, never to `fintech`).
+ *
+ * Exists so a caller can tell a genuine taxonomy match apart from a
+ * taxonomy-SHAPED value left over from a different classification —
+ * see the guard in server/services/enrichment.ts that decides whether a
+ * stored subcategory is worth keeping over a freshly classified one.
+ */
+export function subverticalLabelsForSector(sector: PrimarySector): Set<string> {
+  return new Set(SECTOR_SIGNALS[sector].subverticals.map(([, label]) => label.toLowerCase()));
+}
 
 export interface DirectoryClassification {
   sector: PrimarySector;
