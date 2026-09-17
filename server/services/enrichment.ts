@@ -13,7 +13,7 @@ import { discoverOfficialWebsite, findInYc } from './corroborate';
 import {
   classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
 } from '../enrichment/founderExtraction';
-import { classifyCompany } from '../enrichment/verticalClassifier';
+import { classifyCompany, EMPTY_CATEGORY, subverticalLabelsForSector } from '../enrichment/verticalClassifier';
 import {
   isYcProfileUrl, parseYcProfile, ycProfileMatchesCandidate, type YcProfile,
 } from '../enrichment/ycProfile';
@@ -1365,16 +1365,25 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
         stamp('stage', STAGE_LABELS[stage.stage], stage.evidenceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
       }
       /**
-       * The subvertical fills the subcategory ONLY where the stored one
-       * is a placeholder.
+       * The subvertical fills the subcategory where the stored one is
+       * either a placeholder, OR a taxonomy label that belongs to a
+       * DIFFERENT sector than the one just classified.
        *
-       * A value already matching the Vamos taxonomy is the stronger
-       * statement and scores higher, so overwriting it with a
-       * free-text subvertical would trade a taxonomy match for a
+       * A value already matching the Vamos taxonomy FOR THIS SECTOR is
+       * the stronger statement and scores higher, so overwriting it with
+       * a free-text subvertical would trade a taxonomy match for a
        * near-miss — which is exactly what happened on the first run and
-       * took thesis fit from 47% assessable to 0%.
+       * took thesis fit from 47% assessable to 0%. That guard originally
+       * only checked for the placeholder strings, which let through the
+       * opposite failure: an imported subcategory that is a real Vamos
+       * taxonomy label, just for the wrong sector (Podium carried
+       * fintech as its vertical and 'consumer wellness' — a health-only
+       * label — as its subcategory, and the placeholder check had no
+       * way to see the mismatch and correct it).
        */
-      if (vertical.subvertical && /unclassified|unknown/i.test(c.subcategory)) {
+      const storedSubcategoryMatchesSector = isClassified(vertical.primarySector)
+        && subverticalLabelsForSector(vertical.primarySector).has(c.subcategory.trim().toLowerCase());
+      if (vertical.subvertical && (EMPTY_CATEGORY.test(c.subcategory) || !storedSubcategoryMatchesSector)) {
         stamp('subcategory', vertical.subvertical, vertical.sourceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
       }
       if (discoveredSite) {

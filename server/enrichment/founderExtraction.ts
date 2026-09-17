@@ -275,6 +275,49 @@ export function truncateSupport(s: string, max = 280): string {
 }
 
 /**
+ * A word that would make an adjacent proper noun part of the SAME
+ * sentence as the title, rather than a separate line stacked under it.
+ */
+const SENTENCE_CONNECTOR = /^\s*(?:of|at|for|with|and|is|was|has|had|who|leads|founded|co-founded|joined|says|said|according|serves|runs|,)\b/i;
+
+/**
+ * Is a bare, sentence-less proper-noun phrase stacked immediately after
+ * this match — nothing but whitespace in between — and does that phrase
+ * NOT read as a second person's name?
+ *
+ * A real team page stacks founders exactly this way: "Jane Okonkwo —
+ * Co-Founder & CEO Priya Raman, Chief Technology Officer…" (the case
+ * `NAME_THEN_TITLE`'s lazy tail exists for, see above). The phrase
+ * immediately following the title there is ITSELF a person's name, so it
+ * must not trip this check.
+ *
+ * A customer-testimonial carousel stacks text in the identical shape —
+ * a title with no trailing punctuation, immediately followed by a bare
+ * capitalised line — but what follows is a business, not a person. On
+ * podium.com, "Troy Thollot, CEO" is a customer quote, immediately
+ * followed by "Thollot & Co", his own company being named as the
+ * customer — not a statement about Podium's leadership. Real prose
+ * naming a title-holder's employer almost always uses a connector
+ * ("CEO of Acme") or ends the sentence first ("CEO. Acme was
+ * founded…"); it does not glue a bare company name straight onto the
+ * title with nothing between them. A phrase that fails
+ * `looksLikePersonName` sitting in that exact, connector-free position
+ * is the most reliable signal this file has for "this is a quote FROM a
+ * customer, not a fact about this company's own leadership."
+ */
+function immediatelyFollowedByNonPersonProperNoun(tail: string): boolean {
+  const t = tail.trimStart();
+  if (!t || SENTENCE_CONNECTOR.test(t)) return false;
+  // No `.` in the token class: a title's trailing period ("CEO.") would
+  // otherwise be swallowed and the match would bleed straight into the
+  // next SENTENCE's capitalised first word ("CEO. Previously…"), which
+  // is prose continuing about the same person, not a stacked byline.
+  const m = /^([A-ZÀ-ɏ][\w&'’-]*(?:\s+(?:&\s+)?[A-ZÀ-ɏ][\w&'’-]*){0,4})(?=[\s,]|$)/.exec(t);
+  if (!m) return false;
+  return !looksLikePersonName(m[1]);
+}
+
+/**
  * Extract people with stated founder/officer titles from a page's HTML.
  *
  * Returns at most `limit` people, deduplicated by name, preferring the
@@ -286,7 +329,7 @@ export function extractPeopleFromHtml(html: string, limit = 8): ExtractedPerson[
   const text = readableText(html);
   const found = new Map<string, ExtractedPerson>();
 
-  const consider = (nameRun: string, titleRun: string, context: string) => {
+  const consider = (nameRun: string, titleRun: string, context: string, tail: string) => {
     // Both halves of the capture are cleaned before either is trusted:
     // a window around a separator is not a name and a title, it is a
     // window that CONTAINS one of each.
@@ -294,20 +337,27 @@ export function extractPeopleFromHtml(html: string, limit = 8): ExtractedPerson[
     if (!fullName) return;
     const title = cleanTitle(titleRun);
     if (!title) return;
+    // See immediatelyFollowedByNonPersonProperNoun: a bare business name
+    // stacked right after the title, with no connecting prose, is a
+    // testimonial byline ("Name, Title" / "Their Company"), not this
+    // company stating its own leadership.
+    if (immediatelyFollowedByNonPersonProperNoun(tail)) return;
     const key = fullName.toLowerCase();
     if (found.has(key)) return;
     found.set(key, { fullName, title, supportingText: truncateSupport(context) });
   };
 
   for (const m of text.matchAll(NAME_THEN_TITLE)) {
+    const matchEnd = (m.index ?? 0) + m[0].length;
     const start = Math.max(0, (m.index ?? 0) - 60);
-    consider(m[1], m[2], text.slice(start, (m.index ?? 0) + m[0].length + 60));
+    consider(m[1], m[2], text.slice(start, matchEnd + 60), text.slice(matchEnd, matchEnd + 40));
     if (found.size >= limit) break;
   }
   if (found.size < limit) {
     for (const m of text.matchAll(TITLE_THEN_NAME)) {
+      const matchEnd = (m.index ?? 0) + m[0].length;
       const start = Math.max(0, (m.index ?? 0) - 60);
-      consider(m[2], m[1], text.slice(start, (m.index ?? 0) + m[0].length + 60));
+      consider(m[2], m[1], text.slice(start, matchEnd + 60), text.slice(matchEnd, matchEnd + 40));
       if (found.size >= limit) break;
     }
   }

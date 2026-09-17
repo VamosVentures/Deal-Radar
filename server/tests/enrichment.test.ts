@@ -14,7 +14,7 @@ import {
   looksLikePersonName, trimToName,
 } from '../enrichment/founderExtraction';
 import {
-  classifyCompany, classifyFromDirectoryCategories, scoreSectors,
+  classifyCompany, classifyFromDirectoryCategories, scoreSectors, subverticalLabelsForSector,
 } from '../enrichment/verticalClassifier';
 import {
   isExplicitStageClaim, readStatedStage, resolveStage,
@@ -212,6 +212,40 @@ describe('founder extraction', () => {
 
   it('returns nothing from a page that names nobody', () => {
     expect(extractPeopleFromHtml('<html><body><p>We build software for hospitals.</p></body></html>')).toEqual([]);
+  });
+
+  /**
+   * A real extraction from podium.com: its homepage runs a customer
+   * testimonial carousel, and "Troy Thollot, CEO" — quoted there as a
+   * Podium CUSTOMER, immediately followed by "Thollot & Co", his own
+   * business — was returned as Podium's own verified founder. Podium's
+   * real leadership is unrelated to either name.
+   *
+   * The testimonial stacks a title directly against a business name with
+   * no connecting prose, which is the same bare, punctuation-free shape
+   * a real team page uses to stack a SECOND FOUNDER (see the Jane
+   * Okonkwo / Priya Raman case above) — so the fix must tell the two
+   * apart by what follows, not reject the shape outright.
+   */
+  it('does not treat a customer testimonial byline as this company’s own leadership', () => {
+    const html = `<html><body>
+      <div>What business are saying about Podium</div>
+      <div>At first, I was nervous about the AI Employee. Troy Thollot, CEO</div>
+      <div>Thollot & Co</div>
+      <div>1 min average response time</div>
+      </body></html>`;
+    const names = extractPeopleFromHtml(html).map((p) => p.fullName);
+    expect(names).not.toContain('Troy Thollot');
+  });
+
+  it('still finds a second founder stacked the same way on a real team page', () => {
+    const html = `<html><body>
+      <div>Jane Okonkwo — Co-Founder & CEO</div>
+      <div>Priya Raman, Chief Technology Officer</div>
+      </body></html>`;
+    const names = extractPeopleFromHtml(html).map((p) => p.fullName);
+    expect(names).toContain('Jane Okonkwo');
+    expect(names).toContain('Priya Raman');
   });
 
   it('classifies Form D relationships without conflating a director with an officer', () => {
@@ -554,6 +588,31 @@ describe('vertical classification', () => {
         + 'used by hospitals, payers, and banks for patient billing.',
     });
     expect(out.secondarySector).not.toBe(null);
+  });
+
+  /**
+   * The Podium bug: a company imported with vertical = fintech and
+   * subcategory = 'consumer wellness' — a real Vamos taxonomy label, but
+   * one that only ever exists under `health`'s own subvertical table. The
+   * two fields contradict each other, and runEnrichment's "don't
+   * overwrite a value already matching the taxonomy" guard used to only
+   * check for the placeholder strings ("unclassified"/"unknown"), so a
+   * taxonomy label for the WRONG sector passed as though it were the
+   * stronger, already-correct statement.
+   *
+   * `subverticalLabelsForSector` is what the corrected guard in
+   * runEnrichment now checks the stored subcategory against before
+   * deciding to keep it.
+   */
+  it('does not let a subcategory belonging to a different sector pass as a match', () => {
+    const health = subverticalLabelsForSector('health');
+    const fintech = subverticalLabelsForSector('fintech');
+    expect(health.has('consumer wellness')).toBe(true);
+    expect(fintech.has('consumer wellness')).toBe(false);
+    // Sanity check the reverse direction too, so this isn't just testing
+    // that every label is in every set.
+    expect(fintech.has('payments infrastructure')).toBe(true);
+    expect(health.has('payments infrastructure')).toBe(false);
   });
 });
 
