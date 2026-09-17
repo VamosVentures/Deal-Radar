@@ -424,10 +424,22 @@ export function parseYcProfile(html: string, url: string): YcProfile | null {
    * Scanning the whole document for the first non-YC outbound link
    * returned a Google Plus URL out of the page footer for all four test
    * companies — a real link on the page, and completely the wrong fact.
-   * The sidebar card is the one place YC states the company's own site,
-   * and it always follows the Primary Partner row.
+   * The sidebar card is the one place YC states the company's own site.
+   *
+   * Previously anchored on the "Primary Partner" row, which no longer
+   * exists — YC redesigned the profile page at some point after this was
+   * written, and `Primary\s+Partner` stopped matching ANY live page.
+   * That silently zeroed out `website` for every company, not just some:
+   * a live re-run against 126 companies wrote a real founder for many of
+   * them (the founders landmark, "Active Founders", is untouched by the
+   * redesign) while writing a website for almost none. The link cluster
+   * now sits in a wrapper carrying the `text-linkColor` class — confirmed
+   * against a live fetch of ycombinator.com/companies/dover — so that is
+   * the anchor now. If YC redesigns again, this will need to change
+   * again; there is no version of this that doesn't depend on their
+   * markup.
    */
-  const cardStart = html.search(/Primary\s+Partner/i);
+  const cardStart = html.search(/text-linkColor/i);
   const card = cardStart > 0 ? html.slice(cardStart, cardStart + 4000) : '';
   const websiteMatch = [...card.matchAll(/href="(https?:\/\/[^"]+)"/gi)]
     .map((m) => m[1])
