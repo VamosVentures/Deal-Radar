@@ -32,9 +32,14 @@ import {
 import {
   ENRICHMENT_VERSION, isAuthoritativeFamily, meetsMatchThreshold, personKey, scoreMatch,
   SOURCE_FAMILY_SPECS, isClassified, NON_SECTOR_STATUS, outcomeAnswered, outcomeInconclusive,
-  STAGE_LABELS,
+  STAGE_LABELS, PRIMARY_SECTORS, SECTOR_LABELS,
   type FounderResolutionStatus, type MatchSignal, type ResearchOutcome, type SourceFamily,
-  type StageResolution, type VerticalClassification, SOURCE_FAMILIES,} from '../../shared/enrichment';
+  type StageResolution, type VerticalClassification, type PrimarySector, SOURCE_FAMILIES,} from '../../shared/enrichment';
+
+/** Is this string one of the five recognized top-level sectors? */
+function isPrimarySectorValue(v: string): v is PrimarySector {
+  return (PRIMARY_SECTORS as readonly string[]).includes(v);
+}
 
 /**
  * The founder / vertical / stage enrichment pipeline.
@@ -125,6 +130,8 @@ export interface EnrichmentRunResult {
 
 interface RawCompany extends PlanCompany {
   oneLiner: string;
+  /** The vertical bucket already on the row — never auto-corrected by this pipeline. */
+  vertical: string;
   subcategory: string;
   foundedYear: number | null;
   teamSize: number | null;
@@ -174,6 +181,7 @@ function loadCompanies(opts: EnrichmentOptions): RawCompany[] {
       city: (r.city as string | null) || null,
       state: (r.state as string | null) || null,
       oneLiner: (r.one_liner as string) ?? '',
+      vertical: (r.vertical as string) ?? '',
       subcategory: (r.subcategory as string) ?? '',
       foundedYear: !missingFields.has('foundedYear') && typeof r.founded_year === 'number' && r.founded_year > 1900 ? r.founded_year : null,
       teamSize: !missingFields.has('teamSize') && typeof r.team_size === 'number' && r.team_size > 0 ? r.team_size : null,
@@ -881,7 +889,7 @@ export interface FounderResearchResult {
 }
 
 export async function researchFoundersForRecord(
-  c: PlanCompany & { oneLiner?: string; subcategory?: string; foundedYear?: number | null; teamSize?: number | null; quarantined?: boolean },
+  c: PlanCompany & { oneLiner?: string; vertical?: string; subcategory?: string; foundedYear?: number | null; teamSize?: number | null; quarantined?: boolean },
   opts: { budget?: RequestBudget; maxRequests?: number; at?: string } = {},
 ): Promise<FounderResearchResult> {
   const budget = opts.budget ?? new RequestBudget(opts.maxRequests ?? 24);
@@ -889,6 +897,7 @@ export async function researchFoundersForRecord(
   const record: RawCompany = {
     ...c,
     oneLiner: c.oneLiner ?? '',
+    vertical: c.vertical ?? '',
     subcategory: c.subcategory ?? '',
     foundedYear: c.foundedYear ?? null,
     teamSize: c.teamSize ?? null,
@@ -1075,6 +1084,37 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       classifiedAt: at,
       version: ENRICHMENT_VERSION,
     };
+
+    /**
+     * A disagreement between the classifier's own read and the vertical
+     * bucket already on the company's record is a genuine finding — not
+     * something resolved by silently overwriting one with the other.
+     * `vertical` (the row's top-level bucket, e.g. FinTech) is never
+     * auto-corrected by this pipeline, full stop. What this decides is
+     * whether the classifier's OWN sector is trusted enough to pick a new
+     * `subcategory` value below — and it must not be, when it names a
+     * different sector than the one actually on record.
+     *
+     * Real incident this exists for: Podium is stored under `fintech`.
+     * Its own site text classifies as `fow` (Future of Work, confidence
+     * 0.58) — a defensible read on its own, since Podium is lead/comms
+     * software, not a financial service, but a DIFFERENT read than the
+     * stored vertical. The subcategory guard below used to validate (and
+     * pick) against whichever sector THIS PASS computed rather than the
+     * one on the row, so it happily wrote 'learning and development' — a
+     * real `fow` subvertical — underneath the untouched `fintech` bucket:
+     * internally consistent with the classifier's own opinion, and
+     * inconsistent with everything else on the record. A reviewer would
+     * see "FinTech → learning and development" with nobody having
+     * decided that combination was correct.
+     */
+    const hasVerticalConflict = isClassified(vertical.primarySector)
+      && isPrimarySectorValue(c.vertical)
+      && vertical.primarySector !== c.vertical;
+    if (hasVerticalConflict) {
+      vertical.reason = `${vertical.reason} Disagrees with the vertical already on record `
+        + `(${SECTOR_LABELS[c.vertical as PrimarySector]}) — not auto-corrected; confirm manually.`;
+    }
 
     // ── Stage ───────────────────────────────────────────────────────
     const stageEvidence = buildStageEvidence(c);
@@ -1367,23 +1407,30 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       /**
        * The subvertical fills the subcategory where the stored one is
        * either a placeholder, OR a taxonomy label that belongs to a
-       * DIFFERENT sector than the one just classified.
+       * DIFFERENT sector than the one ON THE ROW — never against
+       * whichever sector this pass happens to compute (see
+       * hasVerticalConflict above). A value already matching the Vamos
+       * taxonomy FOR THE STORED SECTOR is the stronger statement and
+       * scores higher, so overwriting it with a free-text subvertical
+       * would trade a taxonomy match for a near-miss — which is exactly
+       * what happened on the first run and took thesis fit from 47%
+       * assessable to 0%. That guard originally only checked for the
+       * placeholder strings, which let through the opposite failure: an
+       * imported subcategory that is a real Vamos taxonomy label, just
+       * for the wrong sector (Podium carried fintech as its vertical and
+       * 'consumer wellness' — a health-only label — as its subcategory,
+       * and the placeholder check had no way to see the mismatch and
+       * correct it).
        *
-       * A value already matching the Vamos taxonomy FOR THIS SECTOR is
-       * the stronger statement and scores higher, so overwriting it with
-       * a free-text subvertical would trade a taxonomy match for a
-       * near-miss — which is exactly what happened on the first run and
-       * took thesis fit from 47% assessable to 0%. That guard originally
-       * only checked for the placeholder strings, which let through the
-       * opposite failure: an imported subcategory that is a real Vamos
-       * taxonomy label, just for the wrong sector (Podium carried
-       * fintech as its vertical and 'consumer wellness' — a health-only
-       * label — as its subcategory, and the placeholder check had no
-       * way to see the mismatch and correct it).
+       * When the classifier disagrees with the stored vertical, nothing
+       * is written here at all — see hasVerticalConflict's own comment
+       * for why guessing a subcategory under a sector nobody confirmed
+       * is not an improvement over leaving the existing value in place.
        */
-      const storedSubcategoryMatchesSector = isClassified(vertical.primarySector)
-        && subverticalLabelsForSector(vertical.primarySector).has(c.subcategory.trim().toLowerCase());
-      if (vertical.subvertical && (EMPTY_CATEGORY.test(c.subcategory) || !storedSubcategoryMatchesSector)) {
+      const storedSubcategoryMatchesVertical = isPrimarySectorValue(c.vertical)
+        && subverticalLabelsForSector(c.vertical).has(c.subcategory.trim().toLowerCase());
+      if (!hasVerticalConflict && vertical.subvertical
+        && (EMPTY_CATEGORY.test(c.subcategory) || !storedSubcategoryMatchesVertical)) {
         stamp('subcategory', vertical.subvertical, vertical.sourceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
       }
       if (discoveredSite) {
