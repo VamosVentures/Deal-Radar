@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Company, Founder } from '../types';
 import { outreachContext } from '../lib/crm';
 import { api, ApiError } from '../lib/api';
 import { useIntegrations } from '../store/integrations';
 import { btnGhost, btnPrimary, ErrorNote, Field, LocalBadge, Modal } from './Modal';
 import { OUTREACH_TONES, type EmailGenContext, type GeneratedEmail, type OutreachTone } from '../../shared/integrations';
+
+const SENDER_NAME_STORAGE_KEY = 'dealradar.outreach.senderName';
 
 /**
  * AI drafts, humans send. This panel generates a draft from verified
@@ -18,15 +20,43 @@ export function OutreachPanel({ c, onClose, onSaved }: { c: Company; onClose: ()
   const [founderIdx, setFounderIdx] = useState(0);
   const founder: Founder = c.founders[founderIdx];
 
-  const [senderName, setSenderName] = useState('Daniela Reyes');
-  const [senderRole, setSenderRole] = useState('Partner');
+  const [senderName, setSenderName] = useState(() => {
+    try {
+      return localStorage.getItem(SENDER_NAME_STORAGE_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
   const [tone, setTone] = useState<OutreachTone>('Warm and conversational');
   const [customInstructions, setCustomInstructions] = useState('');
   const [meetingAsk, setMeetingAsk] = useState('a 25-minute intro call in the next two weeks');
 
+  // Default the sender to whoever is actually signed in, when that's
+  // knowable — never a fictional name. A real Microsoft SSO identity wins
+  // outright. The shared local-admin password has no individual behind
+  // it, so there we fall back to whatever name was typed in last on this
+  // browser (above), rather than signing as "Local administrator".
+  useEffect(() => {
+    api.auth.status()
+      .then((auth) => {
+        if (auth.identity?.source === 'microsoft-sso' && auth.identity.label) {
+          setSenderName(auth.identity.label);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (senderName.trim()) localStorage.setItem(SENDER_NAME_STORAGE_KEY, senderName.trim());
+    } catch {
+      // Private browsing / blocked storage — the field just won't persist.
+    }
+  }, [senderName]);
+
   const baseContext: EmailGenContext = useMemo(
-    () => outreachContext(c, founder, { name: senderName, role: senderRole }),
-    [c, founder, senderName, senderRole],
+    () => outreachContext(c, founder, { name: senderName }),
+    [c, founder, senderName],
   );
 
   const [email, setEmail] = useState<GeneratedEmail | null>(null);
@@ -133,8 +163,7 @@ export function OutreachPanel({ c, onClose, onSaved }: { c: Company; onClose: ()
                 {OUTREACH_TONES.map((t) => <option key={t}>{t}</option>)}
               </select>
             </label>
-            <Field label="Sender name" value={senderName} onChange={setSenderName} />
-            <Field label="Sender role" value={senderRole} onChange={setSenderRole} />
+            <Field label="Sender name" value={senderName} onChange={setSenderName} placeholder="Your name" />
             <Field label="Meeting ask" value={meetingAsk} onChange={setMeetingAsk} />
             {tone === 'Custom' && (
               <Field label="Custom instructions" value={customInstructions} onChange={setCustomInstructions} placeholder="e.g. mention we saw them at SXSW only if true…" />
@@ -151,7 +180,12 @@ export function OutreachPanel({ c, onClose, onSaved }: { c: Company; onClose: ()
           </div>
 
           {!email && (
-            <button className={btnPrimary} onClick={() => generate()} disabled={busy !== null}>
+            <button
+              className={btnPrimary}
+              onClick={() => generate()}
+              disabled={busy !== null || !senderName.trim()}
+              title={!senderName.trim() ? 'Add a sender name first' : undefined}
+            >
               {busy === 'generate' ? 'Generating…' : 'Generate draft from verified facts'}
             </button>
           )}
