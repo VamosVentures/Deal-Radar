@@ -592,27 +592,28 @@ describe('vertical classification', () => {
 
   /**
    * The Podium bug: a company imported with vertical = fintech and
-   * subcategory = 'consumer wellness' — a real Vamos taxonomy label, but
-   * one that only ever exists under `health`'s own subvertical table. The
-   * two fields contradict each other, and runEnrichment's "don't
-   * overwrite a value already matching the taxonomy" guard used to only
-   * check for the placeholder strings ("unclassified"/"unknown"), so a
-   * taxonomy label for the WRONG sector passed as though it were the
-   * stronger, already-correct statement.
+   * subcategory = 'consumer wellness' — a label that only makes sense
+   * under `health`. The two fields contradict each other, and
+   * runEnrichment's "don't overwrite a value already matching the
+   * taxonomy" guard used to only check for the placeholder strings
+   * ("unclassified"/"unknown"), so a taxonomy label for the WRONG sector
+   * passed as though it were the stronger, already-correct statement.
    *
    * `subverticalLabelsForSector` is what the corrected guard in
    * runEnrichment now checks the stored subcategory against before
-   * deciding to keep it.
+   * deciding to keep it. Every subvertical it returns is now drawn
+   * exclusively from the official Vamos taxonomy (`src/data/taxonomy.ts`)
+   * — there is no separate auto-classifier vocabulary any more.
    */
   it('does not let a subcategory belonging to a different sector pass as a match', () => {
     const health = subverticalLabelsForSector('health');
     const fintech = subverticalLabelsForSector('fintech');
-    expect(health.has('consumer wellness')).toBe(true);
-    expect(fintech.has('consumer wellness')).toBe(false);
+    expect(health.has('personalized care (ai / tech-enabled)')).toBe(true);
+    expect(fintech.has('personalized care (ai / tech-enabled)')).toBe(false);
     // Sanity check the reverse direction too, so this isn't just testing
     // that every label is in every set.
-    expect(fintech.has('payments infrastructure')).toBe(true);
-    expect(health.has('payments infrastructure')).toBe(false);
+    expect(fintech.has('payments')).toBe(true);
+    expect(health.has('payments')).toBe(false);
   });
 });
 

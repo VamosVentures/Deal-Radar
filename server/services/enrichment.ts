@@ -13,7 +13,9 @@ import { discoverOfficialWebsite, findInYc } from './corroborate';
 import {
   classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
 } from '../enrichment/founderExtraction';
-import { classifyCompany, EMPTY_CATEGORY, subverticalLabelsForSector } from '../enrichment/verticalClassifier';
+import {
+  classifyCompany, EMPTY_CATEGORY, matchSubvertical, subverticalLabelsForSector,
+} from '../enrichment/verticalClassifier';
 import {
   isYcProfileUrl, parseYcProfile, ycProfileMatchesCandidate, type YcProfile,
 } from '../enrichment/ycProfile';
@@ -1065,10 +1067,11 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
      */
     const selfDescribed = qual?.operatingEvidence?.level === 'substantive'
       || (siteText !== null && siteText.length >= 500);
+    const textForClassification = classificationText(c, siteText);
     const vertical: VerticalClassification = {
       companyId: c.id,
       ...classifyCompany({
-        text: classificationText(c, siteText),
+        text: textForClassification,
         identityResolved,
         identityGap,
         sourceUrl: c.website ?? null,
@@ -1087,13 +1090,14 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
 
     /**
      * A disagreement between the classifier's own read and the vertical
-     * bucket already on the company's record is a genuine finding — not
-     * something resolved by silently overwriting one with the other.
-     * `vertical` (the row's top-level bucket, e.g. FinTech) is never
-     * auto-corrected by this pipeline, full stop. What this decides is
-     * whether the classifier's OWN sector is trusted enough to pick a new
-     * `subcategory` value below — and it must not be, when it names a
-     * different sector than the one actually on record.
+     * bucket already on the company's record is a genuine finding — the
+     * two most-supported sectors for the SAME text differ. `vertical`
+     * (the row's top-level bucket, e.g. FinTech) is never auto-corrected
+     * by this pipeline, full stop — moving a company between investment
+     * theses is a call only a reviewer makes. By policy, a disagreement
+     * is resolved by keeping the stored vertical and picking the best
+     * subcategory FROM ITS OWN taxonomy (see subvertForStoredVertical
+     * below) rather than reclassifying the company.
      *
      * Real incident this exists for: Podium is stored under `fintech`.
      * Its own site text classifies as `fow` (Future of Work, confidence
@@ -1111,9 +1115,26 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
     const hasVerticalConflict = isClassified(vertical.primarySector)
       && isPrimarySectorValue(c.vertical)
       && vertical.primarySector !== c.vertical;
+    /**
+     * When the classifier disagrees, re-run its OWN subvertical matcher
+     * scoped to the stored vertical against the SAME text — not the
+     * winning sector's subvertical, and not a guess. `matchSubvertical`
+     * is a pure function keyed only by sector + text, so asking it about
+     * a sector other than the one that "won" overall is exactly what it
+     * is for: does this text carry ANY signal for the stored vertical's
+     * own taxonomy, even if it is not the dominant signal in the text as
+     * a whole? For Podium, `fintech`'s own patterns (payments, lending,
+     * wealth, …) genuinely do not appear in lead/comms-software copy, so
+     * this returns null — and the subcategory is left as whatever it
+     * already was rather than invented from nothing.
+     */
+    const subvertForStoredVertical = hasVerticalConflict && isPrimarySectorValue(c.vertical)
+      ? matchSubvertical(c.vertical, textForClassification)
+      : vertical.subvertical;
     if (hasVerticalConflict) {
       vertical.reason = `${vertical.reason} Disagrees with the vertical already on record `
-        + `(${SECTOR_LABELS[c.vertical as PrimarySector]}) — not auto-corrected; confirm manually.`;
+        + `(${SECTOR_LABELS[c.vertical as PrimarySector]}) — kept under that vertical per policy`
+        + `${subvertForStoredVertical ? `, subcategory picked from its own taxonomy instead.` : '; no signal for that vertical\'s own taxonomy was found in the text, so the subcategory is left as-is.'}`;
     }
 
     // ── Stage ───────────────────────────────────────────────────────
@@ -1407,31 +1428,37 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       /**
        * The subvertical fills the subcategory where the stored one is
        * either a placeholder, OR a taxonomy label that belongs to a
-       * DIFFERENT sector than the one ON THE ROW — never against
-       * whichever sector this pass happens to compute (see
-       * hasVerticalConflict above). A value already matching the Vamos
-       * taxonomy FOR THE STORED SECTOR is the stronger statement and
-       * scores higher, so overwriting it with a free-text subvertical
-       * would trade a taxonomy match for a near-miss — which is exactly
-       * what happened on the first run and took thesis fit from 47%
-       * assessable to 0%. That guard originally only checked for the
-       * placeholder strings, which let through the opposite failure: an
-       * imported subcategory that is a real Vamos taxonomy label, just
-       * for the wrong sector (Podium carried fintech as its vertical and
-       * 'consumer wellness' — a health-only label — as its subcategory,
-       * and the placeholder check had no way to see the mismatch and
-       * correct it).
+       * DIFFERENT sector than the one ON THE ROW — validated and picked
+       * against the STORED vertical's own taxonomy (`subvertForStoredVertical`
+       * above), never against whichever sector this pass happens to
+       * compute. A value already matching the Vamos taxonomy FOR THE
+       * STORED SECTOR is the stronger statement and scores higher, so
+       * overwriting it with a free-text subvertical would trade a
+       * taxonomy match for a near-miss — which is exactly what happened
+       * on the first run and took thesis fit from 47% assessable to 0%.
+       * That guard originally only checked for the placeholder strings,
+       * which let through the opposite failure: an imported subcategory
+       * that is a real Vamos taxonomy label, just for the wrong sector
+       * (Podium carried fintech as its vertical and 'consumer wellness'
+       * — a health-only label — as its subcategory, and the placeholder
+       * check had no way to see the mismatch and correct it).
        *
-       * When the classifier disagrees with the stored vertical, nothing
-       * is written here at all — see hasVerticalConflict's own comment
-       * for why guessing a subcategory under a sector nobody confirmed
-       * is not an improvement over leaving the existing value in place.
+       * By policy the stored vertical is never reclassified (see
+       * hasVerticalConflict above), so a mismatch must be resolved
+       * entirely within the subcategory field: written when the stored
+       * vertical's own taxonomy has a real match in the text, and
+       * cleared to the placeholder — never left as a label belonging to
+       * a different sector — when it does not. Every company therefore
+       * ends this pass either genuinely classified under its own
+       * vertical, or honestly unclassified; never mismatched.
        */
       const storedSubcategoryMatchesVertical = isPrimarySectorValue(c.vertical)
         && subverticalLabelsForSector(c.vertical).has(c.subcategory.trim().toLowerCase());
-      if (!hasVerticalConflict && vertical.subvertical
+      if (subvertForStoredVertical
         && (EMPTY_CATEGORY.test(c.subcategory) || !storedSubcategoryMatchesVertical)) {
-        stamp('subcategory', vertical.subvertical, vertical.sourceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
+        stamp('subcategory', subvertForStoredVertical, vertical.sourceUrl ?? `enrichment:${ENRICHMENT_VERSION}`);
+      } else if (!subvertForStoredVertical && !storedSubcategoryMatchesVertical && !EMPTY_CATEGORY.test(c.subcategory)) {
+        stamp('subcategory', 'Unclassified — requires manual review', `enrichment:${ENRICHMENT_VERSION}`);
       }
       if (discoveredSite) {
         stamp('website', discoveredSite, `Derived from the company name and confirmed by the company being named on the page (${discoveredSite})`);

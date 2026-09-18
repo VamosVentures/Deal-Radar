@@ -2,6 +2,7 @@ import {
   NON_SECTOR_STATUS, PRIMARY_SECTORS, SECTOR_LABELS,
   type PrimarySector, type SectorAssignment,
 } from '../../shared/enrichment';
+import { VERTICALS } from '../../src/data/taxonomy';
 
 /**
  * Sector classification from what a company DOES and WHO PAYS for it.
@@ -42,6 +43,44 @@ export interface SectorSignals {
  * made a keyword classifier useless: "care" matches customer care,
  * "space" matches workspace, "bank" matches data bank. Multi-word phrases
  * carry the domain with them.
+ *
+ * ─────────────────────────────────────────────────────────────────
+ * SUBVERTICAL LABELS ARE THE OFFICIAL VAMOS TAXONOMY — NOTHING ELSE
+ * ─────────────────────────────────────────────────────────────────
+ *
+ * Every label on the right-hand side of a `subverticals` pair below is a
+ * literal, exact subcategory name from `src/data/taxonomy.ts`'s
+ * `VERTICALS` — the same list the CSV template, manual entry, and the
+ * sidebar filter already use. Before this, this module maintained its
+ * own separate, differently-worded vocabulary ("payments infrastructure"
+ * vs. the official "Payments"; "consumer wellness" — which isn't in the
+ * official taxonomy under ANY sector). A company could end up with a
+ * `subcategory` in either vocabulary depending on whether a human or
+ * this pipeline last touched the field, and the two never matched
+ * letter-for-letter. `subverticalLabelsForSector` below now derives its
+ * "is this a valid label for this sector" answer directly from
+ * `VERTICALS`, so there is exactly one taxonomy and it is structurally
+ * impossible for this file to drift from it again.
+ *
+ * Two consequences worth knowing about, both deliberate:
+ *
+ * 1. The official taxonomy is coarser than free-text detection used to
+ *    be. FinTech's official list has no "lending" category — the
+ *    closest is "Access to capital" — so several formerly-distinct
+ *    auto-labels now collapse onto the same official one. That is
+ *    correct, not a regression: the official taxonomy IS coarser by
+ *    design, and forcing a finer distinction it does not draw would be
+ *    inventing a category Vamos doesn't have.
+ * 2. A few official subcategories describe a PATIENT POPULATION or
+ *    MARKET SEGMENT rather than a product category ("Cancer", "Brain
+ *    health", "Women's health") and simply are not reliably inferable
+ *    from generic company text — a company can build "personalized
+ *    care" without ever using the word "cancer". Keyword patterns are
+ *    included for these where a real signal exists, but expect them to
+ *    fire far less often than the broader categories. That is the
+ *    correct failure mode: matching this module's standing rule
+ *    everywhere else, a subcategory this module cannot support with
+ *    real text is left unset rather than guessed at.
  */
 export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
   health: {
@@ -65,16 +104,22 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       'physician', 'pharma', 'pharmaceutical', 'employer health', 'medicaid', 'medicare',
       'tpa', 'third-party administrator', 'patients pay', 'per member per month',
     ],
+    // Ordered most-specific-first: a population/segment match (Cancer,
+    // Women's health, Brain health, Longevity) wins over the generic
+    // "Personalized care" catch-all when both are present in the text.
     subverticals: [
-      ['clinical trial', 'clinical trial infrastructure'],
-      ['drug discovery', 'drug discovery'],
-      ['mental health|behavioral health', 'behavioral health'],
-      ['telehealth|remote patient', 'virtual care delivery'],
-      ['electronic health record|ehr|claims', 'health data and claims infrastructure'],
-      ['medical device|surgical', 'medical devices'],
-      ['genomics|biomarker', 'genomics and diagnostics'],
-      ['copay|benefit design|formulary|deductible|plan design', 'health benefits infrastructure'],
-      ['nutrition|fitness|wellness', 'consumer wellness'],
+      ['clinical trial|electronic health record|ehr|claims processing|medical device|surgical',
+        'Healthcare infrastructure'],
+      ['oncology|cancer', 'Cancer'],
+      ['genomics|biomarker|drug discovery', 'Genomics & personalized medicine'],
+      ["women's health|maternal health|fertility|menopause|prenatal", "Women's health"],
+      ['brain health|neurology|neurological|cognitive health', 'Brain health'],
+      ['longevity|healthspan|anti-aging', 'Longevity'],
+      ['copay|co-pay|benefit design|formulary|deductible|plan design|benefits administration',
+        'Healthcare finance'],
+      ['clinician staffing|nurse staffing|provider scheduling|credentialing', 'Healthcare workforce technology'],
+      ['telehealth|remote patient|mental health|behavioral health|nutrition|fitness|wellness|digital therapeutic',
+        'Personalized care (AI / tech-enabled)'],
     ],
   },
   fintech: {
@@ -83,6 +128,12 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       'treasury', 'invoice', 'accounting', 'tax', 'payroll', 'insurance', 'wealth management',
       'brokerage', 'compliance', 'kyc', 'aml', 'fraud detection', 'card issuing',
       'core banking', 'reconciliation', 'capital markets', 'remittance', 'embedded finance',
+      // No official subcategory names these outright, but crypto/DeFi and
+      // financial planning are real fintech markets Vamos does track
+      // ("DeFi & blockchain", "Wealth planning") — without these, a
+      // company whose whole description is crypto-native scored zero
+      // `does` hits and was never even recognized as fintech at all.
+      'crypto', 'blockchain', 'defi', 'stablecoin', 'financial planning', 'financial advisor',
     ],
     pays: [
       'bank', 'banks', 'credit union', 'lender', 'merchant', 'financial institution',
@@ -90,13 +141,22 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       'interchange', 'basis points', 'small business', 'consumers bank',
     ],
     subverticals: [
-      ['payments|card issuing|interchange', 'payments infrastructure'],
-      ['lending|underwriting|credit', 'lending and credit'],
-      ['insurance', 'insurtech'],
-      ['payroll|accounting|invoice|tax', 'finance and back office automation'],
-      ['kyc|aml|fraud|compliance', 'financial crime and compliance'],
-      ['wealth|brokerage|capital markets', 'wealth and capital markets'],
-      ['treasury|reconciliation|ledger', 'treasury and ledger infrastructure'],
+      ['payments|card issuing|interchange', 'Payments'],
+      ['crypto|blockchain|defi|web3|stablecoin', 'DeFi & blockchain'],
+      ['brokerage|capital markets', 'Wealth & capital markets'],
+      ['financial planning|financial advisor|retirement planning|estate planning', 'Wealth planning'],
+      ['investing|investment platform|portfolio management|robo-advisor|asset management', 'Investing'],
+      // "Lending and credit" has no dedicated official category — the
+      // closest fit is the outcome lending actually produces for the
+      // borrower, not the mechanism.
+      ['lending|underwriting|credit', 'Access to capital'],
+      // `tax`, `kyc` and `aml` are 3-letter strings that collide with
+      // ordinary words ("syntax", "streamline") under plain substring
+      // matching — word-bounded here so they only match the term, not a
+      // substring of an unrelated one. The rest of this group is long
+      // enough that a stray substring hit isn't a real risk.
+      ['insurance|payroll|accounting|invoice|\\btax\\b|\\bkyc\\b|\\baml\\b|fraud|compliance|treasury|reconciliation|ledger|core banking|embedded finance',
+        'New financial infrastructure'],
     ],
   },
   sustainability: {
@@ -105,19 +165,37 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       'energy storage', 'grid', 'electrification', 'circular economy', 'recycling',
       'waste', 'water treatment', 'sustainable materials', 'climate', 'greenhouse gas',
       'net zero', 'ev charging', 'heat pump', 'biofuel', 'agriculture technology', 'regenerative',
+      // Nuclear, hydrogen and geothermal are official Vamos subcategories
+      // in their own right (src/data/taxonomy.ts) but had no `does`
+      // signal at all — a company entirely about a small modular
+      // reactor scored zero against every sector, sustainability
+      // included.
+      'nuclear', 'fission', 'fusion', 'small modular reactor', 'hydrogen', 'electrolyzer',
+      'fuel cell', 'geothermal',
     ],
     pays: [
       'utility', 'utilities', 'grid operator', 'energy provider', 'municipality',
       'esg', 'sustainability team', 'carbon market', 'offtaker', 'industrial', 'manufacturer',
       'farmer', 'agribusiness', 'per ton', 'per kilowatt',
     ],
+    // 'recycling|waste|circular', 'water', and 'agriculture technology'
+    // were auto-labels before this change and are DELIBERATELY dropped
+    // here: the official Sustainability taxonomy has no circular-economy,
+    // water, or agriculture category at all. Forcing one of those
+    // companies into "Energy & operations optimization" because it
+    // sounds generic would be exactly the kind of near-miss labelling
+    // this whole change exists to stop. A company like that is correctly
+    // classified as Sustainability at the sector level and left with no
+    // more specific subcategory — an honest gap, not a guess.
     subverticals: [
-      ['carbon|emissions|greenhouse|net zero', 'carbon accounting and removal'],
-      ['solar|wind|renewable|grid|energy storage|battery', 'clean energy and grid'],
-      ['ev charging|electrification|heat pump', 'electrification'],
-      ['recycling|waste|circular', 'circular economy and waste'],
-      ['water', 'water technology'],
-      ['agriculture|regenerative|farm', 'agriculture technology'],
+      ['nuclear|fission|fusion|small modular reactor', 'Nuclear energy'],
+      ['hydrogen|electrolyzer|fuel cell', 'Hydrogen'],
+      ['geothermal', 'Geothermal'],
+      ['solar|wind|renewable', 'Renewable energy'],
+      ['battery|energy storage', 'Renewable-energy digital infrastructure'],
+      ['ev charging|electrification|heat pump', 'Digital energy infrastructure'],
+      ['smart grid|grid management|grid operator', 'Smart grids'],
+      ['carbon|emissions|greenhouse|net zero', 'Energy & operations optimization'],
     ],
   },
   // Frontier = Robotics + Space Tech, combined (src/data/taxonomy.ts).
@@ -137,18 +215,25 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       'satellite operator', 'telecom operator', 'government contract', 'per launch',
       'imagery customer', 'earth observation customer',
     ],
+    // "Space situational awareness" (tracking/monitoring objects) is
+    // deliberately matched on its own phrase, separately from and BEFORE
+    // the generic 'debris' pattern in the launch/hardware group below —
+    // a company that only says "debris removal" (a hardware/servicing
+    // mission) falls through to that later group instead, since removing
+    // debris and tracking it are different businesses.
     subverticals: [
-      ['warehouse|fulfillment|logistics', 'warehouse and logistics robotics'],
-      ['drone|uav', 'aerial systems'],
-      ['autonomous vehicle|self-driving', 'autonomous vehicles'],
-      ['humanoid|manipulator|cobot', 'general-purpose and collaborative robots'],
-      ['surgical robot', 'surgical robotics'],
-      ['agriculture|harvest', 'agricultural robotics'],
-      ['launch|rocket|propulsion', 'launch and propulsion'],
-      ['earth observation|remote sensing|imagery', 'earth observation'],
-      ['satellite|constellation|smallsat|cubesat', 'satellite systems'],
-      ['ground station|downlink', 'ground segment'],
-      ['in-orbit|servicing|debris', 'in-orbit services'],
+      ['surgical robot', 'Healthcare & surgical robotics'],
+      ['warehouse|fulfillment|logistics', 'Industrial & warehouse automation'],
+      ['agriculture|harvest', 'Field & agricultural robotics'],
+      ['humanoid|manipulator|cobot', 'Humanoid & general-purpose robots'],
+      ['simulation|digital twin|robot software|motion planning', 'Robotics software & simulation'],
+      ['drone|uav|autonomous vehicle|self-driving|lidar|slam|perception stack', 'Perception & control systems'],
+      ['space situational awareness|space domain awareness|debris tracking|collision avoidance',
+        'Space situational awareness'],
+      ['earth observation|remote sensing|imagery', 'Earth observation & geospatial data'],
+      ['satellite|constellation|smallsat|cubesat', 'Satellite communications'],
+      ['ground station|downlink', 'Ground-segment & mission software'],
+      ['launch|rocket|propulsion|in-orbit|servicing|debris', 'Launch & in-space hardware'],
     ],
   },
   // General AI was retired as a market of its own — AI is a technology,
@@ -165,6 +250,9 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       'model training', 'fine-tuning', 'vector database', 'retrieval augmented',
       'agent framework', 'mlops', 'gpu cluster', 'model evaluation', 'prompt',
       'computer vision platform', 'speech recognition', 'generative ai', 'ai infrastructure',
+      // "AI copilots" and "Human-AI collaboration" are official
+      // subcategories with no `does` signal at all before this.
+      'copilot', 'co-pilot', 'human-in-the-loop', 'creator economy', 'freelancer', 'solopreneur',
     ],
     pays: [
       'hr team', 'employer', 'chro', 'people team', 'staffing', 'enterprise', 'per employee',
@@ -173,17 +261,18 @@ export const SECTOR_SIGNALS: Record<PrimarySector, SectorSignals> = {
       'per inference', 'api customer', 'platform customer', 'ai engineer',
     ],
     subverticals: [
-      ['hiring|recruiting|talent acquisition', 'talent acquisition'],
-      ['training|upskilling|learning', 'learning and development'],
-      ['benefits|payroll|hr platform|people operations', 'HR operations'],
-      ['frontline|shift|scheduling', 'frontline workforce management'],
-      ['collaboration|productivity|knowledge', 'workplace collaboration'],
-      ['foundation model|large language model|model training', 'foundation models'],
-      ['inference|gpu|mlops|ai infrastructure', 'AI infrastructure'],
-      ['agent framework|agents', 'agent platforms'],
-      ['vector database|retrieval', 'retrieval and data infrastructure'],
-      ['evaluation|guardrail|safety', 'model evaluation and safety'],
-      ['computer vision platform|speech recognition', 'perception platforms'],
+      ['hiring|recruiting|talent acquisition|benefits|payroll|hr platform|people operations|training|upskilling|learning',
+        'Next-generation work infrastructure'],
+      ['frontline|shift|scheduling shifts', 'Frontline & essential-worker technology'],
+      ['collaboration|productivity|knowledge management', 'Workflow & collaboration tools'],
+      ['copilot|co-pilot', 'AI copilots'],
+      ['human-in-the-loop|human-ai collaboration|augmented intelligence', 'Human-AI collaboration'],
+      ['creator economy|freelancer|solopreneur|microbusiness|gig worker', 'Creator & microbusiness enablement'],
+      ['ai-native|ai native platform', 'AI-native work platforms'],
+      ['agent framework|autonomous agent|multi-agent', 'Autonomous agents'],
+      ['workflow automation|robotic process automation', 'Human-centered automation'],
+      ['foundation model|large language model|model training|inference|gpu|mlops|ai infrastructure|vector database|retrieval|evaluation|guardrail|safety|computer vision platform|speech recognition',
+        'Horizontal / general-purpose AI infrastructure & tooling'],
     ],
   },
 };
@@ -262,8 +351,16 @@ const EMPTY_CATEGORY = /^\s*$|unclassified|requires manual review|unknown|n\/?a$
 export { EMPTY_CATEGORY };
 
 /**
- * The Vamos taxonomy labels that belong to ONE sector's own subvertical
- * table (e.g. 'consumer wellness' belongs to `health`, never to `fintech`).
+ * The Vamos taxonomy labels that belong to ONE sector — e.g. 'Payments'
+ * belongs to `fintech`, never to `health`.
+ *
+ * Derived directly from `VERTICALS` (`src/data/taxonomy.ts`), the SAME
+ * list the CSV template and sidebar filter read — not from this file's
+ * own `subverticals` patterns. Two structures could describe the same
+ * taxonomy and still drift from each other the moment one is edited
+ * without the other; reading the official list directly makes that
+ * impossible; this function can only ever recognize a label the
+ * official taxonomy actually contains.
  *
  * Exists so a caller can tell a genuine taxonomy match apart from a
  * taxonomy-SHAPED value left over from a different classification —
@@ -271,7 +368,8 @@ export { EMPTY_CATEGORY };
  * stored subcategory is worth keeping over a freshly classified one.
  */
 export function subverticalLabelsForSector(sector: PrimarySector): Set<string> {
-  return new Set(SECTOR_SIGNALS[sector].subverticals.map(([, label]) => label.toLowerCase()));
+  const vertical = VERTICALS.find((v) => v.id === sector);
+  return new Set((vertical?.subcategories ?? []).map((s) => s.name.toLowerCase()));
 }
 
 export interface DirectoryClassification {
