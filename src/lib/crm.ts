@@ -161,7 +161,7 @@ export function dealToHubSpot(c: Company, approvedBy: string | null): HubSpotDea
 }
 
 /** Build the generation context from VERIFIED radar data only. */
-export function outreachContext(c: Company, f: Founder, sender: { name: string; role: string }): EmailGenContext {
+export function outreachContext(c: Company, f: Founder, sender: { name: string }): EmailGenContext {
   const fit = scoreCompany(c);
   const v = verticalById(c.vertical);
   const milestone = [...c.evidence]
@@ -186,7 +186,6 @@ export function outreachContext(c: Company, f: Founder, sender: { name: string; 
     acceleratorOrFunding: c.accelerator ?? c.raising ?? null,
     sourceLinks: c.evidence.map((e) => ({ label: `${e.source} — ${e.claim}`, url: e.url })),
     senderName: sender.name,
-    senderRole: sender.role,
     tone: 'Warm and conversational',
     customInstructions: '',
     meetingAsk: 'a 25-minute intro call in the next two weeks',

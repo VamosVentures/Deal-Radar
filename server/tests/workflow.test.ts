@@ -91,7 +91,7 @@ const genContext = {
   recentMilestone: 'Closed pilot with Central Texas health plan (Company press release, 2026-04-10)',
   acceleratorOrFunding: '$3.5M seed',
   sourceLinks: [{ label: 'Company press release', url: 'https://example.com/solcare-pilot' }],
-  senderName: 'Daniela Reyes', senderRole: 'Partner',
+  senderName: 'Daniela Reyes',
   tone: 'Warm and conversational', customInstructions: '',
   meetingAsk: 'a 25-minute intro call in the next two weeks',
 };

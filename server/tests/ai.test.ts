@@ -18,7 +18,6 @@ const context = (over: Partial<EmailGenContext> = {}): EmailGenContext => ({
   acceleratorOrFunding: '$3.5M seed',
   sourceLinks: [{ label: 'Company press release', url: 'https://example.com/solcare-pilot' }],
   senderName: 'Daniela Reyes',
-  senderRole: 'Partner',
   tone: 'Warm and conversational',
   customInstructions: '',
   meetingAsk: 'a 25-minute intro call in the next two weeks',
@@ -61,8 +60,10 @@ describe('outreach email generation (Demo Mode template)', () => {
     }));
     expect(email.weakEvidence).toBe(true);
     expect(email.warnings.length).toBeGreaterThanOrEqual(2);
-    // honest wording, not a fabricated milestone or background
-    expect(email.body).toContain("won't pretend to know more about your journey");
+    // honest wording: the draft states only the vertical/thesis fit and
+    // never fabricates a founder background or milestone it wasn't given
+    expect(email.body).not.toContain('Your background stood out');
+    expect(email.body).not.toContain('milestone we noticed');
     expect(email.body).not.toMatch(/\$\d/);
     expect(email.body.toLowerCase()).not.toContain('congrats');
   });

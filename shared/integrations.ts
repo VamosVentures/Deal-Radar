@@ -502,7 +502,6 @@ export const emailGenContextSchema = z.object({
   acceleratorOrFunding: z.string().nullable(),
   sourceLinks: z.array(z.object({ label: z.string(), url: z.string() })),
   senderName: z.string().min(1),
-  senderRole: z.string(),
   tone: z.enum(OUTREACH_TONES),
   customInstructions: z.string().default(''),
   meetingAsk: z.string().default('a 25-minute intro call in the next two weeks'),

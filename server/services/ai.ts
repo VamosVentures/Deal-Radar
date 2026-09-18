@@ -41,7 +41,7 @@ export function factGuardIssues(context: EmailGenContext, subject: string, body:
     context.verifiedFounderDetail ?? '', context.recentMilestone ?? '',
     context.acceleratorOrFunding ?? '', context.customInstructions,
     context.founderFullName, context.founderRole, context.vertical,
-    context.subcategory, context.senderName, context.senderRole,
+    context.subcategory, context.senderName,
     context.meetingAsk,
   ].join('\n').toLowerCase();
 
@@ -120,7 +120,7 @@ class TemplateGenerator implements EmailGenerator {
   provider = 'local template (no AI model)';
 
   explainPersonalizationSources(c: EmailGenContext): string[] {
-    const used: string[] = [`Company description and vertical fit (${c.vertical} → ${c.subcategory}).`];
+    const used: string[] = [`Vertical/thesis fit (${c.vertical} → ${c.subcategory}).`];
     if (c.verifiedFounderDetail) used.push(`Verified founder detail: ${c.verifiedFounderDetail}`);
     if (c.recentMilestone) used.push(`Sourced milestone: ${c.recentMilestone}`);
     if (c.acceleratorOrFunding) used.push(`Accelerator/funding fact: ${c.acceleratorOrFunding}`);
@@ -139,23 +139,34 @@ class TemplateGenerator implements EmailGenerator {
     paragraphs.push(OPENERS[c.tone](c));
 
     const middle: string[] = [];
-    middle.push(`${c.companyDescription}`.trim() ? `From what's public, ${lcFirst(c.companyDescription)}` : '');
-    middle.push(c.whyFits ? `Why it resonates with us: ${lcFirst(c.whyFits)}` : '');
+    // Deliberately NOT c.whyFits verbatim: that string is the scoring
+    // model's internal rationale (see thesisFit() in src/lib/scoring.ts),
+    // written for an analyst's screen, not a founder's inbox. Built fresh
+    // here from the same underlying (grounded) vertical/subcategory facts.
+    // No quoted "from what's public" restatement of the company's own
+    // description — even trimmed to a lead clause, it read as the investor
+    // explaining the founder's own company back to them (confirmed with
+    // Andrew 2026-09-17).
+    const subcategoryKnown = !!c.subcategory && !/unclassified|unknown/i.test(c.subcategory);
+    middle.push(
+      subcategoryKnown
+        ? `${c.vertical} is a space we're actively investing in, and ${c.companyName} lines up directly with it — specifically ${c.subcategory}.`
+        : `${c.vertical} is a space we're actively investing in, and ${c.companyName} lines up directly with it.`,
+    );
     if (c.verifiedFounderDetail) middle.push(`Your background stood out — ${lcFirst(c.verifiedFounderDetail)}`);
     if (c.recentMilestone) middle.push(`Congrats as well on a milestone we noticed: ${lcFirst(c.recentMilestone)}`);
-    if (c.acceleratorOrFunding) middle.push(`We also saw: ${lcFirst(c.acceleratorOrFunding)}`);
-    if (!c.verifiedFounderDetail && !c.recentMilestone) {
-      middle.push(`I won't pretend to know more about your journey than what's public — I'd rather hear it from you.`);
-    }
+    if (c.acceleratorOrFunding) middle.push(`We also noticed: ${lcFirst(c.acceleratorOrFunding)}`);
     paragraphs.push(middle.filter(Boolean).map(ensurePeriod).join(' '));
 
     paragraphs.push(
-      `VamosVentures is an early-stage fund investing in ${c.vertical.toLowerCase()} among other sectors, with a focus on backing exceptional, often underestimated founders. If you're open to it, I'd love ${c.meetingAsk}.`,
+      `VamosVentures is an early-stage fund investing in ${c.vertical.toLowerCase()} among other sectors, with a focus on backing exceptional, underrepresented founders. If you're open to it, I'd love ${c.meetingAsk}.`,
     );
     if (c.tone === 'Custom' && c.customInstructions.trim()) {
       paragraphs.push(`P.S. ${c.customInstructions.trim()}`);
     }
-    paragraphs.push(`Best,\n${c.senderName}\n${c.senderRole}, VamosVentures`);
+    // Name only — this gets pasted into Outlook, where the reviewer's own
+    // signature already carries their title and VamosVentures.
+    paragraphs.push(`Best,\n${c.senderName}`);
 
     const subject =
       c.tone === 'Formal'
@@ -204,9 +215,10 @@ class LiveGenerator implements EmailGenerator {
     return [
       'Write a founder-outreach email for a venture fund. Respond ONLY with JSON: {"subject": string, "body": string, "rationale": string}.',
       'HARD RULES: Use ONLY the facts below. Do not invent funding amounts, founder identity or demographics, customer names, revenue, traction, partnerships, accelerator participation, or milestones. If a fact is missing, use general honest wording.',
+      'STYLE: Do not restate or paraphrase what the company does back to the founder — they know their own company, and reads as the investor explaining it to them. Never describe the company in "we" language (reserve "we" for VamosVentures). Do not add a line disclaiming how much you know about the founder\'s journey. Sign off with the sender\'s name only, no title or firm name — this gets pasted into Outlook, where the sender\'s own signature already carries both. Refer to founders VamosVentures backs as "underrepresented", never "underestimated" — and do not qualify it with "often".',
       `Tone: ${c.tone}. ${c.customInstructions}`.trim(),
       extra,
-      `FACTS:\nFounder: ${c.founderFullName} (${c.founderRole})\nCompany: ${c.companyName} — ${c.companyDescription}\nVertical: ${c.vertical} / ${c.subcategory}\nWhy it fits: ${c.whyFits}\nVerified founder detail: ${c.verifiedFounderDetail ?? 'NONE — do not personalize beyond company facts'}\nRecent milestone: ${c.recentMilestone ?? 'NONE — do not claim one'}\nAccelerator/funding: ${c.acceleratorOrFunding ?? 'NONE — do not mention any'}\nSender: ${c.senderName}, ${c.senderRole}, VamosVentures\nMeeting ask: ${c.meetingAsk}`,
+      `FACTS:\nFounder: ${c.founderFullName} (${c.founderRole})\nCompany: ${c.companyName} — ${c.companyDescription}\nVertical: ${c.vertical} / ${c.subcategory}\nWhy it fits: ${c.whyFits}\nVerified founder detail: ${c.verifiedFounderDetail ?? 'NONE — do not personalize beyond company facts'}\nRecent milestone: ${c.recentMilestone ?? 'NONE — do not claim one'}\nAccelerator/funding: ${c.acceleratorOrFunding ?? 'NONE — do not mention any'}\nSender: ${c.senderName}, VamosVentures\nMeeting ask: ${c.meetingAsk}`,
     ].filter(Boolean).join('\n\n');
   }
 
@@ -272,8 +284,17 @@ class LiveGenerator implements EmailGenerator {
   }
 }
 
+/**
+ * Lowercases a fact string's first letter so it reads naturally mid-
+ * sentence — but only for an ordinary capitalized word ("Former VP…" →
+ * "former VP…"). Left untouched when the first "word" looks like an
+ * acronym or a proper noun with no lowercase letter following the first
+ * capital ("AI-native…", "Y Combinator…"), so those don't get mangled
+ * into "aI-native…" / "y Combinator…".
+ */
 function lcFirst(s: string): string {
-  return s.charAt(0).toLowerCase() + s.slice(1);
+  if (/^[A-Z][a-z]/.test(s)) return s.charAt(0).toLowerCase() + s.slice(1);
+  return s;
 }
 function ensurePeriod(s: string): string {
   const t = s.trim();

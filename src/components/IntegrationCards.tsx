@@ -480,7 +480,6 @@ function AiCard({ conn }: { conn: IntegrationConnection }) {
         acceleratorOrFunding: null,
         sourceLinks: [],
         senderName: 'Settings test',
-        senderRole: 'Analyst',
         tone: 'Concise and direct',
         customInstructions: '',
         meetingAsk: 'a quick call',
