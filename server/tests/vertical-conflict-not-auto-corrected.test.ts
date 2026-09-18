@@ -22,9 +22,14 @@ import type { ImportedCompany } from '../services/imports';
  * asserted it.
  *
  * `vertical` (the row's top-level bucket) must never be auto-corrected
- * by this pipeline, so a disagreement between the classifier and the
- * stored vertical has to be surfaced for a human, not resolved by
- * picking a subcategory from whichever sector the classifier prefers.
+ * by this pipeline — a disagreement between the classifier and the
+ * stored vertical never reclassifies the company. But the subcategory
+ * MUST still end up consistent with whatever vertical stays on the row:
+ * by policy the pipeline re-scores the STORED vertical's own taxonomy
+ * against the same text and force-fits the best match from it (or, if
+ * that vertical's own taxonomy finds nothing in the text either, clears
+ * an invalid subcategory to the neutral placeholder) — it never leaves a
+ * subcategory sitting there that doesn't belong to the vertical above it.
  */
 
 beforeEach(() => {
@@ -74,8 +79,8 @@ Our platform helps merchants accept payments, manage treasury, and reconcile tra
 for their financial institution partners.</p>
 </main></body></html>`;
 
-describe('a classifier/vertical disagreement is never auto-corrected', () => {
-  it('leaves the stored vertical AND subcategory untouched when the classifier disagrees', async () => {
+describe('a classifier/vertical disagreement never reclassifies the vertical, but still fixes the subcategory', () => {
+  it('keeps the stored vertical and clears an invalid subcategory when the classifier disagrees and finds no signal for that vertical either', async () => {
     saveCompany(company(), { origin: 'extracted', source: 'test' });
     markQualifiedForTests('vc-1');
     stub({ 'verticalconflict.example.com': FOW_FLAVORED_SITE });
@@ -85,14 +90,43 @@ describe('a classifier/vertical disagreement is never auto-corrected', () => {
     const row = getDb().prepare('SELECT vertical, subcategory FROM companies WHERE id = ?')
       .get('vc-1') as { vertical: string; subcategory: string };
     expect(row.vertical).toBe('fintech');
-    // Still the ORIGINAL mismatched value — not overwritten with a
-    // DIFFERENT wrong-but-plausible one from the classifier's own sector.
-    expect(row.subcategory).toBe('consumer wellness');
+    // 'consumer wellness' was never a valid fintech subcategory and the
+    // site text has no fintech signal either — cleared to the neutral
+    // placeholder rather than left mismatched or guessed from `fow`.
+    expect(row.subcategory).toBe('Unclassified — requires manual review');
 
     const cls = getDb().prepare('SELECT primary_sector, reason FROM company_vertical_classification WHERE company_id = ?')
       .get('vc-1') as { primary_sector: string; reason: string };
     // The classifier really did land on a different sector — this proves
     // the test exercises a genuine conflict, not a no-op.
+    expect(cls.primary_sector).toBe('fow');
+    expect(cls.reason).toMatch(/disagrees with the vertical already on record/i);
+  });
+
+  it('keeps the stored vertical and force-fits a subcategory from ITS OWN taxonomy when the classifier disagrees but the text still carries a signal for the stored vertical', async () => {
+    saveCompany(company(), { origin: 'extracted', source: 'test' });
+    markQualifiedForTests('vc-1');
+    // FOW-flavored copy, but with a fintech-specific phrase mixed in —
+    // the classifier still reads the dominant sector as `fow`, but the
+    // stored vertical (`fintech`) has real signal of its own in the text.
+    stub({
+      'verticalconflict.example.com': FOW_FLAVORED_SITE.replace(
+        '</p>',
+        ' We also handle payments infrastructure for our enterprise customers.</p>',
+      ),
+    });
+
+    await runEnrichment({ apply: true, companyIds: ['vc-1'], initiatedBy: 'test', maxRequests: 40 });
+
+    const row = getDb().prepare('SELECT vertical, subcategory FROM companies WHERE id = ?')
+      .get('vc-1') as { vertical: string; subcategory: string };
+    expect(row.vertical).toBe('fintech');
+    // Picked from fintech's OWN taxonomy, using the same text — not from
+    // whichever sector the classifier decided actually won overall.
+    expect(row.subcategory).toBe('Payments');
+
+    const cls = getDb().prepare('SELECT primary_sector, reason FROM company_vertical_classification WHERE company_id = ?')
+      .get('vc-1') as { primary_sector: string; reason: string };
     expect(cls.primary_sector).toBe('fow');
     expect(cls.reason).toMatch(/disagrees with the vertical already on record/i);
   });
@@ -107,6 +141,6 @@ describe('a classifier/vertical disagreement is never auto-corrected', () => {
     const row = getDb().prepare('SELECT vertical, subcategory FROM companies WHERE id = ?')
       .get('vc-1') as { vertical: string; subcategory: string };
     expect(row.vertical).toBe('fintech');
-    expect(row.subcategory).toBe('payments infrastructure');
+    expect(row.subcategory).toBe('Payments');
   });
 });

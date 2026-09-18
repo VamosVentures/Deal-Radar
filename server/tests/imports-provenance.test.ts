@@ -90,7 +90,7 @@ describe('placeholderFieldsFor', () => {
 
   it('does NOT flag a real, specific value — including a subcategory that matches its own sector', () => {
     const fields = placeholderFieldsFor(base({
-      website: 'https://podium.com', subcategory: 'payments infrastructure', stage: 'Series A',
+      website: 'https://podium.com', subcategory: 'Payments', stage: 'Series A',
       city: 'Lehi', state: 'UT', foundedYear: 2014,
       accelerator: 'Y Combinator (W16)', raising: '$1M', lastFundingDate: '2014-06-01',
     }));
@@ -109,7 +109,7 @@ describe('importCompaniesCsv provenance', () => {
 
   it('still stamps a real, analyst-provided value as user-entered — protected from automated overwrite', () => {
     importCompaniesCsv([CSV_HEADER, row({
-      website: 'https://podium.com', subcategory: 'payments infrastructure', stage: 'Series A',
+      website: 'https://podium.com', subcategory: 'Payments', stage: 'Series A',
     })].join('\n'));
     const id = 'imported-podium';
     expect(getProvenance(id, 'subcategory')?.origin).toBe('user-entered');
