@@ -22,6 +22,7 @@ import { portfolioRouter } from './routes/portfolio';
 import { duplicatesRouter } from './routes/duplicates';
 import { adminRouter } from './routes/admin';
 import { importsRouter } from './routes/imports';
+import { emailIntakeRouter } from './routes/emailIntake';
 import { notesRouter } from './routes/notes';
 import { authRouter } from './routes/auth';
 import { overviewRouter } from './routes/overview';
@@ -160,6 +161,7 @@ export function createApp() {
   app.use('/api', portfolioRouter);
   app.use('/api', duplicatesRouter);
   app.use('/api', importsRouter);
+  app.use('/api', emailIntakeRouter);
   app.use('/api', notesRouter);
   app.use('/api', overviewRouter);
   // These three are entirely administrator-only end to end (every

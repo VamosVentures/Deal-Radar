@@ -79,6 +79,11 @@ export type EvidenceType =
   | 'Filing'
   | 'News'
   | 'Founder statement'
+  // A forwarded deal-flow email, used as evidence when nothing else is on
+  // record. Evidence.url holds a free-text description of the email
+  // (who forwarded it, when) rather than a link — see server/services/
+  // imports.ts's intakeCandidateSchema and the email-intake review queue.
+  | 'Inbound referral'
   | 'Product'
   | 'Accelerator'
   | 'Hiring signal'

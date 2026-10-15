@@ -1,5 +1,25 @@
 import type { TractionState } from '../../shared/traction';
 
+/**
+ * One company Claude reported from a pasted-back email-intake reply,
+ * awaiting a reviewer's edits and an approve/discard decision. `extracted`
+ * is a partial company (see server/services/imports.ts's
+ * intakeCandidateSchema) — only what was actually stated makes it in.
+ */
+export interface EmailIntakeCandidate {
+  id: number;
+  batchId: string;
+  extracted: Record<string, unknown>;
+  status: 'pending' | 'promoted' | 'discarded';
+  promotedCompanyId: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  createdAt: string;
+  /** Top-level fields still needed before this candidate can be approved. */
+  missingFields: string[];
+}
+
 /** One extractor finding awaiting an accept / edit / reject decision. */
 export interface PendingEvidenceItem {
   id: number;
@@ -444,6 +464,36 @@ const liveApi = {
       call<{ imported: number; skipped: { row: number; issues: string[] }[]; total: number }>('/api/portfolio/import-csv', {
         method: 'POST',
         body: JSON.stringify({ csv }),
+      }),
+  },
+
+  /**
+   * Email deal-flow intake: submit the JSON reply a reviewer got back from
+   * their own Claude.ai chat (see src/lib/emailIntakePrompt.ts), then
+   * review/edit/approve or discard each candidate it produced.
+   */
+  emailIntake: {
+    submitBatch: (reply: string) =>
+      call<{ batchId: string; skipped: number; candidates: EmailIntakeCandidate[] }>('/api/companies/import-email/batches', {
+        method: 'POST',
+        body: JSON.stringify({ reply }),
+      }),
+    listCandidates: () =>
+      call<{ candidates: EmailIntakeCandidate[] }>('/api/companies/import-email/candidates'),
+    updateCandidate: (id: number, patch: Record<string, unknown>) =>
+      call<{ ok: true }>(`/api/companies/import-email/candidates/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      }),
+    approveCandidate: (id: number) =>
+      call<{ ok: true; companyId: string; possibleDuplicate: boolean }>(`/api/companies/import-email/candidates/${id}/approve`, {
+        method: 'POST',
+        body: '{}',
+      }),
+    discardCandidate: (id: number, note?: string | null) =>
+      call<{ ok: true }>(`/api/companies/import-email/candidates/${id}/discard`, {
+        method: 'POST',
+        body: JSON.stringify({ note: note ?? null }),
       }),
   },
 

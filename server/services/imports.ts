@@ -22,7 +22,7 @@ import type { Company } from '../../src/types';
 
 const VERTICALS = VERTICAL_ID_VALUES;
 const STAGES = ['Pre-seed', 'Seed', 'Series A', 'Stealth', 'Unknown'] as const;
-const EVIDENCE_TYPES = ['Filing', 'News', 'Founder statement', 'Product', 'Accelerator', 'Hiring signal', 'Database record'] as const;
+const EVIDENCE_TYPES = ['Filing', 'News', 'Founder statement', 'Inbound referral', 'Product', 'Accelerator', 'Hiring signal', 'Database record'] as const;
 
 export const importedCompanySchema = z.object({
   id: z.string(),
@@ -45,10 +45,26 @@ export const importedCompanySchema = z.object({
   evidence: z.array(z.object({
     claim: z.string().min(3),
     source: z.string().min(3),
-    url: z.string().url(),
+    // A real http(s) link is required for every evidence type EXCEPT
+    // 'Inbound referral' (see src/types.ts's EvidenceType), where this
+    // field instead holds a free-text description of the forwarded email
+    // (who sent it, when) — there is no separate link to cite. This is
+    // the one deliberate relaxation of "evidence needs a real source" in
+    // the whole schema.
+    url: z.string().min(1),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     type: z.enum(EVIDENCE_TYPES),
-  })).min(1, 'Every imported company needs at least one sourced evidence item'),
+  }).refine(
+    (e) => {
+      if (e.type === 'Inbound referral') return true;
+      try {
+        return ['http:', 'https:'].includes(new URL(e.url).protocol);
+      } catch {
+        return false;
+      }
+    },
+    { message: 'url must be a real http(s) link (the only exception is the "Inbound referral" evidence type)', path: ['url'] },
+  )).min(1, 'Every imported company needs at least one sourced evidence item'),
   flags: z.array(z.enum(['defi-adjacent', 'hardware-heavy', 'outside-thesis'])).default([]),
   /** Recorded facts only — absent means unknown, never guessed. */
   raising: z.string().min(1).optional(),
@@ -58,6 +74,37 @@ export const importedCompanySchema = z.object({
   imported: z.literal(true).default(true),
 });
 export type ImportedCompany = z.infer<typeof importedCompanySchema>;
+
+/**
+ * Same shape as `importedCompanySchema`, but every field except `name` is
+ * optional — what an email-intake candidate looks like BEFORE a reviewer
+ * has filled every gap. `name` stays required because a nameless candidate
+ * has nothing for a reviewer to act on at all.
+ *
+ * Deliberately a partial of the SAME schema rather than a hand-maintained
+ * second definition — "what a complete company looks like" has exactly one
+ * source of truth, shared by the CSV path and the email-intake path.
+ */
+export const intakeCandidateSchema = importedCompanySchema.partial().required({ name: true });
+export type IntakeCandidate = z.infer<typeof intakeCandidateSchema>;
+
+/**
+ * Which top-level fields still need a value before a candidate can be
+ * promoted to a real company. Used by the email-intake review queue to
+ * show a reviewer exactly what's missing, and by the approve endpoint to
+ * refuse promotion (422) rather than writing an incomplete company.
+ */
+export function missingRequiredFields(candidate: unknown): string[] {
+  const parsed = importedCompanySchema.safeParse(candidate);
+  if (parsed.success) return [];
+  const fields = new Set<string>();
+  for (const issue of parsed.error.issues) fields.add(String(issue.path[0] ?? 'unknown'));
+  // 'id' is synthesized at promotion time (see commitImportedCompany) —
+  // a reviewer never supplies it, so it must never show up as something
+  // for them to go fill in.
+  fields.delete('id');
+  return [...fields];
+}
 
 /**
  * The value written to a NOT NULL column the source never stated.
@@ -179,6 +226,46 @@ export interface ImportReport {
   possibleDuplicates: number;
 }
 
+/**
+ * The one path from a validated candidate into a real, scored company —
+ * shared by the CSV importer and the email-intake approve endpoint so
+ * dedupe/scoring/audit logic exists in exactly one place.
+ *
+ * Deduplicates against everything already persisted: exact matches
+ * (domain / external id / hubspot id / normalized name) update the
+ * existing record; possible matches are saved as a NEW record and open a
+ * possible-duplicate review item — never auto-merged.
+ */
+export function commitImportedCompany(
+  data: ImportedCompany,
+  opts: { source: string },
+): { possibleDuplicate: boolean; companyId: string } {
+  const match = matchCompany(
+    { name: data.name, domain: data.website ?? null },
+    matchRecords(),
+  );
+  const record = match.kind === 'exact' && match.record
+    ? { ...data, id: match.record.id }
+    : data;
+  saveCompany(record, {
+    origin: 'user-entered', source: opts.source, reviewStatus: 'New',
+    unknownFields: placeholderFieldsFor(record),
+  });
+  saveScore(record.id, scoreCompany(record as unknown as Company), record.evidence.map((e) => e.url));
+  let possibleDuplicate = false;
+  if (match.kind === 'possible' && match.record) {
+    addPossibleDuplicate({
+      companyId: record.id,
+      otherCompanyId: match.record.id,
+      matchedBy: match.matchedBy!,
+      similarity: match.similarity,
+      detail: `"${record.name}" resembles existing "${match.record.name}" (${match.matchedBy}, similarity ${match.similarity.toFixed(2)}). Review before treating them as one company.`,
+    });
+    possibleDuplicate = true;
+  }
+  return { possibleDuplicate, companyId: record.id };
+}
+
 export function importCompaniesCsv(csvText: string): ImportReport {
   const rows = parseCsv(csvText);
   const report: ImportReport = { imported: 0, skipped: [], total: rows.length, possibleDuplicates: 0 };
@@ -226,32 +313,8 @@ export function importCompaniesCsv(csvText: string): ImportReport {
       });
       return;
     }
-    // Deduplicate against everything already persisted. Exact matches
-    // (domain / external id / hubspot id / normalized name) update the
-    // existing record; possible matches import as NEW records and open
-    // a possible-duplicate review item — never auto-merged.
-    const match = matchCompany(
-      { name: parsed.data.name, domain: parsed.data.website ?? null },
-      matchRecords(),
-    );
-    const record = match.kind === 'exact' && match.record
-      ? { ...parsed.data, id: match.record.id }
-      : parsed.data;
-    saveCompany(record, {
-      origin: 'user-entered', source: 'local-csv', reviewStatus: 'New',
-      unknownFields: placeholderFieldsFor(record),
-    });
-    saveScore(record.id, scoreCompany(record as unknown as Company), record.evidence.map((e) => e.url));
-    if (match.kind === 'possible' && match.record) {
-      addPossibleDuplicate({
-        companyId: record.id,
-        otherCompanyId: match.record.id,
-        matchedBy: match.matchedBy!,
-        similarity: match.similarity,
-        detail: `CSV row "${record.name}" resembles existing "${match.record.name}" (${match.matchedBy}, similarity ${match.similarity.toFixed(2)}). Review before treating them as one company.`,
-      });
-      report.possibleDuplicates += 1;
-    }
+    const { possibleDuplicate } = commitImportedCompany(parsed.data, { source: 'local-csv' });
+    if (possibleDuplicate) report.possibleDuplicates += 1;
     report.imported += 1;
   });
   audit({
@@ -279,6 +342,7 @@ export function savePortfolio(raw: unknown): { count: number } {
   return { count: portfolio.length };
 }
 
-function slug(s: string): string {
+/** Shared id-slugging convention for every bulk-intake path (CSV, email). */
+export function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'unnamed';
 }

@@ -382,6 +382,14 @@ export const demoApi: Api = {
     importPortfolioCsv: () => disabled(),
   },
 
+  emailIntake: {
+    submitBatch: () => disabled(),
+    listCandidates: () => Promise.resolve({ candidates: [] }),
+    updateCandidate: () => disabled(),
+    approveCandidate: () => disabled(),
+    discardCandidate: () => disabled(),
+  },
+
   outreach: {
     // Draft generation only, via a local template — no model call, no send.
     // Matches the real application's own no-AI-configured fallback, so

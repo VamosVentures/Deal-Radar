@@ -12,6 +12,8 @@ import { SourceAnalyticsPanel } from '../components/SourceAnalytics';
 import { SourceHealthPanel } from '../components/SourceHealth';
 import { DiversityAnalyticsPanel } from '../components/DiversityAnalytics';
 import { BackupPanel } from '../components/BackupPanel';
+import { EmailIntakePanel } from '../components/EmailIntakePanel';
+import { EmailIntakeQueue } from '../components/EmailIntakeQueue';
 import { useIntegrations } from '../store/integrations';
 import { api, type AuthStatus } from '../lib/api';
 
@@ -21,6 +23,10 @@ export function DataSources() {
   const { refresh } = useIntegrations();
   const [connectedBanner, setConnectedBanner] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
+  // Bumped after a successful email-intake submission to force the review
+  // queue below to remount and reload — simpler than lifting its list
+  // state up here just to expose a refresh callback.
+  const [emailIntakeVersion, setEmailIntakeVersion] = useState(0);
 
   const loadAuth = useCallback(() => {
     api.auth.status().then(setAuth).catch(() => setAuth(null));
@@ -110,6 +116,9 @@ export function DataSources() {
           <IntegrationCards />
 
           <ConnectorPanel />
+
+          <EmailIntakePanel onSubmitted={() => setEmailIntakeVersion((v) => v + 1)} />
+          <EmailIntakeQueue key={emailIntakeVersion} />
 
           <SchedulePanel />
 
