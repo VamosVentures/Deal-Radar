@@ -140,6 +140,34 @@ services:
       # the HubSpot portal; sync itself works without it.
       - key: HUBSPOT_PORTAL_ID
         sync: false
+
+      # ── AI provider (Anthropic) ────────────────────────────────
+      # Same reason as the two blocks above: without declared slots
+      # there is nowhere on the service to enter the key, and the app
+      # silently stays on local templates (aiConfigured() in
+      # server/env.ts needs BOTH a provider and a key).
+      #
+      # All three are sync: false and entered once in the Render
+      # dashboard. AI stays fail-closed until AI_PROVIDER=anthropic and
+      # ANTHROPIC_API_KEY are both filled in; spend is then capped by the
+      # budget gate in server/services/aiBudget.ts (see
+      # AI_COSTS_AND_GUARDRAILS.md).
+      #
+      # Only the Anthropic-specific key is declared. AI_API_KEY (which
+      # wins over it in aiKey()) and OPENAI_API_KEY are deliberately NOT
+      # declared: one credential slot, one place to rotate it, no way
+      # for a second filled-in field to silently take precedence.
+      #
+      # AI_MODEL is optional — blank uses activeModel()'s default. Use a
+      # model listed in shared/ai.ts's MODEL_PRICING; anything else is
+      # priced at the deliberately high unverified rate, so the monthly
+      # budget runs out sooner than real spend would.
+      - key: AI_PROVIDER
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AI_MODEL
+        sync: false
     disk:
       name: deal-radar-data
       mountPath: /app/server/.data

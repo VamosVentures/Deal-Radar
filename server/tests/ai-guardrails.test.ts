@@ -217,6 +217,29 @@ describe('AI guardrails', () => {
       expect(unknown.input).toBeGreaterThanOrEqual(priceFor('claude-opus-5').input);
     });
 
+    it('prices the Claude 5.5 generation as verified, not at the unverified fallback', () => {
+      for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+        expect(priceFor(model).verified).toBe(true);
+      }
+      expect(priceFor('claude-opus-5-5')).toMatchObject({ input: 4, output: 20 });
+      expect(priceFor('claude-sonnet-5-5')).toMatchObject({ input: 2, output: 10 });
+      expect(priceFor('claude-haiku-5-5')).toMatchObject({ input: 0.1, output: 0.5 });
+    });
+
+    it('switches Haiku 5.5 to its long-prompt rate above 100K prompt tokens, counting cached tokens', () => {
+      const short = costOf(aiUsageSchema.parse({ inputTokens: 100_000, outputTokens: 1_000_000 }), 'claude-haiku-5-5');
+      expect(short).toBeCloseTo(0.01 + 0.5, 6);
+      const long = costOf(aiUsageSchema.parse({ inputTokens: 100_001, outputTokens: 1_000_000 }), 'claude-haiku-5-5');
+      expect(long).toBeCloseTo((100_001 / 1_000_000) * 0.5 + 2.5, 6);
+      // Cache reads count toward prompt length, so splitting a long prompt
+      // into cached + uncached parts can't dodge the higher tier.
+      const cachedLong = costOf(
+        aiUsageSchema.parse({ inputTokens: 50_000, cachedTokens: 60_000 }),
+        'claude-haiku-5-5',
+      );
+      expect(cachedLong).toBeCloseTo((50_000 / 1_000_000) * 0.5 + (60_000 / 1_000_000) * 0.05, 6);
+    });
+
     it('charges web searches at $10 per 1,000', () => {
       const cost = costOf(aiUsageSchema.parse({ webSearches: 100 }), 'claude-sonnet-5');
       expect(cost).toBeCloseTo(100 * WEB_SEARCH_COST_USD, 6);
