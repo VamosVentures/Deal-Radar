@@ -26,6 +26,21 @@ import { api, ApiError, type PossibleDuplicateEntry } from '../lib/api';
 import type { CompanyStatus } from '../../shared/integrations';
 import { meetsOperatingCompanyStandard } from '../../shared/qualification';
 
+/**
+ * Most evidence.url values are real links. The one exception is the
+ * 'Inbound referral' evidence type (src/types.ts), where url instead holds
+ * a free-text description of a forwarded email — rendering that as
+ * `<a href>` would produce a broken/misleading link, so it's shown as
+ * plain text instead.
+ */
+function isHttpUrl(url: string): boolean {
+  try {
+    return ['http:', 'https:'].includes(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 const BULK_ACTIONS: CompanyStatus[] = ['Awaiting Review', 'Research Needed', 'Monitor', 'Passed'];
 type SortMode = 'fit' | 'evidence-recency' | 'discovery-date';
 
@@ -1156,7 +1171,13 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
                 <span className="font-semibold text-ink">Evidence added from discovery (appended, never overwritten):</span>
                 <ul className="mt-0.5 list-disc pl-4 text-slate-mid">
                   {m!.addedEvidence!.map((e, i) => (
-                    <li key={i}>{e.claim} — {e.source}, {e.date} (<a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">source</a>)</li>
+                    <li key={i}>
+                      {e.claim} — {e.source}, {e.date} (
+                      {isHttpUrl(e.url)
+                        ? <a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">source</a>
+                        : <span>{e.url}</span>}
+                      )
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -1170,7 +1191,9 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
                   </div>
                   <div className="mt-0.5 flex flex-wrap items-center gap-2 text-slate-mid">
                     <span className="rounded-[2px] bg-paper px-1 py-0.5 font-mono text-[10px] uppercase">{e.type}</span>
-                    <a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{e.source}</a>
+                    {isHttpUrl(e.url)
+                      ? <a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{e.source}</a>
+                      : <span className="text-ink">{e.source} — {e.url}</span>}
                     <span className="font-mono">{e.date}</span>
                   </div>
                 </li>

@@ -106,6 +106,30 @@ describe('migrations', () => {
     expect(byId['co-neither']).toBeNull(); // no history at all stays null, never defaulted to migration time
   });
 
+  it('migration 24 tags every pre-existing non-discovery company as a CSV import, and leaves discovery rows untagged', () => {
+    // Production at migration time holds CSV-imported companies (the real
+    // deal flow "Clear imported" exists to undo) and Deal Discovery rows.
+    // Email intake ships alongside this migration, so no email lead can
+    // exist yet — every discovery_source IS NULL row is a CSV import.
+    const db = new DatabaseSync(':memory:');
+    for (const m of MIGRATIONS.filter((mig) => mig.version < 24)) db.exec(m.sql);
+    const now = new Date().toISOString();
+    const insert = db.prepare(`
+      INSERT INTO companies (id, name, normalized_name, domain, website, one_liner, vertical, subcategory, stage,
+        city, state, founded_year, team_size, traction_level, traction_note, flags, status, discovery_source, created_at, updated_at)
+      VALUES (?, ?, ?, NULL, NULL, 'x', 'health', 'x', 'Seed', 'x', 'TX', 2024, 1, 0, 'x', '[]', 'active', ?, ?, ?)
+    `);
+    insert.run('csv-co', 'csv-co', 'csv-co', null, now, now);
+    insert.run('yc-co', 'yc-co', 'yc-co', 'yc', now, now);
+
+    db.exec(MIGRATIONS.find((m) => m.version === 24)!.sql);
+
+    const rows = db.prepare('SELECT id, intake_source FROM companies ORDER BY id').all() as { id: string; intake_source: string | null }[];
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r.intake_source]));
+    expect(byId['csv-co']).toBe('local-csv');
+    expect(byId['yc-co']).toBeNull();
+  });
+
   it('hard-deleting a company cascade-deletes its founder_candidates rows — Founders Cumulative cannot recover them', () => {
     // Proves, rather than assumes, the caveat documented in
     // computeFounderKpis: founder_candidates.company_id REFERENCES

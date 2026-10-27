@@ -8,8 +8,9 @@ import { companyMetaView, getCompany, markRefreshed, setCompanyMeta } from '../d
 import { recordReviewDecision } from '../db/repos/operations';
 import { COMPANY_STATUSES } from '../../shared/integrations';
 import {
-  clearImportedCompanies, importCompaniesCsv, importedCompanies,
+  clearImportedCompanies, csvImportedCount, importCompaniesCsv, importedCompanies,
 } from '../services/imports';
+import { resolveReviewer } from '../lib/reviewer';
 import { refreshCompanyResearch } from '../services/companyRefresh';
 import { allCompanyEnrichment } from '../services/enrichmentView';
 import {
@@ -68,9 +69,31 @@ importsRouter.get('/companies/imported', wrap(async (_req, res) => {
   });
 }));
 
-importsRouter.post('/companies/imported/clear', wrap(async (_req, res) => {
-  clearImportedCompanies();
-  res.json({ ok: true });
+/** How many companies "Clear imported" would delete — shown in its confirmation dialog. */
+importsRouter.get('/companies/imported/csv-count', wrap(async (_req, res) => {
+  res.json({ count: csvImportedCount() });
+}));
+
+/**
+ * Deletes every CSV-imported company. The caller must send the count the
+ * person just confirmed; if it no longer matches (another upload landed,
+ * or the request didn't come from the confirmation dialog at all) nothing
+ * is deleted and the current count is returned so they can look again.
+ * A bulk delete of real deal flow must never happen from a stray request.
+ */
+importsRouter.post('/companies/imported/clear', wrap(async (req, res) => {
+  const { expectedCount } = z.object({ expectedCount: z.number().int().nonnegative() }).parse(req.body ?? {});
+  const current = csvImportedCount();
+  if (expectedCount !== current) {
+    res.status(409).json({
+      error: 'blocked',
+      message: `Nothing was deleted: there are now ${current} CSV-imported companies, not ${expectedCount}. Review the number and confirm again.`,
+      currentCount: current,
+    });
+    return;
+  }
+  const deleted = clearImportedCompanies(resolveReviewer(req)?.label ?? 'unknown');
+  res.json({ ok: true, deleted });
 }));
 
 /**

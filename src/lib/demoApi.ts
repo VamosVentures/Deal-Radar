@@ -362,6 +362,7 @@ export const demoApi: Api = {
         enrichment,
       });
     },
+    csvImportedCount: () => Promise.resolve({ count: 0 }),
     clear: () => disabled(),
     setStatus: () => disabled(),
     refresh: () => disabled(),
@@ -380,6 +381,15 @@ export const demoApi: Api = {
     savePortfolio: () => disabled(),
     addPortfolioCompany: () => disabled(),
     importPortfolioCsv: () => disabled(),
+  },
+
+  emailIntake: {
+    submitBatch: () => disabled(),
+    extractFromEmail: () => disabled(),
+    listCandidates: () => Promise.resolve({ candidates: [] }),
+    updateCandidate: () => disabled(),
+    approveCandidate: () => disabled(),
+    discardCandidate: () => disabled(),
   },
 
   outreach: {

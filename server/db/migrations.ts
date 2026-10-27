@@ -1390,6 +1390,67 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE source_runs ADD COLUMN filtered_by_quality INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 23,
+    name: 'email-intake-staging-queue',
+    sql: `
+      -- Second intake path for messy, unstructured inbound deal-flow
+      -- email text (see server/services/emailIntake.ts). A reviewer runs
+      -- extraction themselves in their own Claude.ai chat (no AI provider
+      -- is configured for this app — see server/services/aiClient.ts's
+      -- header — and none is planned; this mirrors src/lib/claudePrompt.ts,
+      -- which already hands a human a prompt to paste into Claude for the
+      -- same reason) and pastes the JSON reply back in. One batch can name
+      -- several companies, so one submission produces N candidate rows.
+      -- Nothing here becomes a real, scored company until a human
+      -- approves that specific candidate — server/services/imports.ts's
+      -- commitImportedCompany is the only path from a candidate into the
+      -- companies table.
+      CREATE TABLE email_intake_batches (
+        id TEXT PRIMARY KEY,
+        submitted_by TEXT NOT NULL,
+        submitted_at TEXT NOT NULL
+      );
+
+      CREATE TABLE email_intake_candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id TEXT NOT NULL REFERENCES email_intake_batches(id) ON DELETE CASCADE,
+        -- The candidate as Claude reported it (and as later edited by a
+        -- reviewer filling gaps), stored as JSON shaped like
+        -- ImportedCompany minus whatever the source text never stated.
+        -- Nothing in this column is trusted as fact until 'promoted'.
+        extracted_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',   -- pending | promoted | discarded
+        promoted_company_id TEXT REFERENCES companies(id) ON DELETE SET NULL,
+        decided_by TEXT,
+        decided_at TEXT,
+        decision_note TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_email_intake_candidates_batch ON email_intake_candidates (batch_id);
+      CREATE INDEX idx_email_intake_candidates_status ON email_intake_candidates (status);
+    `,
+  },
+  {
+    version: 24,
+    name: 'company-intake-source',
+    sql: `
+      -- Which non-discovery intake path CREATED a company: 'local-csv' or
+      -- 'email-intake' (NULL for anything Deal Discovery created —
+      -- discovery_source already says where those came from).
+      --
+      -- Exists so Settings' "Clear imported" can undo a CSV upload and
+      -- ONLY a CSV upload. Before email intake, "discovery_source IS NULL"
+      -- meant "came from a CSV" because CSV was the only non-discovery
+      -- path; an approved email lead now lands there too, and must never
+      -- be swept up by that button.
+      --
+      -- Backfill: every existing non-discovery company predates email
+      -- intake, so it can only have come from a CSV upload.
+      ALTER TABLE companies ADD COLUMN intake_source TEXT;
+      UPDATE companies SET intake_source = 'local-csv' WHERE discovery_source IS NULL;
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */
