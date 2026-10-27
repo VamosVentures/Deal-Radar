@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { store } from '../lib/store';
 import { resetDbForTests } from '../db/client';
-import { getCompany, listCompanies } from '../db/repos/companies';
-import { missingRequiredFields } from '../services/imports';
+import { getCompany, listCompanies, saveCompany } from '../db/repos/companies';
+import { clearImportedCompanies, importCompaniesCsv, missingRequiredFields } from '../services/imports';
 import {
   approveEmailIntakeCandidate, discardEmailIntakeCandidate, listEmailIntakeCandidates,
   parseExtractionReply, submitEmailIntakeBatch, updateEmailIntakeCandidate,
@@ -157,6 +157,40 @@ describe('email intake', () => {
       const second = approveEmailIntakeCandidate(id, 'someone-else');
       expect(second.ok).toBe(false);
       if (!second.ok) expect(second.status).toBe(409);
+    });
+  });
+
+  describe('"Clear imported" (Settings) never touches approved email leads', () => {
+    it('removes CSV-imported companies only — an approved email lead and a Deal Discovery company both survive', () => {
+      saveCompany({
+        id: 'discovery-co', name: 'Discovery Co', oneLiner: 'Fixture pitch', vertical: 'health',
+        subcategory: 'Care', stage: 'Seed', city: 'Austin', state: 'TX', foundedYear: 2024, teamSize: 3,
+        traction: { level: 5, note: 'Fixture' },
+        founders: [{ name: 'Founder One', role: 'CEO', background: 'Fixture' }],
+        evidence: [{ claim: 'Fixture claim', source: 'Fixture', url: 'https://example.com/x', date: '2026-07-01', type: 'News' }],
+        flags: [], imported: true,
+      }, { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+
+      const csv = [
+        'name,oneLiner,vertical,subcategory,stage,city,state,foundedYear,teamSize,tractionLevel,tractionNote,founderName,founderRole,founderBackground,evidenceClaim,evidenceSource,evidenceUrl,evidenceDate,evidenceType',
+        'Nueva Salud,Bilingual telehealth for rural clinics,health,Personalized care,Seed,El Paso,TX,2025,9,6,Two clinic pilots live,Ana Ruiz,CEO,Former clinic director,Pilot announced,Local news,https://example.com/nueva,2026-05-01,News',
+      ].join('\n');
+      expect(importCompaniesCsv(csv).imported).toBe(1);
+
+      const { candidates } = submitEmailIntakeBatch({ reply: JSON.stringify({ candidates: [COMPLETE_CANDIDATE] }), submittedBy: 'test-reviewer' });
+      const evidence = candidates[0].extracted.evidence as Record<string, unknown>[];
+      updateEmailIntakeCandidate(candidates[0].id, {
+        traction: { level: 4, note: 'Piloting with 2 regional hospital systems.' },
+        evidence: [{ ...evidence[0], url: 'Forwarded by Jane, 2026-09-14' }],
+      });
+      const approved = approveEmailIntakeCandidate(candidates[0].id, 'test-reviewer');
+      expect(approved.ok).toBe(true);
+      expect(listCompanies()).toHaveLength(3);
+
+      clearImportedCompanies();
+
+      const remaining = listCompanies().map((c) => c.name).sort();
+      expect(remaining).toEqual(['Acme Health', 'Discovery Co']);
     });
   });
 

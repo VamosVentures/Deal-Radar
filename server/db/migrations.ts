@@ -1431,6 +1431,26 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_email_intake_candidates_status ON email_intake_candidates (status);
     `,
   },
+  {
+    version: 24,
+    name: 'company-intake-source',
+    sql: `
+      -- Which non-discovery intake path CREATED a company: 'local-csv' or
+      -- 'email-intake' (NULL for anything Deal Discovery created —
+      -- discovery_source already says where those came from).
+      --
+      -- Exists so Settings' "Clear imported" can undo a CSV upload and
+      -- ONLY a CSV upload. Before email intake, "discovery_source IS NULL"
+      -- meant "came from a CSV" because CSV was the only non-discovery
+      -- path; an approved email lead now lands there too, and must never
+      -- be swept up by that button.
+      --
+      -- Backfill: every existing non-discovery company predates email
+      -- intake, so it can only have come from a CSV upload.
+      ALTER TABLE companies ADD COLUMN intake_source TEXT;
+      UPDATE companies SET intake_source = 'local-csv' WHERE discovery_source IS NULL;
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

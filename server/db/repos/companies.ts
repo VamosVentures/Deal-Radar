@@ -146,6 +146,13 @@ export interface SaveOptions {
   /** The sourcing run whose candidate became this company. Set only at creation, like discoveredAt. */
   discoveryRunId?: string;
   /**
+   * Which non-discovery intake path created this company. Set only at
+   * creation — an email lead that exact-matches an existing CSV company
+   * updates that row and leaves its original tag alone. Scopes
+   * clearCsvImportedCompanies below.
+   */
+  intakeSource?: 'local-csv' | 'email-intake';
+  /**
    * Fields this save does NOT actually know, despite passing a value.
    *
    * Some columns are NOT NULL (`founded_year`, `team_size`) while the
@@ -306,14 +313,14 @@ function saveCompanyUnsafe(record: ImportedCompany, opts: SaveOptions): { create
     db.prepare(`
       INSERT INTO companies (id, name, normalized_name, domain, website, one_liner, vertical, subcategory, stage,
         city, state, founded_year, team_size, traction_level, traction_note, flags, status,
-        review_status, discovery_source, discovered_at, discovery_run_id, raising, accelerator, last_funding_date, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        review_status, discovery_source, discovered_at, discovery_run_id, intake_source, raising, accelerator, last_funding_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id, record.name, normalizeCompanyKey(record.name), domain, record.website ?? null,
       record.oneLiner, record.vertical, record.subcategory, record.stage, record.city, record.state,
       record.foundedYear, record.teamSize, record.traction.level, record.traction.note,
       JSON.stringify(record.flags), opts.reviewStatus ?? null, opts.discoverySource ?? null,
-      opts.discoveredAt ?? null, opts.discoveryRunId ?? null, record.raising ?? null, record.accelerator ?? null,
+      opts.discoveredAt ?? null, opts.discoveryRunId ?? null, opts.intakeSource ?? null, record.raising ?? null, record.accelerator ?? null,
       record.lastFundingDate ?? null, ts, ts,
     );
     const unknown = new Set<string>(opts.unknownFields ?? []);
@@ -505,17 +512,19 @@ export function markRefreshed(ids: string[], date: string): number {
 }
 
 /**
- * Deletes only companies that did NOT come from Deal Discovery — i.e.
- * CSV/manual imports (discovery_source is set exclusively by the
- * discovery pipeline, server/services/discovery.ts; see saveCompany's
- * SaveOptions). Named and scoped this way on purpose: the Settings page
- * button this backs is labeled "Clear imported companies", and it must
- * only ever undo what a CSV upload added — never a company Deal
- * Discovery surfaced, however that company's review/HubSpot status has
- * since changed. founders/evidence/etc. still cascade for each deleted row.
+ * Deletes only companies a CSV upload created (intake_source =
+ * 'local-csv', set at creation by the CSV importer — see migration 24
+ * and SaveOptions.intakeSource). Named and scoped this way on purpose:
+ * the Settings page button this backs is labeled "Clear imported", and
+ * it must only ever undo what a CSV upload added — never a company Deal
+ * Discovery surfaced, and never an approved email-intake lead, however
+ * that company's review/HubSpot status has since changed.
+ * `discovery_source IS NULL` stays as a second guard so a discovery row
+ * can never match even if it were somehow mis-tagged.
+ * founders/evidence/etc. still cascade for each deleted row.
  */
 export function clearCsvImportedCompanies(): void {
-  getDb().exec('DELETE FROM companies WHERE discovery_source IS NULL');
+  getDb().exec("DELETE FROM companies WHERE intake_source = 'local-csv' AND discovery_source IS NULL");
 }
 
 /** Pool for the identity-matching service. */

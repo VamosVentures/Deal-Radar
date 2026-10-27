@@ -238,7 +238,8 @@ export interface ImportReport {
  */
 export function commitImportedCompany(
   data: ImportedCompany,
-  opts: { source: string },
+  /** Doubles as the provenance source and the company's intake_source tag (which scopes "Clear imported"). */
+  opts: { source: 'local-csv' | 'email-intake' },
 ): { possibleDuplicate: boolean; companyId: string } {
   const match = matchCompany(
     { name: data.name, domain: data.website ?? null },
@@ -249,6 +250,7 @@ export function commitImportedCompany(
     : data;
   saveCompany(record, {
     origin: 'user-entered', source: opts.source, reviewStatus: 'New',
+    intakeSource: opts.source,
     unknownFields: placeholderFieldsFor(record),
   });
   saveScore(record.id, scoreCompany(record as unknown as Company), record.evidence.map((e) => e.url));
