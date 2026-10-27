@@ -88,6 +88,11 @@ export function createApp() {
     '/api/outreach/generate',
     rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }),
   );
+  // Each extract is one paid model call, like outreach generation.
+  app.use(
+    '/api/companies/import-email/extract',
+    rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }),
+  );
   // Live research refresh makes several real outbound requests per
   // call — cheaper than outreach generation, but still not something
   // to allow unbounded.

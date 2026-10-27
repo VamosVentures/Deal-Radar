@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { store } from '../lib/store';
 import { resetDbForTests } from '../db/client';
-import { getCompany, listCompanies, saveCompany } from '../db/repos/companies';
-import { clearImportedCompanies, importCompaniesCsv, missingRequiredFields } from '../services/imports';
+import { getCompany, getProvenance, listCompanies, saveCompany } from '../db/repos/companies';
+import { latestScore } from '../db/repos/operations';
+import { clearImportedCompanies, importCompaniesCsv } from '../services/imports';
 import {
-  approveEmailIntakeCandidate, discardEmailIntakeCandidate, listEmailIntakeCandidates,
+  approvalBlockers, approveEmailIntakeCandidate, discardEmailIntakeCandidate, listEmailIntakeCandidates,
   parseExtractionReply, submitEmailIntakeBatch, updateEmailIntakeCandidate,
 } from '../services/emailIntake';
 
@@ -86,8 +87,8 @@ describe('email intake', () => {
       expect(candidates[0].extracted.vertical).toBeUndefined();
       expect(candidates[0].extracted.suggestedVertical).toBe('health');
       expect(typeof candidates[0].extracted.suggestedVerticalReason).toBe('string');
-      // A suggestion alone does not satisfy the schema — still missing until a reviewer confirms it.
-      expect(missingRequiredFields(candidates[0].extracted)).toContain('vertical');
+      // A suggestion alone is not a decision — vertical still blocks approval until a reviewer confirms it.
+      expect(approvalBlockers(candidates[0].extracted)).toContain('vertical');
     });
 
     it('does not suggest a vertical, or override one, when Claude already reported it', () => {
@@ -96,29 +97,40 @@ describe('email intake', () => {
       expect(candidates[0].extracted.vertical).toBe('health');
       expect(candidates[0].extracted.suggestedVertical).toBeUndefined();
     });
-  });
 
-  describe('missingRequiredFields on a queued candidate', () => {
-    it('flags evidence and traction as missing — the two fields extraction never fills in', () => {
-      const reply = JSON.stringify({ candidates: [COMPLETE_CANDIDATE] });
+    it("keeps Claude's proposed vertical and its reason, normalizing case", () => {
+      const reply = JSON.stringify({ candidates: [{ name: 'PayCo', vertical: 'FinTech', verticalReason: 'The email says it builds payments for small merchants.' }] });
       const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
-      // Every stateable fact was in the email; traction (an analyst
-      // rating) and the evidence description (who forwarded it) are the
-      // two things only a human reviewer supplies, by design.
-      expect(missingRequiredFields(candidates[0].extracted).sort()).toEqual(['evidence', 'traction']);
+      expect(candidates[0].extracted.vertical).toBe('fintech');
+      expect(candidates[0].extracted.verticalReason).toBe('The email says it builds payments for small merchants.');
     });
 
-    it('flags every field the email never stated', () => {
-      const reply = JSON.stringify({ candidates: [{ name: 'Bare Co' }] });
+    it('drops a vertical that is not one of the five ids, and falls back to the classifier suggestion', () => {
+      const reply = JSON.stringify({
+        candidates: [{
+          name: 'Cardio Co', vertical: 'healthcare', verticalReason: 'Hospitals.',
+          oneLiner: 'Remote patient monitoring platform for cardiac patients, sold to hospitals and health systems.',
+        }],
+      });
       const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
-      const missing = missingRequiredFields(candidates[0].extracted);
-      expect(missing).toEqual(expect.arrayContaining(['oneLiner', 'vertical', 'stage', 'city', 'state', 'founders', 'evidence']));
-      expect(missing).not.toContain('id');
+      expect(candidates[0].extracted.vertical).toBeUndefined();
+      expect(candidates[0].extracted.verticalReason).toBeUndefined();
+      expect(candidates[0].extracted.suggestedVertical).toBe('health');
+    });
+  });
+
+  describe('approvalBlockers', () => {
+    it('only name, vertical, and who forwarded it can block approval', () => {
+      const reply = JSON.stringify({ candidates: [COMPLETE_CANDIDATE, { name: 'Bare Co' }] });
+      const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
+      // Traction, founders, location etc. are absent from Bare Co but never block.
+      expect(approvalBlockers(candidates[0].extracted)).toEqual(['evidence']);
+      expect(approvalBlockers(candidates[1].extracted)).toEqual(['vertical', 'evidence']);
     });
   });
 
   describe('approveEmailIntakeCandidate', () => {
-    it('refuses to promote a candidate still missing required fields (422, with the list)', () => {
+    it('refuses to promote a candidate without a vertical or forwarder (422, with exactly those fields)', () => {
       const reply = JSON.stringify({ candidates: [{ name: 'Bare Co' }] });
       const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
 
@@ -126,9 +138,79 @@ describe('email intake', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.status).toBe(422);
-        expect(result.missingFields).toEqual(expect.arrayContaining(['oneLiner', 'vertical']));
+        expect(result.missingFields).toEqual(['vertical', 'evidence']);
       }
       expect(listCompanies()).toHaveLength(0);
+    });
+
+    it('approves a thin lead (name + vertical + forwarder) with honest, Missing-marked placeholders for the rest', () => {
+      const reply = JSON.stringify({ candidates: [{ name: 'Thin Lead Co', vertical: 'fintech', quote: 'Small team doing something in payments.' }] });
+      const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
+      const evidence = candidates[0].extracted.evidence as Record<string, unknown>[];
+      updateEmailIntakeCandidate(candidates[0].id, { evidence: [{ ...evidence[0], url: 'Forwarded by Maria, 2026-10-26' }] });
+
+      const result = approveEmailIntakeCandidate(candidates[0].id, 'test-reviewer');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const company = getCompany(result.companyId)!;
+      expect(company.vertical).toBe('fintech');
+      expect(company.oneLiner).toBe('Unknown — pitch not yet verified');
+      expect(company.stage).toBe('Unknown');
+      expect(company.traction).toEqual({ level: 0, note: 'Unknown — not yet researched' });
+      expect(company.founders[0].name).toBe('Unknown founder');
+      expect(company.evidence[0]).toMatchObject({ type: 'Inbound referral', url: 'Forwarded by Maria, 2026-10-26', claim: 'Small team doing something in payments.' });
+
+      // Every unstated field is recorded as `missing` — shown as "Missing", never as a fact, and overwritable by research.
+      for (const field of ['oneLiner', 'subcategory', 'stage', 'city', 'state', 'foundedYear', 'teamSize', 'tractionLevel', 'tractionNote']) {
+        expect(getProvenance(result.companyId, field)?.origin, field).toBe('missing');
+      }
+      // What the reviewer did supply is not.
+      expect(getProvenance(result.companyId, 'name')?.origin).toBe('user-entered');
+      expect(getProvenance(result.companyId, 'vertical')?.origin).toBe('user-entered');
+      // Thin data means a provisional score, kept out of High-Fit.
+      expect(latestScore(result.companyId)?.provisional).toBe(true);
+    });
+
+    it('uses a plain description as the evidence claim when Claude quoted nothing', () => {
+      const reply = JSON.stringify({ candidates: [{ name: 'No Quote Co', vertical: 'fow' }] });
+      const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
+      const evidence = candidates[0].extracted.evidence as Record<string, unknown>[];
+      updateEmailIntakeCandidate(candidates[0].id, { evidence: [{ ...evidence[0], url: 'Forwarded by Sam, 2026-10-26' }] });
+      const result = approveEmailIntakeCandidate(candidates[0].id, 'test-reviewer');
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(getCompany(result.companyId)?.evidence[0]?.claim).toBe('Referred as a lead in a forwarded deal-flow email.');
+    });
+
+    it('normalizes harmless formatting (state case, bare domain, stage case) but rejects a stated value that is invalid', () => {
+      const reply = JSON.stringify({
+        candidates: [
+          { name: 'Format Co', vertical: 'health', state: 'tx', website: 'formatco.com', stage: 'seed' },
+          { name: 'Bad State Co', vertical: 'health', state: 'Texas' },
+        ],
+      });
+      const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
+      for (const c of candidates) {
+        const evidence = c.extracted.evidence as Record<string, unknown>[];
+        updateEmailIntakeCandidate(c.id, { evidence: [{ ...evidence[0], url: 'Forwarded by Sam, 2026-10-26' }] });
+      }
+
+      const ok = approveEmailIntakeCandidate(candidates[0].id, 'test-reviewer');
+      expect(ok.ok).toBe(true);
+      if (ok.ok) {
+        const company = getCompany(ok.companyId)!;
+        expect(company.state).toBe('TX');
+        expect(company.website).toBe('https://formatco.com');
+        expect(company.stage).toBe('Seed');
+      }
+
+      // A real stated value is never silently replaced with a placeholder — the reviewer fixes it.
+      const bad = approveEmailIntakeCandidate(candidates[1].id, 'test-reviewer');
+      expect(bad.ok).toBe(false);
+      if (!bad.ok) {
+        expect(bad.status).toBe(422);
+        expect(bad.missingFields?.some((f) => f.startsWith('state'))).toBe(true);
+      }
     });
 
     it('promotes a complete candidate into a real, scored company via the shared commit path', () => {

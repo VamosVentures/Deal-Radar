@@ -16,7 +16,7 @@ export interface EmailIntakeCandidate {
   decidedAt: string | null;
   decisionNote: string | null;
   createdAt: string;
-  /** Top-level fields still needed before this candidate can be approved. */
+  /** Fields that block approval: any of name, vertical, evidence (who forwarded it). Everything else may stay blank. */
   missingFields: string[];
 }
 
@@ -477,6 +477,12 @@ const liveApi = {
       call<{ batchId: string; skipped: number; candidates: EmailIntakeCandidate[] }>('/api/companies/import-email/batches', {
         method: 'POST',
         body: JSON.stringify({ reply }),
+      }),
+    /** Send the raw email to Claude server-side (needs an AI key); same result shape as submitBatch. */
+    extractFromEmail: (email: string) =>
+      call<{ batchId: string; skipped: number; candidates: EmailIntakeCandidate[] }>('/api/companies/import-email/extract', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
       }),
     listCandidates: () =>
       call<{ candidates: EmailIntakeCandidate[] }>('/api/companies/import-email/candidates'),

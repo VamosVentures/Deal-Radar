@@ -1,22 +1,35 @@
 /**
  * Standing extraction prompt for the email-intake review queue.
  *
- * No AI provider is configured for this app, and none is planned (same
- * situation `src/lib/claudePrompt.ts` documents for company analysis) —
- * so instead of a server-side model call, a reviewer runs this themselves
- * in their own Claude.ai chat and pastes the JSON reply back into Deal
- * Radar. This is a FIXED constant rather than a per-email builder: there
- * is no per-email customization to inject (the email text itself is never
- * routed through Deal Radar — see server/services/emailIntake.ts) — a
- * reviewer saves this once as a Claude.ai Project's custom instructions
- * and reuses it for every forwarded email.
+ * Used two ways, with identical wording so both paths produce the same
+ * shape:
+ *  - With an AI key configured, the server sends it together with the
+ *    pasted email (server/services/emailIntake.ts's extractEmailWithAi —
+ *    "Extract with Claude" in Settings).
+ *  - Without one, a reviewer saves it once as a Claude.ai Project's custom
+ *    instructions, pastes each forwarded email into that project, and
+ *    pastes the JSON reply back into Deal Radar.
  *
  * Deliberately conservative, matching every other extraction/generation
- * path in this codebase: extract only what the text actually states, and
- * write nothing for anything it doesn't. An invented vertical, founder, or
- * funding fact is exactly the failure this app spends most of its effort
+ * path in this codebase: report only facts the text actually states, and
+ * write nothing for anything it doesn't. An invented founder, funding or
+ * traction fact is exactly the failure this app spends most of its effort
  * avoiding elsewhere (see server/services/ai.ts's factGuardIssues).
+ *
+ * The ONE judgment call it asks for is `vertical`: every approved company
+ * needs one of the five Vamos sectors, and research never fills it in
+ * later, so Claude proposes the best fit from what the company does and
+ * says why in `verticalReason`. The reviewer sees that reason and confirms
+ * or changes the sector before approving — it is a proposal, not a fact.
+ * The sector definitions are generated from src/data/taxonomy.ts so they
+ * can never drift from the official Vamos taxonomy.
  */
+import { VERTICALS } from '../data/taxonomy';
+
+const VERTICAL_DEFINITIONS = VERTICALS
+  .map((v) => `- ${v.id} (${v.name}): ${v.description} Subcategories: ${v.subcategories.map((s) => s.name).join('; ')}.`)
+  .join('\n');
+
 export const EMAIL_INTAKE_PROMPT = `You are helping an early-stage venture team (Vamos Ventures) turn a forwarded
 deal-flow email into structured records for their pipeline tool.
 
@@ -29,6 +42,9 @@ guess. This applies especially to funding amounts, founder identity, and
 traction/customer claims: an invented fact here is worse than a missing
 one, because someone will act on it as if it were real.
 
+The one exception is "vertical" (see below): propose the best-fit sector
+for every company, and explain your choice in "verticalReason".
+
 Respond with ONLY a JSON object, no other text, shaped exactly like this:
 
 {
@@ -36,7 +52,8 @@ Respond with ONLY a JSON object, no other text, shaped exactly like this:
     {
       "name": "string, required",
       "oneLiner": "one sentence describing what the company does, if stated",
-      "vertical": "one of: health, fintech, fow, sustainability, frontier — only if the email clearly implies one of these five, otherwise omit",
+      "vertical": "exactly one of: health, fintech, fow, sustainability, frontier — your best fit based on what the company does (see the definitions below), even if the email doesn't name the sector. Omit ONLY if the email gives no indication at all of what the company does",
+      "verticalReason": "one short sentence on why you chose that vertical, citing what the email says the company does",
       "subcategory": "a short specific category, if stated or clearly implied (e.g. 'Remote patient monitoring')",
       "stage": "one of: Pre-seed, Seed, Series A, Stealth, Unknown — only if stated",
       "city": "string, if stated",
@@ -54,8 +71,11 @@ Respond with ONLY a JSON object, no other text, shaped exactly like this:
   ]
 }
 
-Omit any field above that the email doesn't actually state — do not include
-it with a null, empty, or placeholder value. If the email names no
+Vertical definitions (use the id before the parentheses):
+${VERTICAL_DEFINITIONS}
+
+Omit any other field above that the email doesn't actually state — do not
+include it with a null, empty, or placeholder value. If the email names no
 companies at all, respond with {"candidates": []}.
 
 Do NOT include a traction rating, score, or judgment of any kind (e.g. no

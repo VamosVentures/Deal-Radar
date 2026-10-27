@@ -34,6 +34,31 @@ export interface BudgetedCallArgs {
   /** Overrides the settings default; still clamped by it. */
   maxInputTokens?: number;
   system?: string;
+  /**
+   * For calls whose output grows with the INPUT rather than with one
+   * candidate — e.g. one forwarded email naming 18 companies. Lifts the
+   * per-candidate output clamp (maxOutputTokensPerCandidate), so
+   * `maxOutputTokens` is used as given. The budget gate below still
+   * prices the call at that full worst case, so the monthly and per-run
+   * caps protect it exactly as they protect every other call.
+   */
+  outputScalesWithInput?: boolean;
+  /**
+   * Anthropic `output_config.effort`. Lower effort = less thinking, lower
+   * latency and cost; right for mechanical work like extraction. Sent only
+   * to models that accept it (see supportsEffort below).
+   */
+  effort?: 'low' | 'medium' | 'high';
+}
+
+/**
+ * Models older than the 4.6 generation reject `output_config.effort`
+ * outright (Haiku 4.5 and Sonnet 4.5 return a 400), so it is only sent
+ * to models known to accept it. An unrecognized model gets no effort
+ * parameter rather than a failed request.
+ */
+function supportsEffort(model: string): boolean {
+  return /^claude-(opus|sonnet|haiku|fable)-(4-[6-9]|[5-9])/.test(model);
 }
 
 export interface BudgetedCallResult {
@@ -60,7 +85,9 @@ export async function callBudgetedModel(args: BudgetedCallArgs): Promise<Budgete
   if (args.system) assertNoSecrets(args.system, `${args.feature}:system`);
 
   // Clamp to the configured per-candidate ceilings.
-  const maxOutput = Math.min(args.maxOutputTokens, settings.maxOutputTokensPerCandidate);
+  const maxOutput = args.outputScalesWithInput
+    ? args.maxOutputTokens
+    : Math.min(args.maxOutputTokens, settings.maxOutputTokensPerCandidate);
   const inputCap = Math.min(args.maxInputTokens ?? settings.maxInputTokensPerCandidate, settings.maxInputTokensPerCandidate);
   const estIn = estimateTokens(args.prompt) + estimateTokens(args.system ?? '');
   if (estIn > inputCap) {
@@ -149,6 +176,7 @@ async function callAnthropic(
       model,
       max_tokens: maxOutput,
       ...(args.system ? { system: args.system } : {}),
+      ...(args.effort && supportsEffort(model) ? { output_config: { effort: args.effort } } : {}),
       messages: [{ role: 'user', content: args.prompt }],
     }),
   });

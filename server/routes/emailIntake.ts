@@ -4,8 +4,8 @@ import { wrap } from './helpers';
 import { resolveReviewer } from '../lib/reviewer';
 import { importedCompanySchema } from '../services/imports';
 import {
-  approveEmailIntakeCandidate, candidateMissingFields, discardEmailIntakeCandidate,
-  listEmailIntakeCandidates, submitEmailIntakeBatch, updateEmailIntakeCandidate,
+  approveEmailIntakeCandidate, candidateMissingFields, discardEmailIntakeCandidate, extractEmailWithAi,
+  listEmailIntakeCandidates, MAX_EMAIL_CHARS, submitEmailIntakeBatch, updateEmailIntakeCandidate,
 } from '../services/emailIntake';
 
 export const emailIntakeRouter = Router();
@@ -21,6 +21,23 @@ emailIntakeRouter.post('/companies/import-email/batches', wrap(async (req, res) 
   }
   const { reply } = z.object({ reply: z.string().min(1) }).parse(req.body);
   const result = submitEmailIntakeBatch({ reply, submittedBy: reviewer.label });
+  res.json({
+    batchId: result.batchId,
+    skipped: result.skipped,
+    candidates: result.candidates.map((c) => ({ ...c, missingFields: candidateMissingFields(c) })),
+  });
+}));
+
+emailIntakeRouter.post('/companies/import-email/extract', wrap(async (req, res) => {
+  const reviewer = resolveReviewer(req);
+  if (!reviewer) {
+    res.status(401).json({ error: 'auth_failed', message: 'Administrator sign-in required.' });
+    return;
+  }
+  // The service refuses (413) anything over MAX_EMAIL_CHARS after
+  // sanitizing; this outer bound only stops absurd payloads early.
+  const { email } = z.object({ email: z.string().min(1).max(MAX_EMAIL_CHARS * 2) }).parse(req.body);
+  const result = await extractEmailWithAi({ email, submittedBy: reviewer.label });
   res.json({
     batchId: result.batchId,
     skipped: result.skipped,

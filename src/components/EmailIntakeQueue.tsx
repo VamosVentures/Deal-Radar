@@ -27,10 +27,10 @@ function draftFor(c: EmailIntakeCandidate): Draft {
   return {
     name: (x.name as string) ?? '',
     oneLiner: (x.oneLiner as string) ?? '',
-    // No vertical was stated in the email — pre-fill the suggestion from
-    // the deterministic classifier (see suggestVertical in
-    // server/services/emailIntake.ts) so the reviewer can just confirm it
-    // instead of picking from scratch. Nothing is saved until they do.
+    // Claude's proposed vertical when it gave one; otherwise the
+    // deterministic classifier's suggestion (see resolveProposedVertical in
+    // server/services/emailIntake.ts). Either way the reviewer sees why and
+    // confirms it — it is saved only when they Save or Approve.
     vertical: (x.vertical as string) ?? (x.suggestedVertical as string) ?? '',
     subcategory: (x.subcategory as string) ?? '',
     stage: (x.stage as string) ?? '',
@@ -79,7 +79,24 @@ function patchFrom(draft: Draft, existing: Record<string, unknown>): Record<stri
   return patch;
 }
 
-const inputCls = 'w-full border border-line bg-paper px-1.5 py-1 text-[11px]';
+/**
+ * The three fields approval requires (mirrors approvalBlockers in
+ * server/services/emailIntake.ts), checked against the reviewer's
+ * unsaved draft so Approve enables as soon as they're filled in —
+ * Approve saves the draft first, so no separate Save is needed.
+ */
+function draftBlockers(d: Draft): string[] {
+  const out: string[] = [];
+  if (!d.name.trim()) out.push('name');
+  if (!d.vertical) out.push('vertical');
+  if (!d.evidenceDescription.trim()) out.push('evidence');
+  return out;
+}
+
+/** Placeholder for optional inputs: blank is fine, it's recorded as Missing. */
+const NOT_STATED = 'not in email';
+
+const inputCls = 'w-full border border-line bg-paper px-1.5 py-1 text-[11px] placeholder:text-slate-mid/60';
 const labelCls = 'block font-mono text-[9px] uppercase tracking-wider text-slate-mid';
 
 function Field({ label, missing, children }: { label: string; missing: boolean; children: React.ReactNode }) {
@@ -163,23 +180,31 @@ export function EmailIntakeQueue() {
         <span className="font-mono text-[10px] uppercase text-slate-mid">{candidates.length} pending</span>
       </div>
       <p className="mb-3 text-[11px] leading-relaxed text-slate-mid">
-        Claude reported these from a pasted-back email reply. Nothing here is a real company yet — fill in
-        whatever&rsquo;s marked missing and approve, or discard if it&rsquo;s not worth pursuing.
+        Companies Claude found in a forwarded email. Nothing here is a real company yet. To approve, each needs a
+        name, a vertical, and who forwarded it — anything else left blank is recorded as Missing and can be filled
+        in later (Refresh live research finds some of it). Discard anything not worth pursuing.
       </p>
       {error && <div className="mb-2"><ErrorNote message={error.message} issues={error.issues} /></div>}
 
       <ul className="space-y-4">
         {candidates.map((c) => {
           const d = drafts[c.id] ?? draftFor(c);
-          const missing = new Set(c.missingFields);
+          const missing = new Set(draftBlockers(d));
           const disabled = busy === c.id;
+          const claudeReason = typeof c.extracted.verticalReason === 'string' ? c.extracted.verticalReason : null;
+          const fallbackReason = !c.extracted.vertical && typeof c.extracted.suggestedVerticalReason === 'string'
+            ? c.extracted.suggestedVerticalReason : null;
           return (
             <li key={c.id} className="border-l-2 border-line pl-3">
               <div className="mb-2 flex flex-wrap items-center gap-1.5">
                 <span className="font-display text-sm font-bold text-ink">{d.name || '(unnamed)'}</span>
-                {missing.size > 0 && (
+                {missing.size > 0 ? (
                   <span className="rounded-[2px] border border-alerta/40 bg-alerta-soft px-1.5 py-0.5 font-mono text-[9px] uppercase text-alerta">
-                    {missing.size} field{missing.size === 1 ? '' : 's'} missing
+                    {missing.size} required field{missing.size === 1 ? '' : 's'} missing
+                  </span>
+                ) : (
+                  <span className="rounded-[2px] border border-verde/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-verde">
+                    Ready to approve
                   </span>
                 )}
               </div>
@@ -189,21 +214,22 @@ export function EmailIntakeQueue() {
                   <input className={inputCls} disabled={disabled} value={d.name} onChange={(e) => updateDraft(c.id, 'name', e.target.value)} />
                 </Field>
                 <Field label="One-liner" missing={missing.has('oneLiner')}>
-                  <input className={inputCls} disabled={disabled} value={d.oneLiner} onChange={(e) => updateDraft(c.id, 'oneLiner', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.oneLiner} onChange={(e) => updateDraft(c.id, 'oneLiner', e.target.value)} />
                 </Field>
                 <Field label="Vertical" missing={missing.has('vertical')}>
                   <select className={inputCls} disabled={disabled} value={d.vertical} onChange={(e) => updateDraft(c.id, 'vertical', e.target.value)}>
                     <option value="">—</option>
                     {VERTICAL_OPTIONS.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
-                  {!c.extracted.vertical && !!c.extracted.suggestedVertical && (
-                    <p className="mt-0.5 text-[10px] text-marigold">
-                      Suggested — not yet saved. {c.extracted.suggestedVerticalReason as string}
-                    </p>
+                  {claudeReason && (
+                    <p className="mt-0.5 text-[10px] text-marigold">Proposed by Claude — check it: {claudeReason}</p>
+                  )}
+                  {fallbackReason && (
+                    <p className="mt-0.5 text-[10px] text-marigold">Suggested from the description — check it: {fallbackReason}</p>
                   )}
                 </Field>
                 <Field label="Subcategory" missing={missing.has('subcategory')}>
-                  <input className={inputCls} disabled={disabled} value={d.subcategory} onChange={(e) => updateDraft(c.id, 'subcategory', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.subcategory} onChange={(e) => updateDraft(c.id, 'subcategory', e.target.value)} />
                 </Field>
                 <Field label="Stage" missing={missing.has('stage')}>
                   <select className={inputCls} disabled={disabled} value={d.stage} onChange={(e) => updateDraft(c.id, 'stage', e.target.value)}>
@@ -212,40 +238,40 @@ export function EmailIntakeQueue() {
                   </select>
                 </Field>
                 <Field label="City" missing={missing.has('city')}>
-                  <input className={inputCls} disabled={disabled} value={d.city} onChange={(e) => updateDraft(c.id, 'city', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.city} onChange={(e) => updateDraft(c.id, 'city', e.target.value)} />
                 </Field>
                 <Field label="State" missing={missing.has('state')}>
-                  <input className={inputCls} disabled={disabled} maxLength={2} value={d.state} onChange={(e) => updateDraft(c.id, 'state', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} maxLength={2} placeholder={NOT_STATED} value={d.state} onChange={(e) => updateDraft(c.id, 'state', e.target.value)} />
                 </Field>
                 <Field label="Website" missing={false}>
-                  <input className={inputCls} disabled={disabled} value={d.website} onChange={(e) => updateDraft(c.id, 'website', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.website} onChange={(e) => updateDraft(c.id, 'website', e.target.value)} />
                 </Field>
                 <Field label="Founded year" missing={missing.has('foundedYear')}>
-                  <input className={inputCls} disabled={disabled} type="number" value={d.foundedYear} onChange={(e) => updateDraft(c.id, 'foundedYear', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} type="number" placeholder={NOT_STATED} value={d.foundedYear} onChange={(e) => updateDraft(c.id, 'foundedYear', e.target.value)} />
                 </Field>
                 <Field label="Team size" missing={missing.has('teamSize')}>
-                  <input className={inputCls} disabled={disabled} type="number" value={d.teamSize} onChange={(e) => updateDraft(c.id, 'teamSize', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} type="number" placeholder={NOT_STATED} value={d.teamSize} onChange={(e) => updateDraft(c.id, 'teamSize', e.target.value)} />
                 </Field>
                 <Field label="Traction (0-10)" missing={missing.has('traction')}>
-                  <input className={inputCls} disabled={disabled} type="number" min={0} max={10} value={d.tractionLevel} onChange={(e) => updateDraft(c.id, 'tractionLevel', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} type="number" min={0} max={10} placeholder={NOT_STATED} value={d.tractionLevel} onChange={(e) => updateDraft(c.id, 'tractionLevel', e.target.value)} />
                 </Field>
                 <Field label="Traction note" missing={missing.has('traction')}>
-                  <input className={inputCls} disabled={disabled} value={d.tractionNote} onChange={(e) => updateDraft(c.id, 'tractionNote', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.tractionNote} onChange={(e) => updateDraft(c.id, 'tractionNote', e.target.value)} />
                 </Field>
                 <Field label="Founder name" missing={missing.has('founders')}>
-                  <input className={inputCls} disabled={disabled} value={d.founderName} onChange={(e) => updateDraft(c.id, 'founderName', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.founderName} onChange={(e) => updateDraft(c.id, 'founderName', e.target.value)} />
                 </Field>
                 <Field label="Founder role" missing={false}>
-                  <input className={inputCls} disabled={disabled} value={d.founderRole} onChange={(e) => updateDraft(c.id, 'founderRole', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.founderRole} onChange={(e) => updateDraft(c.id, 'founderRole', e.target.value)} />
                 </Field>
                 <Field label="Founder background" missing={false}>
-                  <input className={inputCls} disabled={disabled} value={d.founderBackground} onChange={(e) => updateDraft(c.id, 'founderBackground', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.founderBackground} onChange={(e) => updateDraft(c.id, 'founderBackground', e.target.value)} />
                 </Field>
                 <Field label="Raising" missing={false}>
-                  <input className={inputCls} disabled={disabled} value={d.raising} onChange={(e) => updateDraft(c.id, 'raising', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.raising} onChange={(e) => updateDraft(c.id, 'raising', e.target.value)} />
                 </Field>
                 <Field label="Accelerator" missing={false}>
-                  <input className={inputCls} disabled={disabled} value={d.accelerator} onChange={(e) => updateDraft(c.id, 'accelerator', e.target.value)} />
+                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.accelerator} onChange={(e) => updateDraft(c.id, 'accelerator', e.target.value)} />
                 </Field>
               </div>
 
@@ -268,7 +294,7 @@ export function EmailIntakeQueue() {
                 <button type="button" className={btnGhost} disabled={disabled} onClick={() => void save(c)}>Save changes</button>
                 <button
                   type="button" className={btnPrimary} disabled={disabled || missing.size > 0}
-                  title={missing.size > 0 ? 'Fill in the missing fields and save first' : undefined}
+                  title={missing.size > 0 ? 'Fill in the name, vertical, and who forwarded it first' : 'Saves your edits and creates the company'}
                   onClick={() => void approve(c)}
                 >
                   Approve

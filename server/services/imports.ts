@@ -238,8 +238,17 @@ export interface ImportReport {
  */
 export function commitImportedCompany(
   data: ImportedCompany,
-  /** Doubles as the provenance source and the company's intake_source tag (which scopes "Clear imported"). */
-  opts: { source: 'local-csv' | 'email-intake' },
+  opts: {
+    /** Doubles as the provenance source and the company's intake_source tag (which scopes "Clear imported"). */
+    source: 'local-csv' | 'email-intake';
+    /**
+     * Fields the caller filled with a placeholder that placeholderFieldsFor
+     * can't recognize by shape (e.g. email intake's "Unknown — pitch not
+     * yet verified" one-liner, or a team size of 1 nobody stated). Recorded
+     * as `missing` provenance alongside the shape-detected ones.
+     */
+    extraUnknownFields?: readonly string[];
+  },
 ): { possibleDuplicate: boolean; companyId: string } {
   const match = matchCompany(
     { name: data.name, domain: data.website ?? null },
@@ -251,7 +260,7 @@ export function commitImportedCompany(
   saveCompany(record, {
     origin: 'user-entered', source: opts.source, reviewStatus: 'New',
     intakeSource: opts.source,
-    unknownFields: placeholderFieldsFor(record),
+    unknownFields: [...new Set([...placeholderFieldsFor(record), ...(opts.extraUnknownFields ?? [])])],
   });
   saveScore(record.id, scoreCompany(record as unknown as Company), record.evidence.map((e) => e.url));
   let possibleDuplicate = false;

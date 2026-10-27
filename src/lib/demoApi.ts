@@ -384,6 +384,7 @@ export const demoApi: Api = {
 
   emailIntake: {
     submitBatch: () => disabled(),
+    extractFromEmail: () => disabled(),
     listCandidates: () => Promise.resolve({ candidates: [] }),
     updateCandidate: () => disabled(),
     approveCandidate: () => disabled(),
