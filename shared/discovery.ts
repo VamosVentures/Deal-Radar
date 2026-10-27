@@ -422,6 +422,13 @@ export const scheduledJobSchema = z.object({
   jobType: z.enum(['incremental-sourcing', 'full-sourcing', 'stale-refresh', 'source-refresh', 'vertical-refresh']),
   query: discoveryQuerySchema.nullable().default(null),
   enabled: z.boolean().default(false),
+  /** When at least one of the job's batches last completed a run. */
   lastRunAt: z.string().nullable().default(null),
+  /**
+   * Why the last attempt (or part of it) failed; null when every batch
+   * ran. Without this a job whose runs were all rejected still showed a
+   * fresh "last run" date and looked healthy for weeks.
+   */
+  lastError: z.string().nullable().default(null),
 });
 export type ScheduledJob = z.infer<typeof scheduledJobSchema>;

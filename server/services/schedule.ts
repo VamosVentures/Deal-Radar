@@ -3,7 +3,10 @@ import { schedulerEnabled } from '../env';
 import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { getConfig, setConfig } from '../db/repos/operations';
-import { scheduledJobSchema, type DiscoveryRun, type ScheduledJob } from '../../shared/discovery';
+import {
+  MAX_RESULTS_PER_RUN, MAX_SOURCES_PER_RUN, scheduledJobSchema,
+  type DiscoveryQuery, type DiscoveryRun, type ScheduledJob,
+} from '../../shared/discovery';
 import { runDiscovery, importCandidates } from './discovery';
 import { existingCandidates } from '../sourcing/dedupe';
 import { runEnrichment } from './enrichment';
@@ -116,9 +119,9 @@ export function schedulerStatus(): { active: boolean; label: string } {
 }
 
 export function saveJob(raw: unknown): ScheduledJob {
-  const input = scheduledJobSchema.omit({ id: true, lastRunAt: true }).parse(raw);
+  const input = scheduledJobSchema.omit({ id: true, lastRunAt: true, lastError: true }).parse(raw);
   const jobs = listJobs();
-  const job: ScheduledJob = { ...input, id: store.nextId('job'), lastRunAt: null };
+  const job: ScheduledJob = { ...input, id: store.nextId('job'), lastRunAt: null, lastError: null };
   saveJobs([...jobs, job]);
   audit({
     provider: 'system', mode: 'local', action: 'schedule-save', subject: job.id, outcome: 'ok',
@@ -132,24 +135,86 @@ export function deleteJob(id: string): void {
 }
 
 /**
+ * A schedule may select every source the firm wants swept, but a single
+ * discovery run is capped at MAX_SOURCES_PER_RUN sources and
+ * MAX_RESULTS_PER_RUN results (runDiscovery enforces both). So a job is
+ * executed as consecutive batches of at most that many sources, each its
+ * own capped run with its own result and API-call budget — every selected
+ * source is searched, and a late source is never starved by an early one
+ * spending a shared budget.
+ *
+ * Before this existed, a job saved with more than three sources (or more
+ * than twenty results) was rejected by runDiscovery on every tick, before
+ * any run row was written — so nothing showed in the run history while
+ * "last run" kept advancing.
+ */
+export function scheduledBatches(query: DiscoveryQuery): DiscoveryQuery[] {
+  const batches: DiscoveryQuery[] = [];
+  for (let i = 0; i < query.sources.length; i += MAX_SOURCES_PER_RUN) {
+    batches.push({
+      ...query,
+      sources: query.sources.slice(i, i + MAX_SOURCES_PER_RUN),
+      maxResults: Math.min(query.maxResults, MAX_RESULTS_PER_RUN),
+    });
+  }
+  return batches;
+}
+
+/**
+ * Runs every batch of one job, auto-importing each batch's candidates.
+ * A batch that throws is retried once with the same budgets; a batch
+ * that still fails is recorded and never stops the remaining batches.
+ * Returns the runs that completed and why the others did not.
+ */
+async function executeJob(job: ScheduledJob & { query: DiscoveryQuery }, actor: string): Promise<{ runs: DiscoveryRun[]; errors: string[]; firstError: unknown }> {
+  const runType = job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly';
+  const runs: DiscoveryRun[] = [];
+  const errors: string[] = [];
+  let firstError: unknown = null;
+  for (const batch of scheduledBatches(job.query)) {
+    let run: DiscoveryRun | null = null;
+    try {
+      run = await runDiscovery(batch, actor, runType);
+    } catch {
+      try {
+        run = await runDiscovery(batch, `${actor} (retry)`, runType);
+      } catch (e) {
+        firstError ??= e;
+        errors.push(`${batch.sources.join(', ')}: ${(e as Error).message}`);
+      }
+    }
+    if (run) {
+      await autoImportRun(run, actor);
+      runs.push(run);
+    }
+  }
+  return { runs, errors, firstError };
+}
+
+function recordAttempt(jobId: string, at: string | null, errors: string[]): void {
+  saveJobs(listJobs().map((j) => (j.id === jobId ? { ...j, lastRunAt: at, lastError: errors.length > 0 ? errors.join(' | ') : null } : j)));
+}
+
+/**
  * Administrator-only "Run sourcing now": executes a saved schedule's
  * search immediately instead of waiting for its cadence. Goes through
  * the same `runDiscovery` overlap lock as every other run path, so it
  * cannot collide with a scheduler tick or a manual run in progress.
+ * When every batch fails, the first failure is rethrown (with its HTTP
+ * status) so the admin sees it rather than an empty success.
  */
-export async function runJobNow(jobId: string, actor: string): Promise<DiscoveryRun> {
-  const jobs = listJobs();
-  const job = jobs.find((j) => j.id === jobId);
+export async function runJobNow(jobId: string, actor: string): Promise<{ runs: DiscoveryRun[]; errors: string[] }> {
+  const job = listJobs().find((j) => j.id === jobId);
   if (!job) throw Object.assign(new Error('Scheduled job not found.'), { status: 404 });
   if (!job.query) throw Object.assign(new Error('This job has no saved search configuration to run.'), { status: 422 });
-  const run = await runDiscovery(job.query, actor, job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly');
-  await autoImportRun(run, actor);
-  saveJobs(jobs.map((j) => (j.id === jobId ? { ...j, lastRunAt: new Date().toISOString() } : j)));
+  const { runs, errors, firstError } = await executeJob({ ...job, query: job.query }, actor);
+  recordAttempt(jobId, runs.length > 0 ? new Date().toISOString() : job.lastRunAt, errors);
   audit({
-    provider: 'system', mode: 'local', action: 'schedule-run-now', subject: jobId, outcome: 'ok',
-    detail: `Manually triggered by ${actor} outside the normal cadence — run status ${run.status}`,
+    provider: 'system', mode: 'local', action: 'schedule-run-now', subject: jobId, outcome: errors.length > 0 ? 'error' : 'ok',
+    detail: `Manually triggered by ${actor} outside the normal cadence — ${runs.length} run(s): ${runs.map((r) => r.status).join(', ') || 'none'}${errors.length > 0 ? `; failed: ${errors.join(' | ')}` : ''}`,
   });
-  return run;
+  if (runs.length === 0 && firstError) throw firstError;
+  return { runs, errors };
 }
 
 // ── Execution loop (only started when RUN_SCHEDULER=true) ────────
@@ -163,25 +228,23 @@ export async function tickScheduler(now = Date.now()): Promise<number> {
   running = true;
   let ran = 0;
   try {
-    const jobs = listJobs();
-    for (const job of jobs) {
+    for (const job of listJobs()) {
       if (!job.enabled || !job.query) continue;
       const due = !job.lastRunAt || now - new Date(job.lastRunAt).getTime() >= CADENCE_MS[job.cadence];
       if (!due) continue;
-      try {
-        await autoImportRun(await runDiscovery(job.query, 'scheduler', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'), 'scheduler');
-      } catch {
-        // one retry with the same budgets; failures land in the run history
-        try {
-          await autoImportRun(await runDiscovery(job.query, 'scheduler (retry)', job.cadence === 'weekly' ? 'scheduled-weekly' : 'scheduled-biweekly'), 'scheduler');
-        } catch (e2) {
-          audit({ provider: 'system', mode: 'local', action: 'schedule-run', subject: job.id, outcome: 'error', detail: (e2 as Error).message });
-        }
+      const { runs, errors } = await executeJob({ ...job, query: job.query }, 'scheduler');
+      if (errors.length > 0) {
+        audit({ provider: 'system', mode: 'local', action: 'schedule-run', subject: job.id, outcome: 'error', detail: errors.join(' | ') });
       }
-      job.lastRunAt = new Date(now).toISOString();
-      ran += 1;
+      // Stamped per job, as soon as it finishes, so a job's attempt is
+      // never lost to a later job in the same tick. lastRunAt advances
+      // only when at least one batch actually ran: a job whose every
+      // batch failed (another run holding the lock, a source outage)
+      // stays due and is retried at the next hourly check instead of
+      // waiting a full cadence — and lastError says why meanwhile.
+      recordAttempt(job.id, runs.length > 0 ? new Date(now).toISOString() : job.lastRunAt, errors);
+      if (runs.length > 0) ran += 1;
     }
-    saveJobs(jobs);
   } finally {
     running = false;
   }

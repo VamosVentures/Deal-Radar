@@ -26,9 +26,8 @@ scheduleRouter.delete('/:id', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-/** Administrator-only: run this schedule's search immediately. */
+/** Administrator-only: run this schedule's search immediately (one run per source batch). */
 scheduleRouter.post('/:id/run-now', wrap(async (req, res) => {
   const { actor } = z.object({ actor: z.string().default('admin') }).parse(req.body ?? {});
-  const run = await runJobNow(req.params.id as string, actor);
-  res.json(run);
+  res.json(await runJobNow(req.params.id as string, actor));
 }));
