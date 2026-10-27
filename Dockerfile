@@ -27,8 +27,13 @@ COPY --from=build /app/dist ./dist
 COPY server ./server
 COPY shared ./shared
 COPY scripts ./scripts
+# The server imports these few frontend files at runtime. Any new
+# server-side import from src/ must be listed here too, or the image
+# builds fine and then fails to boot — server/tests/dockerfile-runtime-files.test.ts
+# enforces this.
 COPY src/types.ts ./src/types.ts
 COPY src/lib/scoring.ts ./src/lib/scoring.ts
+COPY src/lib/emailIntakePrompt.ts ./src/lib/emailIntakePrompt.ts
 COPY src/data ./src/data
 
 # server/.data holds the SQLite database and its backups/ subfolder —
