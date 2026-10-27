@@ -350,12 +350,12 @@ const liveApi = {
 
   schedule: {
     get: () => call<{ active: boolean; label: string; jobs: ScheduledJob[] }>('/api/schedule'),
-    save: (job: Omit<ScheduledJob, 'id' | 'lastRunAt'>) =>
+    save: (job: Omit<ScheduledJob, 'id' | 'lastRunAt' | 'lastError'>) =>
       call<ScheduledJob>('/api/schedule', { method: 'POST', body: JSON.stringify(job) }),
     remove: (id: string) => call<{ ok: boolean }>(`/api/schedule/${id}`, { method: 'DELETE' }),
     /** Administrator-only: run this schedule's search immediately, outside its cadence. */
     runNow: (id: string, actor: string) =>
-      call<DiscoveryRun>(`/api/schedule/${id}/run-now`, { method: 'POST', body: JSON.stringify({ actor }) }),
+      call<{ runs: DiscoveryRun[]; errors: string[] }>(`/api/schedule/${id}/run-now`, { method: 'POST', body: JSON.stringify({ actor }) }),
   },
 
   imports: {

@@ -11,7 +11,11 @@ import { installMockIntegrations, installTestPipelineMapping, uninstallMockInteg
 import { installFixtureSources, uninstallFixtureSources } from './fixtures/sources';
 import { __setSourceRunnerForTests } from '../services/sources';
 import { runDiscovery } from '../services/discovery';
-import { saveJob, runJobNow, listJobs, __setEnrichmentRunnerForTests } from '../services/schedule';
+import { saveJob, runJobNow, listJobs, scheduledBatches, tickScheduler, __setEnrichmentRunnerForTests } from '../services/schedule';
+import { discoveryRuns } from '../services/discovery';
+import { setConfig } from '../db/repos/operations';
+import { env } from '../env';
+import { discoveryQuerySchema } from '../../shared/discovery';
 import type { runEnrichment } from '../services/enrichment';
 import { saveCompany, getCompany, companyMetaView, markRefreshed } from '../db/repos/companies';
 import { importCompaniesCsv } from '../services/imports';
@@ -177,8 +181,9 @@ describe('administrator "Run sourcing now"', () => {
   it('runs a saved job immediately and stamps lastRunAt', async () => {
     const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: { ...BASE_QUERY, sources: ['yc'] } as never, enabled: true });
     expect(listJobs().find((j) => j.id === job.id)!.lastRunAt).toBeNull();
-    const run = await runJobNow(job.id, 'admin');
-    expect(run.runType).toBe('scheduled-weekly');
+    const { runs } = await runJobNow(job.id, 'admin');
+    expect(runs).toHaveLength(1);
+    expect(runs[0].runType).toBe('scheduled-weekly');
     expect(listJobs().find((j) => j.id === job.id)!.lastRunAt).toBeTruthy();
   });
 
@@ -214,7 +219,7 @@ describe('administrator "Run sourcing now"', () => {
     const job = saveJob({ cadence: 'biweekly', jobType: 'full-sourcing', query: { ...BASE_QUERY, sources: ['funding-news'] } as never, enabled: true });
     const res = await agent.post(`/api/schedule/${job.id}/run-now`).send({ actor: 'admin' });
     expect(res.status).toBe(200);
-    expect(res.body.runType).toBe('scheduled-biweekly');
+    expect(res.body.runs[0].runType).toBe('scheduled-biweekly');
 
     const missing = await agent.post('/api/schedule/nope/run-now').send({ actor: 'admin' });
     expect(missing.status).toBe(404);
@@ -225,6 +230,73 @@ describe('administrator "Run sourcing now"', () => {
     const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: { ...BASE_QUERY, sources: ['yc'] } as never, enabled: true });
     const res = await request(app).post(`/api/schedule/${job.id}/run-now`).send({ actor: 'admin' });
     expect(res.status).toBe(401);
+  });
+});
+
+// ── Schedules wider than one run's caps ─────────────────────────────
+
+/**
+ * Production regression: five weekly per-vertical schedules each
+ * selected seven sources. runDiscovery rejects more than three, so every
+ * tick threw before writing a run row — the run history showed nothing
+ * for seven weeks while each job's "last run" kept advancing.
+ */
+describe('scheduled jobs that select more sources than one run allows', () => {
+  const ALL_SEVEN = ['yc', 'github', 'funding-news', 'sec', 'grants', 'investor-news', 'research'];
+  const WIDE_QUERY = { sources: ALL_SEVEN, maxResults: 25, maxApiCalls: 28, vertical: 'fintech' };
+
+  beforeEach(() => {
+    installFixtureSources();
+    env.RUN_SCHEDULER = 'true';
+  });
+  afterEach(() => {
+    uninstallFixtureSources();
+    env.RUN_SCHEDULER = 'false';
+  });
+
+  it('splits the sources into batches of at most three and clamps results to the per-run cap', () => {
+    const batches = scheduledBatches(discoveryQuerySchema.parse(WIDE_QUERY));
+    expect(batches.map((b) => b.sources)).toEqual([
+      ['yc', 'github', 'funding-news'], ['sec', 'grants', 'investor-news'], ['research'],
+    ]);
+    expect(batches.every((b) => b.maxResults === 20 && b.vertical === 'fintech' && b.maxApiCalls === 28)).toBe(true);
+  });
+
+  it('a scheduler tick searches every selected source, one recorded run per batch', async () => {
+    const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: WIDE_QUERY as never, enabled: true });
+    expect(await tickScheduler()).toBe(1);
+    const runs = discoveryRuns();
+    expect(runs).toHaveLength(3);
+    expect(runs.flatMap((r) => r.query.sources).sort()).toEqual([...ALL_SEVEN].sort());
+    expect(runs.every((r) => r.runType === 'scheduled-weekly')).toBe(true);
+    const saved = listJobs().find((j) => j.id === job.id)!;
+    expect(saved.lastRunAt).toBeTruthy();
+    expect(saved.lastError).toBeNull();
+  });
+
+  it('a tick whose every batch fails reports it and leaves the job due, instead of stamping a fake "last run"', async () => {
+    const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: WIDE_QUERY as never, enabled: true });
+    // Another run holding the lock makes every batch (and its retry) fail.
+    setConfig('discovery-run-lock', { startedAt: new Date().toISOString(), initiatedBy: 'someone else' });
+    expect(await tickScheduler()).toBe(0);
+    expect(discoveryRuns()).toHaveLength(0);
+    let saved = listJobs().find((j) => j.id === job.id)!;
+    expect(saved.lastRunAt).toBeNull();
+    expect(saved.lastError).toMatch(/already in progress/);
+
+    // Once the lock clears, the very next tick runs it and clears the error.
+    setConfig('discovery-run-lock', null);
+    expect(await tickScheduler()).toBe(1);
+    saved = listJobs().find((j) => j.id === job.id)!;
+    expect(saved.lastRunAt).toBeTruthy();
+    expect(saved.lastError).toBeNull();
+  });
+
+  it('"Run sourcing now" runs every batch too', async () => {
+    const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: WIDE_QUERY as never, enabled: true });
+    const { runs, errors } = await runJobNow(job.id, 'admin');
+    expect(runs).toHaveLength(3);
+    expect(errors).toEqual([]);
   });
 });
 

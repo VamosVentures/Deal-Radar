@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { DEMO_MODE } from '../lib/demoMode';
 import type { DiscoveryQuery, ScheduledJob } from '../../shared/discovery';
-import { GEOGRAPHIES, PREFERRED_STATES_P4 } from '../../shared/discovery';
+import { GEOGRAPHIES, MAX_RESULTS_PER_RUN, MAX_SOURCES_PER_RUN, PREFERRED_STATES_P4 } from '../../shared/discovery';
 import { VERTICAL_OPTIONS } from '../data/taxonomy';
 
 const STAGES = ['Pre-seed', 'Seed', 'Series A'] as const;
@@ -31,7 +31,7 @@ export function SchedulePanel() {
   const [stages, setStages] = useState<string[]>([...STAGES]);
   const [geography, setGeography] = useState<(typeof GEOGRAPHIES)[number]>('United States');
   const [terms, setTerms] = useState('');
-  const [maxResults, setMaxResults] = useState(25);
+  const [maxResults, setMaxResults] = useState(MAX_RESULTS_PER_RUN);
   const [evidenceRecencyDays, setEvidenceRecencyDays] = useState<number | ''>('');
   const [refreshAgeDays, setRefreshAgeDays] = useState(30);
 
@@ -73,8 +73,14 @@ export function SchedulePanel() {
     setRunningId(id);
     setRunNote(null);
     try {
-      const run = await api.schedule.runNow(id, 'admin');
-      setRunNote(`Run ${run.id}: ${run.status} — ${run.discovered} discovered, ${run.duplicatesIdentified} duplicates identified, ${run.errors.length} error(s).`);
+      const { runs, errors } = await api.schedule.runNow(id, 'admin');
+      const discovered = runs.reduce((n, r) => n + r.discovered, 0);
+      const duplicates = runs.reduce((n, r) => n + r.duplicatesIdentified, 0);
+      const sourceErrors = runs.reduce((n, r) => n + r.errors.length, 0);
+      setRunNote(
+        `${runs.length} run(s): ${runs.map((r) => r.status).join(', ')} — ${discovered} discovered, ${duplicates} duplicates identified, ${sourceErrors} source error(s).`
+        + (errors.length > 0 ? ` Batches that did not run: ${errors.join(' | ')}` : ''),
+      );
       load();
     } catch (e) {
       setRunNote(e instanceof ApiError ? e.message : (e as Error).message);
@@ -105,7 +111,9 @@ export function SchedulePanel() {
         Scheduled runs use the same pipeline, budgets, and guardrails as a manual run and cannot overlap another
         run in progress. Every run — scheduled or manual — auto-imports its new, non-duplicate candidates to
         Awaiting Review rather than leaving them in the candidate preview; they still never contact founders,
-        send email, approve/reject deals, or change HubSpot stages.
+        send email, approve/reject deals, or change HubSpot stages. A schedule searches every source it selects,
+        in batches of up to {MAX_SOURCES_PER_RUN} — each batch is its own run in the history, returning up to
+        {' '}{MAX_RESULTS_PER_RUN} candidates.
       </p>
 
       <div className="mt-3 grid gap-2 rounded-[2px] border border-line bg-paper p-3 text-xs">
@@ -148,8 +156,8 @@ export function SchedulePanel() {
             <input className={input} placeholder="comma-separated" value={terms} onChange={(e) => setTerms(e.target.value)} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="font-mono text-[10px] uppercase text-slate-mid">Maximum results</span>
-            <input type="number" min={1} max={200} className={input} value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} />
+            <span className="font-mono text-[10px] uppercase text-slate-mid">Maximum results (per batch)</span>
+            <input type="number" min={1} max={MAX_RESULTS_PER_RUN} className={input} value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))} />
           </label>
         </div>
 
@@ -219,9 +227,11 @@ export function SchedulePanel() {
             <li key={j.id} className="flex flex-wrap items-center gap-2 rounded-[2px] border border-line px-2 py-1">
               <span className="font-mono text-[10px] uppercase text-slate-mid">{j.cadence}</span>
               <span className="font-semibold">{j.jobType}</span>
+              <span className="font-semibold">{VERTICAL_OPTIONS.find((v) => v.id === j.query?.vertical)?.name ?? 'Any vertical'}</span>
               <span className="text-slate-mid">
                 sources: {j.query?.sources.join(', ') ?? '—'} · last run: {j.lastRunAt ? j.lastRunAt.slice(0, 16).replace('T', ' ') : state.active ? 'pending' : 'will not run (inactive)'}
               </span>
+              {j.lastError && <span className="basis-full text-alerta">Last attempt failed: {j.lastError}</span>}
               <button
                 onClick={() => runNow(j.id)}
                 disabled={runningId === j.id || DEMO_MODE}
