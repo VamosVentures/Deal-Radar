@@ -50,7 +50,26 @@ export const MODEL_PRICING: Record<string, ModelPrice> = {
   'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1, cacheWrite5m: 1.25, verified: true },
   'claude-opus-5': { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, verified: true },
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, verified: true },
+  // Claude 5.5 generation — checked 2026-10-15 against Anthropic's
+  // published model table (input/output/cache-read are quoted there;
+  // cache writes follow the standard 1.25x-input rule).
+  'claude-opus-5-5': { input: 4, output: 20, cacheRead: 0.2, cacheWrite5m: 5, verified: true },
+  'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5, verified: true },
+  // Up to 100K prompt tokens; longer prompts use HAIKU_5_5_LONG_PROMPT
+  // below. Cache rates follow the standard 0.1x / 1.25x-input rules.
+  'claude-haiku-5-5': { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite5m: 0.125, verified: true },
 };
+
+/**
+ * Claude Haiku 5.5 is priced per request by prompt length: $0.10/$0.50
+ * per MTok up to 100K prompt tokens, $0.50/$2.50 beyond. The per-request
+ * input cap defaults to 30K, but an administrator can raise it to 500K
+ * (aiSettingsSchema below), so the long-prompt tier has to be real here
+ * rather than assumed away — otherwise the budget would under-price
+ * exactly the largest requests.
+ */
+const HAIKU_5_5_LONG_PROMPT_THRESHOLD = 100_000;
+const HAIKU_5_5_LONG_PROMPT: ModelPrice = { input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite5m: 0.625, verified: true };
 
 /**
  * Deliberately expensive stand-in for any model we have not verified a
@@ -68,9 +87,17 @@ export const UNVERIFIED_MODEL_PRICING: ModelPrice = {
 /** USD per web search. Official: $10 per 1,000 searches. */
 export const WEB_SEARCH_COST_USD = 0.01;
 
-export function priceFor(model: string, onDate: string = new Date().toISOString().slice(0, 10)): ModelPrice {
+export function priceFor(
+  model: string,
+  onDate: string = new Date().toISOString().slice(0, 10),
+  /** Total prompt tokens (uncached + cache read + cache write) — only matters for length-tiered models. */
+  promptTokens = 0,
+): ModelPrice {
   if (model === 'claude-sonnet-5') {
     return onDate <= SONNET_5_INTRO_PRICING_ENDS ? SONNET_5_INTRO : SONNET_5_STANDARD;
+  }
+  if (model === 'claude-haiku-5-5' && promptTokens > HAIKU_5_5_LONG_PROMPT_THRESHOLD) {
+    return HAIKU_5_5_LONG_PROMPT;
   }
   return MODEL_PRICING[model] ?? UNVERIFIED_MODEL_PRICING;
 }
@@ -92,7 +119,7 @@ export const EMPTY_USAGE: AiUsage = aiUsageSchema.parse({});
 
 /** Value a usage record in USD using the pricing table above. */
 export function costOf(usage: AiUsage, model: string, onDate?: string): number {
-  const p = priceFor(model, onDate);
+  const p = priceFor(model, onDate, usage.inputTokens + usage.cachedTokens + usage.cacheWriteTokens);
   const perM = (tokens: number, rate: number) => (tokens / 1_000_000) * rate;
   return (
     perM(usage.inputTokens, p.input)
