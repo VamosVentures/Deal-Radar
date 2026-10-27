@@ -523,9 +523,16 @@ export function markRefreshed(ids: string[], date: string): number {
  * can never match even if it were somehow mis-tagged.
  * founders/evidence/etc. still cascade for each deleted row.
  */
-export function clearCsvImportedCompanies(): void {
-  getDb().exec("DELETE FROM companies WHERE intake_source = 'local-csv' AND discovery_source IS NULL");
+export function clearCsvImportedCompanies(): number {
+  return Number(getDb().prepare(`DELETE FROM companies WHERE ${CSV_IMPORTED_WHERE}`).run().changes);
 }
+
+/** Exactly the rows clearCsvImportedCompanies would delete — shown to the person confirming it. */
+export function countCsvImportedCompanies(): number {
+  return (getDb().prepare(`SELECT COUNT(*) AS n FROM companies WHERE ${CSV_IMPORTED_WHERE}`).get() as { n: number }).n;
+}
+
+const CSV_IMPORTED_WHERE = "intake_source = 'local-csv' AND discovery_source IS NULL";
 
 /** Pool for the identity-matching service. */
 export function matchRecords(): MatchRecord[] {

@@ -401,7 +401,11 @@ const liveApi = {
        */
       enrichment: Record<string, CompanyEnrichment>;
     }>('/api/companies/imported'),
-    clear: () => call<{ ok: boolean }>('/api/companies/imported/clear', { method: 'POST', body: '{}' }),
+    /** How many companies `clear` would delete right now. */
+    csvImportedCount: () => call<{ count: number }>('/api/companies/imported/csv-count'),
+    /** Deletes CSV-imported companies only if `expectedCount` still matches — see the route's 409. */
+    clear: (expectedCount: number) =>
+      call<{ ok: boolean; deleted: number }>('/api/companies/imported/clear', { method: 'POST', body: JSON.stringify({ expectedCount }) }),
     setStatus: (id: string, status: CompanyStatus, actor: string) =>
       call<{ ok: boolean; status: CompanyStatus }>(`/api/companies/${id}/status`, {
         method: 'POST',

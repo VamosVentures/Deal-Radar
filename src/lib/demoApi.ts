@@ -362,6 +362,7 @@ export const demoApi: Api = {
         enrichment,
       });
     },
+    csvImportedCount: () => Promise.resolve({ count: 0 }),
     clear: () => disabled(),
     setStatus: () => disabled(),
     refresh: () => disabled(),

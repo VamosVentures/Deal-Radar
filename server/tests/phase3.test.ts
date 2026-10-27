@@ -89,6 +89,38 @@ describe('local CSV import', () => {
     expect(remaining[0].id).toBe('discovery-co');
   });
 
+  it('"Clear imported" over HTTP deletes only after the confirmed count matches — a stray or stale request deletes nothing', async () => {
+    const app = createApp();
+    const agent = await adminAgent(app);
+    saveCompany({
+      id: 'discovery-co', name: 'Discovery Co', oneLiner: 'Fixture pitch', vertical: 'health',
+      subcategory: 'Care', stage: 'Seed', city: 'Austin', state: 'TX', foundedYear: 2024, teamSize: 3,
+      traction: { level: 5, note: 'Fixture' },
+      founders: [{ name: 'Founder One', role: 'CEO', background: 'Fixture' }],
+      evidence: [{ claim: 'Fixture claim', source: 'Fixture', url: 'https://example.com/x', date: '2026-07-01', type: 'News' }],
+      flags: [], imported: true,
+    }, { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+    await agent.post('/api/companies/import-csv').send({ csv: [CSV_HEADER, GOOD_ROW].join('\n') });
+
+    // The dialog's count covers CSV rows only.
+    const count = await agent.get('/api/companies/imported/csv-count');
+    expect(count.body.count).toBe(1);
+
+    // The old one-click request shape (no confirmed count) is refused.
+    const bare = await agent.post('/api/companies/imported/clear').send({});
+    expect(bare.status).toBe(400);
+    // A count that no longer matches (e.g. another upload landed after the dialog opened) is refused.
+    const stale = await agent.post('/api/companies/imported/clear').send({ expectedCount: 131 });
+    expect(stale.status).toBe(409);
+    expect(stale.body.currentCount).toBe(1);
+    expect(importedCompanies()).toHaveLength(2);
+
+    const ok = await agent.post('/api/companies/imported/clear').send({ expectedCount: 1 });
+    expect(ok.status).toBe(200);
+    expect(ok.body.deleted).toBe(1);
+    expect(importedCompanies().map((c) => c.id)).toEqual(['discovery-co']);
+  });
+
   it('imported companies are exposed over HTTP', async () => {
     const app = createApp();
     const agent = await adminAgent(app);

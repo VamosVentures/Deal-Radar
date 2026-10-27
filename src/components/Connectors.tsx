@@ -4,7 +4,7 @@ import { DEMO_MODE } from '../lib/demoMode';
 import { useCompanies } from '../store/companies';
 import { useIntegrations } from '../store/integrations';
 import { VERTICAL_OPTIONS } from '../data/taxonomy';
-import { btnGhost, btnPrimary, ErrorNote } from './Modal';
+import { btnDanger, btnGhost, btnPrimary, ErrorNote, Modal } from './Modal';
 
 /**
  * Refresh connectors + refresh runner. Every card is functional:
@@ -225,7 +225,39 @@ function CsvUpload({ onDone }: { onDone: () => Promise<void> }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [report, setReport] = useState<string | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  // The count shown in the open confirmation dialog; null = dialog closed.
+  const [confirmCount, setConfirmCount] = useState<number | null>(null);
+  const [clearing, setClearing] = useState(false);
   const { refresh } = useCompanies();
+
+  /** Look up exactly how many companies would be deleted, then ask before doing anything. */
+  async function askToClear() {
+    setError(null);
+    setReport(null);
+    try {
+      const { count } = await api.imports.csvImportedCount();
+      if (count === 0) setReport('There are no CSV-imported companies to clear.');
+      else setConfirmCount(count);
+    } catch (err) {
+      setError(err as ApiError);
+    }
+  }
+
+  async function clearConfirmed(expectedCount: number) {
+    setClearing(true);
+    try {
+      const { deleted } = await api.imports.clear(expectedCount);
+      setReport(`${deleted} CSV-imported compan${deleted === 1 ? 'y' : 'ies'} deleted.`);
+      await Promise.all([refresh(), onDone()]);
+    } catch (err) {
+      // e.g. 409: the count changed since the dialog opened — nothing was deleted.
+      setError(err as ApiError);
+    } finally {
+      setClearing(false);
+      setConfirmCount(null);
+    }
+  }
+
   return (
     <div className="mt-2 border-t border-line pt-2">
       <input
@@ -254,13 +286,30 @@ function CsvUpload({ onDone }: { onDone: () => Promise<void> }) {
       />
       <div className="flex gap-2">
         <button className={btnGhost} onClick={() => inputRef.current?.click()}>Upload CSV</button>
-        <button
-          className={btnGhost}
-          onClick={async () => { await api.imports.clear(); setReport('Imported companies cleared.'); await Promise.all([refresh(), onDone()]); }}
-        >
+        <button className={btnGhost} disabled={clearing} onClick={() => void askToClear()}>
           Clear imported
         </button>
       </div>
+      {confirmCount !== null && (
+        <Modal eyebrow="Permanent delete" title={`Delete ${confirmCount} CSV-imported compan${confirmCount === 1 ? 'y' : 'ies'}?`} onClose={() => setConfirmCount(null)}>
+          <p className="text-sm leading-relaxed text-ink">
+            This permanently deletes the <strong>{confirmCount}</strong> compan{confirmCount === 1 ? 'y' : 'ies'} added by CSV upload,
+            along with everything recorded on {confirmCount === 1 ? 'it' : 'them'} (founders, evidence, scores, review history).
+            It can&rsquo;t be undone from here.
+          </p>
+          <p className="mt-2 text-[12px] leading-relaxed text-slate-mid">
+            Companies found by Deal Discovery and approved email leads are not affected. To keep a way back, create a database
+            backup first (Settings &rarr; Database backups).
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            {/* Cancel is first and focused: Enter on an open dialog must never delete. */}
+            <button className={btnGhost} autoFocus onClick={() => setConfirmCount(null)}>Cancel</button>
+            <button className={btnDanger} disabled={clearing} onClick={() => void clearConfirmed(confirmCount)}>
+              {clearing ? 'Deleting…' : `Delete ${confirmCount} compan${confirmCount === 1 ? 'y' : 'ies'}`}
+            </button>
+          </div>
+        </Modal>
+      )}
       {report && <p className="mt-1.5 text-[11px] text-slate-mid">{report}</p>}
       {error && <div className="mt-1.5"><ErrorNote message={error.message} issues={error.issues} /></div>}
       <p className="mt-1.5 text-[10px] leading-relaxed text-slate-mid">

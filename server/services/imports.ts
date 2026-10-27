@@ -5,7 +5,7 @@ import { portfolioCompanySchema } from '../../shared/integrations';
 import { VERTICAL_ID_VALUES } from '../../shared/discovery';
 import { EMPTY_CATEGORY, subverticalLabelsForSector } from '../enrichment/verticalClassifier';
 import {
-  addPossibleDuplicate, clearCsvImportedCompanies, listCompanies, matchRecords, saveCompany,
+  addPossibleDuplicate, clearCsvImportedCompanies, countCsvImportedCompanies, listCompanies, matchRecords, saveCompany,
 } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';
 import { matchCompany } from '../sourcing/identity';
@@ -340,9 +340,23 @@ export function importedCompanies(): ImportedCompany[] {
   return listCompanies();
 }
 
-/** Undoes a CSV import — and ONLY a CSV import. A company Deal Discovery surfaced is never touched here, regardless of its current review/HubSpot status. */
-export function clearImportedCompanies(): void {
-  clearCsvImportedCompanies();
+/**
+ * Undoes a CSV import — and ONLY a CSV import. A company Deal Discovery
+ * surfaced, or an approved email lead, is never touched here, regardless
+ * of its current review/HubSpot status. Returns how many were deleted.
+ */
+export function clearImportedCompanies(actor = 'system'): number {
+  const deleted = clearCsvImportedCompanies();
+  audit({
+    provider: 'system', mode: 'local', action: 'csv-import-cleared', subject: 'local-csv',
+    outcome: 'ok', detail: `${deleted} CSV-imported compan${deleted === 1 ? 'y' : 'ies'} deleted by ${actor}.`,
+  });
+  return deleted;
+}
+
+/** How many companies "Clear imported" would delete right now. */
+export function csvImportedCount(): number {
+  return countCsvImportedCompanies();
 }
 
 export function savePortfolio(raw: unknown): { count: number } {
