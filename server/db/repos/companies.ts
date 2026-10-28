@@ -126,6 +126,13 @@ export interface CompanyMetaEntry {
   reviewStatus?: string;
   discoverySource?: string;
   discoveredAt?: string;
+  /**
+   * When the row was added to Deal Radar. CSV and email-intake companies
+   * have no discoveredAt (deliberately never backfilled — see migration
+   * notes), so date sorts and filters fall back to this, the same way
+   * executiveKpis.ts does server-side.
+   */
+  createdAt?: string;
   lastRefreshed?: string;
   hubspotCompanyId?: string;
   hubspotDealId?: string;
@@ -213,6 +220,7 @@ export function companyMetaView(): Record<string, CompanyMetaEntry> {
     if (r.review_status) entry.reviewStatus = r.review_status;
     if (r.discovery_source) entry.discoverySource = r.discovery_source;
     if (r.discovered_at) entry.discoveredAt = r.discovered_at;
+    entry.createdAt = r.created_at;
     if (r.last_refreshed) entry.lastRefreshed = r.last_refreshed;
     if (r.hubspot_company_id) entry.hubspotCompanyId = r.hubspot_company_id;
     if (r.hubspot_deal_id) entry.hubspotDealId = r.hubspot_deal_id;

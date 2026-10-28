@@ -9,7 +9,8 @@ import {
   createBatch, decideCandidate, getCandidate, insertCandidate, listCandidates, updateCandidateExtracted,
   type EmailIntakeCandidate,
 } from '../db/repos/emailIntake';
-import { classifyCompany } from '../enrichment/verticalClassifier';
+import { classifyCompany, matchSubvertical } from '../enrichment/verticalClassifier';
+import { officialSubcategory } from '../../src/data/taxonomy';
 import { isClassified } from '../../shared/enrichment';
 import { EMAIL_INTAKE_PROMPT } from '../../src/lib/emailIntakePrompt';
 import { VERTICAL_ID_VALUES } from '../../src/types';
@@ -92,12 +93,32 @@ function suggestVertical(raw: Record<string, unknown>): Record<string, unknown> 
   return { suggestedVertical: result.primarySector, suggestedVerticalReason: result.reason };
 }
 
+/**
+ * Subcategories are never free text. Claude is told to pick an official
+ * name from the vertical's own list; if it returns anything else, force-fit
+ * from that vertical's taxonomy using the same matcher enrichment uses
+ * (never reclassifying the vertical), and when nothing fits, leave it
+ * unset so the reviewer picks one from the dropdown.
+ */
+function resolveSubcategory(raw: Record<string, unknown>, vertical: unknown): string | undefined {
+  // Claude giving none is an honest "nothing fits" — never invent one here.
+  if (!isVerticalId(vertical) || !present(raw.subcategory)) return undefined;
+  const exact = officialSubcategory(vertical, raw.subcategory);
+  if (exact) return exact;
+  const text = [raw.subcategory, raw.oneLiner, raw.quote]
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .join('. ');
+  return officialSubcategory(vertical, text ? matchSubvertical(vertical, text) : null) ?? undefined;
+}
+
 /** Wrap one raw candidate object (as Claude reported it) into the shape the review queue and approve path expect. */
 function toQueuedCandidate(raw: Record<string, unknown>): Record<string, unknown> {
   const { quote, ...rest } = raw;
+  const vertical = resolveProposedVertical(raw);
   return {
     ...rest,
-    ...resolveProposedVertical(raw),
+    ...vertical,
+    subcategory: resolveSubcategory(raw, vertical.vertical ?? vertical.suggestedVertical),
     evidence: [{
       type: 'Inbound referral',
       // Empty when Claude quoted nothing; completeForApproval fills a
@@ -250,6 +271,10 @@ export function approvalBlockers(extracted: Record<string, unknown>): string[] {
   if (!present(extracted.name)) blockers.push('name');
   if (!isVerticalId(extracted.vertical)) blockers.push('vertical');
   if (!present(firstEvidence(extracted)?.url)) blockers.push('evidence');
+  // Optional, but when given it must be one of the vertical's official names.
+  if (present(extracted.subcategory) && !officialSubcategory(extracted.vertical as string, extracted.subcategory)) {
+    blockers.push('subcategory');
+  }
   return blockers;
 }
 
@@ -315,6 +340,8 @@ function completeForApproval(id: string, extracted: Record<string, unknown>): {
     }
   }
 
+  const subcategory = officialSubcategory(record.vertical as string, record.subcategory);
+  if (subcategory) record.subcategory = subcategory;
   if (typeof record.state === 'string' && record.state !== '??') record.state = record.state.trim().toUpperCase();
   if (typeof record.stage === 'string') {
     const match = STAGE_VALUES.find((s) => s.toLowerCase() === (record.stage as string).trim().toLowerCase());
@@ -347,10 +374,22 @@ function completeForApproval(id: string, extracted: Record<string, unknown>): {
   return { record, unknownFields };
 }
 
-export function updateEmailIntakeCandidate(id: number, patch: Record<string, unknown>): { ok: boolean; error?: string } {
+export function updateEmailIntakeCandidate(
+  id: number,
+  patch: Record<string, unknown>,
+): { ok: boolean; status?: number; error?: string } {
   const existing = getCandidate(id);
-  if (!existing) return { ok: false, error: `No email-intake candidate with id ${id}.` };
-  return updateCandidateExtracted(id, { ...existing.extracted, ...patch });
+  if (!existing) return { ok: false, status: 404, error: `No email-intake candidate with id ${id}.` };
+  const merged = { ...existing.extracted, ...patch };
+  if (present(merged.subcategory) && !officialSubcategory(merged.vertical as string, merged.subcategory)) {
+    if ('subcategory' in patch) {
+      return { ok: false, status: 422, error: `"${String(patch.subcategory)}" is not an official subcategory of that vertical.` };
+    }
+    // The reviewer changed the vertical; the old subcategory belongs to the
+    // previous vertical's taxonomy, so it no longer applies.
+    delete merged.subcategory;
+  }
+  return updateCandidateExtracted(id, merged);
 }
 
 export function approveEmailIntakeCandidate(
@@ -365,7 +404,9 @@ export function approveEmailIntakeCandidate(
   if (blockers.length > 0) {
     return {
       ok: false, status: 422,
-      error: 'Fill in the company name, its vertical, and who forwarded it before approving.',
+      error: blockers.includes('subcategory')
+        ? 'Pick a subcategory from the vertical\'s official list (or leave it blank) before approving.'
+        : 'Fill in the company name, its vertical, and who forwarded it before approving.',
       missingFields: blockers,
     };
   }

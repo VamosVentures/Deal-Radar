@@ -133,6 +133,8 @@ export interface CompanyMeta {
   reviewStatus?: string;
   discoverySource?: string;
   discoveredAt?: string;
+  /** When the row was added; the fallback for companies with no discoveredAt (CSV, email intake). */
+  createdAt?: string;
   hubspotCompanyId?: string;
   /** Computed: true when a non-terminal company has gone unreviewed past the staleness threshold. */
   stale?: boolean;

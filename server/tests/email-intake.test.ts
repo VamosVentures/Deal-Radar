@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { store } from '../lib/store';
 import { resetDbForTests } from '../db/client';
-import { getCompany, getProvenance, listCompanies, saveCompany } from '../db/repos/companies';
+import { companyMetaView, getCompany, getProvenance, listCompanies, saveCompany } from '../db/repos/companies';
+import { officialSubcategories } from '../../src/data/taxonomy';
 import { latestScore } from '../db/repos/operations';
 import { clearImportedCompanies, importCompaniesCsv } from '../services/imports';
 import {
@@ -285,6 +286,85 @@ describe('email intake', () => {
       expect(result.ok).toBe(true);
       expect(listCompanies()).toHaveLength(0);
       expect(listEmailIntakeCandidates().find((c) => c.id === candidates[0].id)?.status).toBe('discarded');
+    });
+  });
+
+  describe('subcategory is always an official name of the vertical, never free text', () => {
+    const queue = (candidate: Record<string, unknown>) =>
+      submitEmailIntakeBatch({ reply: JSON.stringify({ candidates: [candidate] }), submittedBy: 'test-reviewer' }).candidates[0];
+    const forwarded = (id: number, extracted: Record<string, unknown>) => {
+      const evidence = extracted.evidence as Record<string, unknown>[];
+      updateEmailIntakeCandidate(id, { evidence: [{ ...evidence[0], url: 'Forwarded by Andrew, 2026-10-28' }] });
+    };
+
+    it('keeps an official subcategory, normalized to its canonical spelling', () => {
+      const c = queue({ name: 'Liquid Co', vertical: 'sustainability', subcategory: 'renewable-energy DIGITAL infrastructure ' });
+      expect(c.extracted.subcategory).toBe('Renewable-energy digital infrastructure');
+    });
+
+    it("force-fits an invented subcategory from the vertical's own taxonomy (the STASIS case)", () => {
+      const c = queue({ name: 'Eye Co', vertical: 'health', subcategory: 'Eye health monitoring', oneLiner: 'Wearable monitoring for eye health.' });
+      expect(c.extracted.vertical).toBe('health');
+      const sub = c.extracted.subcategory;
+      // Either a real Health subcategory, or left for the reviewer — never the invented text.
+      if (sub !== undefined) expect(officialSubcategories('health')).toContain(sub);
+      expect(sub).not.toBe('Eye health monitoring');
+    });
+
+    it('leaves the subcategory unset when nothing official fits, rather than storing free text', () => {
+      const c = queue({ name: 'Odd Co', vertical: 'fintech', subcategory: 'Quantum origami', oneLiner: 'Folding things.' });
+      expect(c.extracted.subcategory).toBeUndefined();
+    });
+
+    it("never takes a subcategory from another vertical's taxonomy", () => {
+      const c = queue({ name: 'Mixed Co', vertical: 'fintech', subcategory: 'Autonomous agents' });
+      expect(c.extracted.subcategory).toBeUndefined();
+    });
+
+    it('does not invent one when Claude gave none', () => {
+      const c = queue({ name: 'Quiet Co', vertical: 'fintech', quote: 'Small team doing something in payments.' });
+      expect(c.extracted.subcategory).toBeUndefined();
+    });
+
+    it('rejects an explicit edit to a non-official subcategory', () => {
+      const c = queue({ name: 'Edit Co', vertical: 'fow' });
+      expect(updateEmailIntakeCandidate(c.id, { subcategory: 'Something I made up' })).toMatchObject({ ok: false, status: 422 });
+    });
+
+    it('drops the old subcategory when the reviewer changes the vertical', () => {
+      const c = queue({ name: 'Switch Co', vertical: 'fow', subcategory: 'Autonomous agents' });
+      expect(updateEmailIntakeCandidate(c.id, { vertical: 'fintech' }).ok).toBe(true);
+      const updated = listEmailIntakeCandidates().find((x) => x.id === c.id)!;
+      expect(updated.extracted.vertical).toBe('fintech');
+      expect(updated.extracted.subcategory).toBeUndefined();
+    });
+
+    it('blocks approval of a non-official subcategory that got in some other way', () => {
+      const evidence = [{ url: 'Forwarded by A' }];
+      expect(approvalBlockers({ name: 'X', vertical: 'health', subcategory: 'Eye health monitoring', evidence })).toEqual(['subcategory']);
+      expect(approvalBlockers({ name: 'X', vertical: 'health', subcategory: 'Longevity', evidence })).toEqual([]);
+    });
+
+    it('approves with the official subcategory stored', () => {
+      const c = queue({ name: 'Approve Co', vertical: 'fow', subcategory: 'Autonomous agents' });
+      forwarded(c.id, c.extracted);
+      const result = approveEmailIntakeCandidate(c.id, 'test-reviewer');
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(getCompany(result.companyId)?.subcategory).toBe('Autonomous agents');
+    });
+  });
+
+  describe('company meta carries createdAt so CSV/email companies sort and filter by date', () => {
+    it('includes createdAt for an approved email lead, which has no discoveredAt', () => {
+      const c = submitEmailIntakeBatch({ reply: JSON.stringify({ candidates: [{ name: 'Dated Co', vertical: 'fow' }] }), submittedBy: 't' }).candidates[0];
+      const evidence = c.extracted.evidence as Record<string, unknown>[];
+      updateEmailIntakeCandidate(c.id, { evidence: [{ ...evidence[0], url: 'Forwarded by A, 2026-10-28' }] });
+      const result = approveEmailIntakeCandidate(c.id, 't');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const meta = companyMetaView()[result.companyId];
+      expect(meta.discoveredAt).toBeUndefined();
+      expect(meta.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
   });
 });

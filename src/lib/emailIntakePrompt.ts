@@ -43,7 +43,9 @@ traction/customer claims: an invented fact here is worse than a missing
 one, because someone will act on it as if it were real.
 
 The one exception is "vertical" (see below): propose the best-fit sector
-for every company, and explain your choice in "verticalReason".
+for every company, and explain your choice in "verticalReason". Pick
+"subcategory" the same way, but only from that vertical's own official
+list — subcategories are a fixed taxonomy, not free text.
 
 Respond with ONLY a JSON object, no other text, shaped exactly like this:
 
@@ -54,7 +56,7 @@ Respond with ONLY a JSON object, no other text, shaped exactly like this:
       "oneLiner": "one sentence describing what the company does, if stated",
       "vertical": "exactly one of: health, fintech, fow, sustainability, frontier — your best fit based on what the company does (see the definitions below), even if the email doesn't name the sector. Omit ONLY if the email gives no indication at all of what the company does",
       "verticalReason": "one short sentence on why you chose that vertical, citing what the email says the company does",
-      "subcategory": "a short specific category, if stated or clearly implied (e.g. 'Remote patient monitoring')",
+      "subcategory": "copied EXACTLY from the Subcategories list of the vertical you chose (see the definitions below) — the closest fit for what the company does. Never write your own category name. Omit if you omitted vertical or none of that vertical's subcategories fits",
       "stage": "one of: Pre-seed, Seed, Series A, Stealth, Unknown — only if stated",
       "city": "string, if stated",
       "state": "two-letter state abbreviation, if stated",
