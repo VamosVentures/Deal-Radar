@@ -274,6 +274,7 @@ function CsvUpload({ onDone }: { onDone: () => Promise<void> }) {
             const res = await api.imports.importCsv(await file.text());
             setReport(
               `${res.imported}/${res.total} rows imported.` +
+              (res.researchQueued > 0 ? ` Researching founder, stage and sector for ${res.researchQueued} in the background — reload All Deals in a few minutes to see it.` : '') +
               (res.skipped.length > 0 ? ` Rejected rows: ${res.skipped.map((s) => `row ${s.row} (${s.issues[0]})`).join('; ')}` : ''),
             );
             await Promise.all([refresh(), onDone()]);

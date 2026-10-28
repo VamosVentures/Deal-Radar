@@ -114,6 +114,7 @@ export function EmailIntakeQueue() {
   const [drafts, setDrafts] = useState<Record<number, Draft>>({});
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(() => {
     void api.emailIntake.listCandidates().then((r) => {
@@ -157,6 +158,7 @@ export function EmailIntakeQueue() {
     try {
       await save(c);
       await api.emailIntake.approveCandidate(c.id);
+      setNotice(`Approved ${drafts[c.id]?.name || String(c.extracted.name ?? 'the company')}. Founder, stage and sector are being researched in the background — usually done within a minute or two; reload All Deals to see them.`);
       load();
     } catch (e) {
       setError(e as ApiError);
@@ -178,7 +180,10 @@ export function EmailIntakeQueue() {
     }
   }
 
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    // Keep the "research started" note visible after the last approval empties the queue.
+    return notice ? <p className="mt-4 text-[11px] text-slate-mid">{notice}</p> : null;
+  }
 
   return (
     <section className="mt-8 border border-line bg-panel p-4" data-testid="email-intake-queue">
@@ -189,8 +194,10 @@ export function EmailIntakeQueue() {
       <p className="mb-3 text-[11px] leading-relaxed text-slate-mid">
         Companies Claude found in a forwarded email. Nothing here is a real company yet. To approve, each needs a
         name, a vertical, and who forwarded it — anything else left blank is recorded as Missing and can be filled
-        in later (Refresh live research finds some of it). Discard anything not worth pursuing.
+        in later. Approving starts background research for founder, stage and sector automatically (the same no-AI
+        pass as &ldquo;Research now&rdquo;). Discard anything not worth pursuing.
       </p>
+      {notice && <p className="mb-2 text-[11px] text-slate-mid">{notice}</p>}
       {error && <div className="mb-2"><ErrorNote message={error.message} issues={error.issues} /></div>}
 
       <ul className="space-y-4">

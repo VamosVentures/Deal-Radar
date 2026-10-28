@@ -382,7 +382,7 @@ const liveApi = {
 
   imports: {
     importCsv: (csv: string) =>
-      call<{ imported: number; skipped: { row: number; issues: string[] }[]; total: number }>('/api/companies/import-csv', {
+      call<{ imported: number; skipped: { row: number; issues: string[] }[]; total: number; researchQueued: number }>('/api/companies/import-csv', {
         method: 'POST',
         body: JSON.stringify({ csv }),
       }),
