@@ -62,7 +62,10 @@ const HOST_POLICIES: Record<string, Partial<HostPolicy>> = {
   'api.www.sbir.gov': { minGapMs: 2_000, maxAttempts: 3, cacheTtlMs: 30 * 60_000 },
   'efts.sec.gov': { minGapMs: 150, maxAttempts: 3 },
   'www.sec.gov': { minGapMs: 150, maxAttempts: 3 },
-  'export.arxiv.org': { minGapMs: 3_000, maxAttempts: 2 },
+  // arXiv asks for one request per 3s, and its API routinely takes longer
+  // than 10s to answer. Back-to-back scheduled jobs hit it 5 times in a
+  // minute, so it needs the longer timeout and a third attempt.
+  'export.arxiv.org': { minGapMs: 3_000, maxAttempts: 3, timeoutMs: 25_000 },
   'api.github.com': { minGapMs: 800, maxAttempts: 2 },
   'api.ycombinator.com': { minGapMs: 500, maxAttempts: 2 },
 };
