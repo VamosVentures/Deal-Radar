@@ -1,5 +1,4 @@
-import { fetchWithTimeout } from '../../lib/http';
-import { classifyFetchError, classifyHttpStatus } from '../errors';
+import { politeFetch, RequestBudget } from '../politeness';
 import { validateLeads } from '../validate';
 import type { AdapterOutcome, SourceAdapter } from '../types';
 import { resolveQueryTerm } from '../verticalQueries';
@@ -90,20 +89,25 @@ export const arxivAdapter: SourceAdapter = {
     });
     const url = `https://export.arxiv.org/api/query?${params}`;
 
-    let res: Response;
-    try {
-      res = await fetchWithTimeout(url, { headers: { 'User-Agent': 'vamos-deal-radar (research signal)' } }, 8000);
-    } catch (e) {
-      const { kind, message } = classifyFetchError(e);
-      return { ok: false, failure: kind, apiCalls: 1, detail: `arXiv: ${message}` };
-    }
+    // Politeness layer: arXiv's 3s minimum gap held across every job in a
+    // scheduler tick, Retry-After honoured, bounded backoff. A bare fetch
+    // here made every research-only batch after the first in a tick fail
+    // (429 or timeout) on 2026-10-27.
+    const res = await politeFetch(url, {
+      headers: { 'User-Agent': 'vamos-deal-radar research signal (contact: vamosventures.com)' },
+      budget: new RequestBudget(Math.max(1, Math.min(budget.maxApiCalls, 3))),
+    });
     if (!res.ok) {
-      const { kind, message } = classifyHttpStatus(res);
-      return { ok: false, failure: kind, apiCalls: 1, detail: `arXiv: ${message}` };
+      const failure =
+        res.failure === 'rate-limited-by-us' ? 'rate-limited'
+        : res.failure === 'timeout' ? 'timeout'
+        : res.failure === 'network' ? 'network'
+        : 'http-error';
+      return { ok: false, failure, apiCalls: res.requests, detail: `arXiv: ${res.detail ?? 'request failed'}` };
     }
-    const xml = await res.text().catch(() => '');
+    const xml = res.body;
     if (!/<feed[\s>]/i.test(xml)) {
-      return { ok: false, failure: 'invalid-response', apiCalls: 1, detail: 'arXiv did not return a valid Atom feed.' };
+      return { ok: false, failure: 'invalid-response', apiCalls: res.requests, detail: 'arXiv did not return a valid Atom feed.' };
     }
 
     const now = new Date().toISOString();
@@ -130,7 +134,7 @@ export const arxivAdapter: SourceAdapter = {
     return {
       ok: true,
       leads: valid,
-      apiCalls: 1,
+      apiCalls: res.requests,
       detail: `${entries.length} paper(s) matched "${term}"; ${valid.length} listed a non-empty author affiliation (used verbatim, never guessed)${rejected > 0 ? ` (${rejected} invalid rejected)` : ''}. Most academic papers omit this field — a zero result here is expected, not a failure.`,
     };
   },

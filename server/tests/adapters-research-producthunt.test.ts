@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { store } from '../lib/store';
 import { runSource } from '../sourcing';
+import { clearPolitenessCacheForTests } from '../sourcing/politeness';
 import { discoveryQuerySchema, type DiscoveryQuery } from '../../shared/discovery';
 
 /**
@@ -20,7 +21,12 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-beforeEach(() => store.resetForTests());
+beforeEach(() => {
+  store.resetForTests();
+  // arXiv goes through the politeness cache; two tests with the same
+  // query URL must not see each other's responses.
+  clearPolitenessCacheForTests();
+});
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.PRODUCTHUNT_TOKEN;
@@ -79,6 +85,35 @@ describe('arXiv (research) adapter', () => {
     const res = await runSource('research', q(), 10);
     expect(res.mode).toBe('failed');
     expect(res.failureKind).toBe('invalid-response');
+  });
+
+  it('retries a 429 instead of failing the run on the first throttle', async () => {
+    const ok = `<feed xmlns="http://www.w3.org/2005/Atom"></feed>`;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('Rate exceeded.', { status: 429 }))
+      .mockResolvedValueOnce(xmlResponse(ok));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await runSource('research', q({ terms: ['throttled'] }), 10);
+    expect(res.mode).toBe('live');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a persistent 429 is reported as rate-limited after bounded attempts', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response('Rate exceeded.', { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await runSource('research', q({ terms: ['always-throttled'] }), 10);
+    expect(res.mode).toBe('failed');
+    expect(res.failureKind).toBe('rate-limited');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('a timeout is reported as a timeout failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => {
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+    }));
+    const res = await runSource('research', q({ terms: ['slow'] }), 10);
+    expect(res.mode).toBe('failed');
+    expect(res.failureKind).toBe('timeout');
   });
 });
 
