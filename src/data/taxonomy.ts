@@ -271,4 +271,20 @@ export const CORE_VERTICAL_IDS: VerticalId[] = VERTICALS.filter((v) => v.core).m
 export const VERTICAL_OPTIONS: { id: VerticalId; name: string }[] =
   VERTICALS.map((v) => ({ id: v.id, name: v.name }));
 
+/** A vertical's official subcategory names, in canonical order — empty for an unknown vertical. */
+export function officialSubcategories(verticalId: string | null | undefined): string[] {
+  return (VERTICALS.find((v) => v.id === verticalId)?.subcategories ?? []).map((s) => s.name);
+}
+
+/**
+ * The canonical spelling of `value` when it is one of `verticalId`'s
+ * official subcategories (case/whitespace-insensitive), otherwise null.
+ * Subcategories are never free text: anything else is not a subcategory.
+ */
+export function officialSubcategory(verticalId: string | null | undefined, value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const key = value.trim().toLowerCase();
+  return officialSubcategories(verticalId).find((name) => name.toLowerCase() === key) ?? null;
+}
+
 export const PREFERRED_STATES = ['NM', 'NY', 'NJ', 'OR', 'CA', 'TX', 'IL'];

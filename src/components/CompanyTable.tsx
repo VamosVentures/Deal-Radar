@@ -281,7 +281,7 @@ export function CompanyTable({
         if (needsDiligenceOnly && !promisingVerdict(c, fit).needsDiligence) return false;
         if (promisingOnly && !promisingVerdict(c, fit).eligible) return false;
         if (notReviewedDays !== '') {
-          const lastTouch = meta[c.id]?.lastRefreshed ?? meta[c.id]?.discoveredAt;
+          const lastTouch = meta[c.id]?.lastRefreshed ?? meta[c.id]?.discoveredAt ?? meta[c.id]?.createdAt;
           const age = daysSince(lastTouch);
           if (age === null || age < notReviewedDays) return false;
         }
@@ -336,7 +336,9 @@ export function CompanyTable({
         return hay.includes(q.trim().toLowerCase());
       });
     const evidenceRecency = (c: Company) => Math.max(0, ...c.evidence.map((e) => new Date(e.date).getTime() || 0));
-    const discoveryDate = (c: Company) => new Date(meta[c.id]?.discoveredAt ?? 0).getTime() || 0;
+    // CSV and email-intake companies have no discoveredAt; when they were
+    // added is their discovery date for sorting (as executiveKpis.ts does).
+    const discoveryDate = (c: Company) => new Date(meta[c.id]?.discoveredAt ?? meta[c.id]?.createdAt ?? 0).getTime() || 0;
     if (sortMode === 'evidence-recency') filtered.sort((a, b) => evidenceRecency(b.c) - evidenceRecency(a.c));
     else if (sortMode === 'discovery-date') filtered.sort((a, b) => discoveryDate(b.c) - discoveryDate(a.c));
     // Strongest opportunities first, with assessed companies always ahead
@@ -1273,6 +1275,7 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
           <MemoSection n="10" id={`${c.id}-provenance`} title="Review history & sync">
             <div className="grid gap-x-6 sm:grid-cols-2">
               <FactRow label="Discovered" value={m?.discoveredAt ? `${m.discoveredAt}${m.discoverySource ? ` via ${m.discoverySource}` : ''}` : null} />
+              {!m?.discoveredAt && m?.createdAt && <FactRow label="Added" value={m.createdAt.slice(0, 10)} />}
               <FactRow label="Last refreshed" value={c.lastRefreshed ?? m?.lastRefreshed ?? null} />
               <FactRow label="Review status" value={m?.reviewStatus ?? 'New'} />
               <FactRow label="HubSpot sync" value={m?.hubspotCompanyId ? `Synced — record ${m.hubspotCompanyId}` : 'Not synced'} />

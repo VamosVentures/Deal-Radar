@@ -55,7 +55,8 @@ emailIntakeRouter.patch('/companies/import-email/candidates/:id', wrap(async (re
   const patch = candidatePatchSchema.parse(req.body ?? {});
   const result = updateEmailIntakeCandidate(id, patch);
   if (!result.ok) {
-    res.status(404).json({ error: 'not_found', message: result.error });
+    const status = result.status ?? 404;
+    res.status(status).json({ error: status === 404 ? 'not_found' : 'invalid', message: result.error });
     return;
   }
   res.json({ ok: true });

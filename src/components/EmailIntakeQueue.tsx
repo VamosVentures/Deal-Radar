@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, type EmailIntakeCandidate } from '../lib/api';
-import { VERTICAL_OPTIONS } from '../data/taxonomy';
+import { officialSubcategories, officialSubcategory, VERTICAL_OPTIONS } from '../data/taxonomy';
 import { btnGhost, btnPrimary, ErrorNote } from './Modal';
 
 const STAGES = ['Pre-seed', 'Seed', 'Series A', 'Stealth', 'Unknown'] as const;
@@ -32,7 +32,8 @@ function draftFor(c: EmailIntakeCandidate): Draft {
     // server/services/emailIntake.ts). Either way the reviewer sees why and
     // confirms it — it is saved only when they Save or Approve.
     vertical: (x.vertical as string) ?? (x.suggestedVertical as string) ?? '',
-    subcategory: (x.subcategory as string) ?? '',
+    // Only an official name of that vertical can be shown or saved.
+    subcategory: officialSubcategory((x.vertical as string) ?? (x.suggestedVertical as string), x.subcategory) ?? '',
     stage: (x.stage as string) ?? '',
     city: (x.city as string) ?? '',
     state: (x.state as string) ?? '',
@@ -128,7 +129,13 @@ export function EmailIntakeQueue() {
   useEffect(load, [load]);
 
   function updateDraft(id: number, field: string, value: string) {
-    setDrafts((d) => ({ ...d, [id]: { ...d[id], [field]: value } }));
+    setDrafts((d) => {
+      const next = { ...d[id], [field]: value };
+      // A subcategory belongs to one vertical's taxonomy; changing the
+      // vertical clears one that doesn't exist under the new vertical.
+      if (field === 'vertical' && !officialSubcategory(value, next.subcategory)) next.subcategory = '';
+      return { ...d, [id]: next };
+    });
   }
 
   async function save(c: EmailIntakeCandidate) {
@@ -229,7 +236,10 @@ export function EmailIntakeQueue() {
                   )}
                 </Field>
                 <Field label="Subcategory" missing={missing.has('subcategory')}>
-                  <input className={inputCls} disabled={disabled} placeholder={NOT_STATED} value={d.subcategory} onChange={(e) => updateDraft(c.id, 'subcategory', e.target.value)} />
+                  <select className={inputCls} disabled={disabled || !d.vertical} value={d.subcategory} onChange={(e) => updateDraft(c.id, 'subcategory', e.target.value)}>
+                    <option value="">{d.vertical ? '—' : 'Pick a vertical first'}</option>
+                    {officialSubcategories(d.vertical).map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
                 </Field>
                 <Field label="Stage" missing={missing.has('stage')}>
                   <select className={inputCls} disabled={disabled} value={d.stage} onChange={(e) => updateDraft(c.id, 'stage', e.target.value)}>
