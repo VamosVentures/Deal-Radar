@@ -122,7 +122,11 @@ describe('one High-Fit threshold, shared by the KPI cards and the ranking', () =
     expect(typeof HOT_THRESHOLD).toBe('number');
     expect(isHighFit(HOT_THRESHOLD)).toBe(true);
     expect(isHighFit(HOT_THRESHOLD - 0.1)).toBe(false);
-    expect(read('server/services/executiveKpis.ts')).toContain('isHighFit(s.score)');
+    const kpis = read('server/services/executiveKpis.ts');
+    expect(kpis).toContain('isHighFit(s)');
+    // Live score, the same scoreCompany the lists use — never a stored row.
+    expect(kpis).toContain('scoreCompany(');
+    expect(kpis).not.toContain('latestScoresForAllCompanies()');
   });
 });
 
