@@ -132,7 +132,7 @@ describe('Executive Overview KPIs — Companies', () => {
     expect(computeCompanyKpis(NOW).stale.total).toBe(0);
   });
 
-  it('Hot: score >= 8.0 and non-provisional counts; provisional or below-threshold does not', () => {
+  it('High-Fit: score >= 8.0 counts whether or not it is provisional; below threshold or quarantined does not', () => {
     saveCompany(fixtureCompany({ id: 'co-hot', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     saveScore('co-hot', { score: 8.0, totalPoints: 80, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.8, explanation: 'x', provisional: false });
 
@@ -142,8 +142,13 @@ describe('Executive Overview KPIs — Companies', () => {
     saveCompany(fixtureCompany({ id: 'co-provisional-high' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     saveScore('co-provisional-high', { score: 9.0, totalPoints: 20, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.3, explanation: 'x', provisional: true });
 
+    // Missing information (provisional) no longer keeps a company out of High-Fit (2026-10-28).
+    saveCompany(fixtureCompany({ id: 'co-quarantined-high', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+    saveScore('co-quarantined-high', { score: 9.5, totalPoints: 95, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.9, explanation: 'x', provisional: false });
+    getDb().prepare("UPDATE companies SET quarantined = 1 WHERE id = 'co-quarantined-high'").run();
+
     const kpis = computeCompanyKpis(NOW);
-    expect(kpis.hot.total).toBe(1);
+    expect(kpis.hot.total).toBe(2); // co-hot + co-provisional-high
     expect(kpis.hot.byVertical.frontier).toBe(1);
   });
 
@@ -215,6 +220,19 @@ describe('Executive Overview KPIs — Stealth Founders', () => {
     const kpis = computeFounderKpis(NOW);
     expect(kpis.hot.total).toBe(1);
     expect(kpis.hot.byVertical.frontier).toBe(1);
+  });
+
+  it('High-Fit founders: a provisional company score counts; a quarantined company does not', () => {
+    saveCompany(fixtureCompany({ id: 'co-f6', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+    saveScore('co-f6', { score: 8.7, totalPoints: 30, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.3, explanation: 'x', provisional: true });
+    insertFounder('co-f6', 'person-provisional', undefined);
+
+    saveCompany(fixtureCompany({ id: 'co-f7', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+    saveScore('co-f7', { score: 9.0, totalPoints: 90, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.9, explanation: 'x', provisional: false });
+    insertFounder('co-f7', 'person-quarantined', undefined);
+    getDb().prepare("UPDATE companies SET quarantined = 1 WHERE id = 'co-f7'").run();
+
+    expect(computeFounderKpis(NOW).hot.total).toBe(1);
   });
 });
 

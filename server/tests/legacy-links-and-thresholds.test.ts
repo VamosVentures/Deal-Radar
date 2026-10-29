@@ -8,7 +8,7 @@ import { saveCompany } from '../db/repos/companies';
 import {
   verticalById, verticalsFromParam, LEGACY_VERTICAL_ALIASES, VERTICALS,
 } from '../../src/data/taxonomy';
-import { HOT_THRESHOLD } from '../../shared/scoringThresholds';
+import { HOT_THRESHOLD, isHighFit } from '../../shared/scoringThresholds';
 import type { ImportedCompany } from '../services/imports';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -103,7 +103,7 @@ describe('verticalById never throws on a legacy or unknown value', () => {
   });
 });
 
-describe('one High-Fit threshold, and it respects provisionality', () => {
+describe('one High-Fit threshold, shared by the KPI cards and the ranking', () => {
   it('the Overview ranking widget uses the shared threshold, not a literal', () => {
     const ranking = read('src/components/Ranking.tsx');
     expect(ranking).toContain('HOT_THRESHOLD');
@@ -111,14 +111,18 @@ describe('one High-Fit threshold, and it respects provisionality', () => {
     expect(ranking).not.toMatch(/fit\.score >= 8\b/);
   });
 
-  it('the ranking widget excludes provisional scores, as the KPI card does', () => {
+  it('the ranking widget and the KPI cards share one High-Fit rule (isHighFit), provisional or not', () => {
     const ranking = read('src/components/Ranking.tsx');
-    expect(ranking).toMatch(/!x\.fit\.provisional && x\.fit\.score >= HOT_THRESHOLD/);
+    expect(ranking).toMatch(/isHighFit\(x\.fit\.score\)/);
+    expect(ranking).not.toMatch(/fit\.provisional/);
+    expect(read('server/services/executiveKpis.ts')).not.toMatch(/s\.provisional/);
   });
 
-  it('the shared threshold is a single number both sides import', () => {
+  it('isHighFit is score >= HOT_THRESHOLD and nothing else', () => {
     expect(typeof HOT_THRESHOLD).toBe('number');
-    expect(read('server/services/executiveKpis.ts')).toContain('HOT_THRESHOLD');
+    expect(isHighFit(HOT_THRESHOLD)).toBe(true);
+    expect(isHighFit(HOT_THRESHOLD - 0.1)).toBe(false);
+    expect(read('server/services/executiveKpis.ts')).toContain('isHighFit(s.score)');
   });
 });
 

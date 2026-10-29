@@ -341,12 +341,10 @@ export function CompanyTable({
     const discoveryDate = (c: Company) => new Date(meta[c.id]?.discoveredAt ?? meta[c.id]?.createdAt ?? 0).getTime() || 0;
     if (sortMode === 'evidence-recency') filtered.sort((a, b) => evidenceRecency(b.c) - evidenceRecency(a.c));
     else if (sortMode === 'discovery-date') filtered.sort((a, b) => discoveryDate(b.c) - discoveryDate(a.c));
-    // Strongest opportunities first, with assessed companies always ahead
-    // of provisional ones — a provisional score measures our sourcing, not
-    // the company, so it must not lead the queue.
-    else filtered.sort((a, b) =>
-      Number(a.fit.provisional) - Number(b.fit.provisional)
-      || b.fit.score - a.fit.score);
+    // Strongest score first. Provisional (missing-information) scores are
+    // no longer ranked below assessed ones — see isHighFit in
+    // shared/scoringThresholds.ts for the 2026-10-28 decision.
+    else filtered.sort((a, b) => b.fit.score - a.fit.score);
     return filtered;
   }, [companies, verticals, stage, state, q, sortMode, possibleDuplicateOnly, missingInfoOnly,
       minEvidenceConfidence, notReviewedDays, duplicateCompanyIds, meta,
@@ -581,7 +579,7 @@ export function CompanyTable({
             </label>
             <label
               className="flex items-center gap-1.5"
-              title="Hide provisional scores. A score is fully assessed only when thesis fit, stage, traction, founders and geography could ALL be judged, at least 60% of the model was assessable, and the record cites a source. Anything short of that is normalized over too little evidence to compare with an assessed score, and is excluded from High-Fit."
+              title="Hide provisional scores. A score is fully assessed only when thesis fit, stage, traction, founders and geography could ALL be judged, at least 60% of the model was assessable, and the record cites a source. Anything short of that is normalized over less evidence than an assessed score. Missing information no longer excludes a company from High-Fit or ranks it lower."
             >
               <input type="checkbox" checked={assessedOnly} onChange={(e) => setAssessedOnly(e.target.checked)} />
               Fully assessed only (hide provisional)
@@ -600,7 +598,7 @@ export function CompanyTable({
             </label>
             <label
               className="flex items-center gap-1.5"
-              title="Provisional records that still look worth researching: they pass the thesis filter, are active and not confirmed duplicates, show quality-priority signals or already score at or above the Track threshold on what could be judged, and are missing at least one critical component that could change the score. This is a work list — it never counts toward High-Fit and never changes a score."
+              title="Provisional records that still look worth researching: they pass the thesis filter, are active and not confirmed duplicates, show quality-priority signals or already score at or above the Track threshold on what could be judged, and are missing at least one critical component that could change the score. This is a work list — it never changes a score."
             >
               <input
                 type="checkbox"
