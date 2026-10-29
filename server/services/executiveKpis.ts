@@ -1,5 +1,7 @@
 import { getDb } from '../db/client';
-import { latestScoresForAllCompanies } from '../db/repos/operations';
+import { listCompanies } from '../db/repos/companies';
+import { scoreCompany } from '../../src/lib/scoring';
+import type { Company } from '../../src/types';
 import { TERMINAL_COMPANY_STATUSES } from '../../shared/integrations';
 import { CORE_VERTICAL_IDS } from '../../src/data/taxonomy';
 import { isHighFit } from '../../shared/scoringThresholds';
@@ -54,6 +56,22 @@ function emptyBreakdown(): VerticalBreakdown {
 }
 
 /** Builds a reconciling breakdown: total always equals sum(byVertical) + unassigned. */
+/**
+ * Every active company's Fit Score, computed now from its current record —
+ * the same scoreCompany call, on the same listCompanies records, that the
+ * All Deals table and the Overview ranking make in the browser.
+ *
+ * High-Fit used to read the latest STORED scoring_results row instead.
+ * Those rows are written only at import/research/rescore time, so they
+ * drift from the live score whenever data or the model changes without a
+ * re-save — on 2026-10-28 the card said 51 High-Fit while the ranking list
+ * beneath it showed 37. Scoring live makes the card and the lists agree by
+ * construction. (Stored rows remain the score history.)
+ */
+function currentScores(now: number): Map<string, number> {
+  return new Map(listCompanies().map((c) => [c.id, scoreCompany(c as unknown as Company, new Date(now)).score]));
+}
+
 function buildBreakdown(verticals: (string | null)[]): VerticalBreakdown {
   const b = emptyBreakdown();
   for (const v of verticals) {
@@ -273,17 +291,15 @@ export function computeCompanyKpis(now: number = Date.now()): EntityKpis {
   });
   const stale = buildBreakdown(staleCompanies.map((c) => c.vertical));
 
-  // High-Fit (`hot`): the MOST RECENT scoring_results row per company
-  // (MAX(id), see latestScoresForAllCompanies) is >= HOT_THRESHOLD — see
-  // isHighFit. Provisional scores count: missing information no longer
-  // keeps a company out. This is deliberately "is the current score
-  // high", not "was any past score high". Quarantined (disqualified)
+  // High-Fit (`hot`): the company's current Fit Score (currentScores) is
+  // >= HOT_THRESHOLD — see isHighFit. Provisional scores count: missing
+  // information no longer keeps a company out. Quarantined (disqualified)
   // companies never count, as with Discovered This Week above.
-  const scores = latestScoresForAllCompanies();
+  const scores = currentScores(now);
   const hotCompanies = rows.filter((c) => {
     if (c.quarantined) return false;
     const s = scores.get(c.id);
-    return !!s && isHighFit(s.score);
+    return s !== undefined && isHighFit(s);
   });
   const hot = buildBreakdown(hotCompanies.map((c) => c.vertical));
 
@@ -419,7 +435,7 @@ export function computeFounderKpis(now: number = Date.now()): EntityKpis {
   // a dismissed candidate is not a live prospect regardless of its
   // company's score. Same isHighFit rule as companies, including that a
   // quarantined (disqualified) company's founders never count.
-  const scores = latestScoresForAllCompanies();
+  const scores = currentScores(now);
   const quarantinedCompanies = new Set(
     (db.prepare("SELECT id FROM companies WHERE quarantined = 1").all() as { id: string }[]).map((r) => r.id),
   );
@@ -427,7 +443,7 @@ export function computeFounderKpis(now: number = Date.now()): EntityKpis {
     if (f.review_decision === 'rejected') return false;
     if (quarantinedCompanies.has(f.company_id)) return false;
     const s = scores.get(f.company_id);
-    return !!s && isHighFit(s.score);
+    return s !== undefined && isHighFit(s);
   });
   const hot = buildBreakdown(hotFounders.map((f) => f.vertical));
 

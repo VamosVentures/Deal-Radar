@@ -27,6 +27,25 @@ function fixtureCompany(over: Partial<ImportedCompany> = {}): ImportedCompany {
   };
 }
 
+/**
+ * Sector + accelerator known, everything else missing — scores 8.3 and is
+ * provisional at NOW (same shape as promising-queue.test.ts's fixture).
+ * High-Fit counts it since 2026-10-28.
+ */
+function highFitCompany(over: Partial<ImportedCompany> = {}): ImportedCompany {
+  return {
+    id: over.id ?? 'co-high', name: `High Fit ${over.id ?? 'Co'}`, oneLiner: 'Warehouse robotics.',
+    vertical: 'frontier', subcategory: 'Industrial & warehouse automation',
+    stage: 'Unknown', city: 'Unknown', state: '??', foundedYear: 2026, teamSize: 2,
+    accelerator: 'Y Combinator (S26)',
+    traction: { level: 0, note: 'Unknown — not yet researched' },
+    founders: [{ name: 'Unknown founder', role: 'Unknown', background: 'Unknown' }],
+    evidence: [{ claim: 'YC listing.', source: 'Y Combinator', url: `https://ycombinator.com/companies/${over.id ?? 'co-high'}`, date: '2026-08-01', type: 'Database record' }],
+    flags: [], imported: true,
+    ...over,
+  } as ImportedCompany;
+}
+
 function fixtureRun(id: string, completedAt: string, over: Partial<DiscoveryRun> = {}): DiscoveryRun {
   return {
     id, at: completedAt, completedAt, runType: 'manual', mode: 'live',
@@ -132,24 +151,27 @@ describe('Executive Overview KPIs — Companies', () => {
     expect(computeCompanyKpis(NOW).stale.total).toBe(0);
   });
 
-  it('High-Fit: score >= 8.0 counts whether or not it is provisional; below threshold or quarantined does not', () => {
-    saveCompany(fixtureCompany({ id: 'co-hot', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-hot', { score: 8.0, totalPoints: 80, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.8, explanation: 'x', provisional: false });
-
+  it('High-Fit: the current score >= 8.0 counts whether or not it is provisional; below threshold or quarantined does not', () => {
+    // Scored live from the record (2026-10-28) — highFitCompany scores 8.3 provisional, fixtureCompany 6.5.
+    saveCompany(highFitCompany({ id: 'co-provisional-high' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     saveCompany(fixtureCompany({ id: 'co-not-hot' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-not-hot', { score: 7.9, totalPoints: 79, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.8, explanation: 'x', provisional: false });
-
-    saveCompany(fixtureCompany({ id: 'co-provisional-high' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-provisional-high', { score: 9.0, totalPoints: 20, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.3, explanation: 'x', provisional: true });
-
-    // Missing information (provisional) no longer keeps a company out of High-Fit (2026-10-28).
-    saveCompany(fixtureCompany({ id: 'co-quarantined-high', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-quarantined-high', { score: 9.5, totalPoints: 95, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.9, explanation: 'x', provisional: false });
+    saveCompany(highFitCompany({ id: 'co-quarantined-high' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     getDb().prepare("UPDATE companies SET quarantined = 1 WHERE id = 'co-quarantined-high'").run();
 
     const kpis = computeCompanyKpis(NOW);
-    expect(kpis.hot.total).toBe(2); // co-hot + co-provisional-high
+    expect(kpis.hot.total).toBe(1);
     expect(kpis.hot.byVertical.frontier).toBe(1);
+  });
+
+  it('High-Fit reads the live score, not a stale stored scoring_results row (the card must match the lists)', () => {
+    saveCompany(fixtureCompany({ id: 'co-stale-high' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+    saveScore('co-stale-high', { score: 9.9, totalPoints: 99, components: [], exceptions: [], version: 'old', evidenceConfidence: 0.9, explanation: 'x', provisional: false });
+    saveCompany(highFitCompany({ id: 'co-stale-low' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
+    saveScore('co-stale-low', { score: 2.0, totalPoints: 20, components: [], exceptions: [], version: 'old', evidenceConfidence: 0.2, explanation: 'x', provisional: true });
+
+    const kpis = computeCompanyKpis(NOW);
+    expect(kpis.hot.total).toBe(1);
+    expect(kpis.hot.byVertical.frontier).toBe(1); // co-stale-low, whose CURRENT score is high
   });
 
   it('vertical breakdown always reconciles, including an out-of-taxonomy value routed to Unassigned', () => {
@@ -175,8 +197,7 @@ describe('Executive Overview KPIs — Stealth Founders', () => {
   });
 
   it('Hot: a rejected candidate is excluded even if its company scores >= 8 — it is not a live prospect', () => {
-    saveCompany(fixtureCompany({ id: 'co-f1b', vertical: 'fow' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-f1b', { score: 9.0, totalPoints: 90, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.9, explanation: 'x', provisional: false });
+    saveCompany(highFitCompany({ id: 'co-f1b' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     insertFounder('co-f1b', 'person-hot', undefined);
     insertFounder('co-f1b', 'person-rejected', undefined, { reviewDecision: 'rejected' });
 
@@ -209,12 +230,10 @@ describe('Executive Overview KPIs — Stealth Founders', () => {
   });
 
   it('Hot: inherited from the associated company score, not an independent founder score', () => {
-    saveCompany(fixtureCompany({ id: 'co-f4', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-f4', { score: 8.5, totalPoints: 85, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.9, explanation: 'x', provisional: false });
+    saveCompany(highFitCompany({ id: 'co-f4' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     insertFounder('co-f4', 'person-hot', undefined);
 
     saveCompany(fixtureCompany({ id: 'co-f5' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-f5', { score: 5.0, totalPoints: 50, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.5, explanation: 'x', provisional: false });
     insertFounder('co-f5', 'person-not-hot', undefined);
 
     const kpis = computeFounderKpis(NOW);
@@ -223,12 +242,10 @@ describe('Executive Overview KPIs — Stealth Founders', () => {
   });
 
   it('High-Fit founders: a provisional company score counts; a quarantined company does not', () => {
-    saveCompany(fixtureCompany({ id: 'co-f6', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-f6', { score: 8.7, totalPoints: 30, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.3, explanation: 'x', provisional: true });
+    saveCompany(highFitCompany({ id: 'co-f6' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     insertFounder('co-f6', 'person-provisional', undefined);
 
-    saveCompany(fixtureCompany({ id: 'co-f7', vertical: 'frontier' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
-    saveScore('co-f7', { score: 9.0, totalPoints: 90, components: [], exceptions: [], version: 'test', evidenceConfidence: 0.9, explanation: 'x', provisional: false });
+    saveCompany(highFitCompany({ id: 'co-f7' }), { origin: 'extracted', source: 'discovery:yc', discoverySource: 'yc' });
     insertFounder('co-f7', 'person-quarantined', undefined);
     getDb().prepare("UPDATE companies SET quarantined = 1 WHERE id = 'co-f7'").run();
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { acceleratorBatchYear, assessPromising } from '../../src/lib/promisingQueue';
 import { scoreCompany } from '../../src/lib/scoring';
-import { HOT_THRESHOLD, TRACK_THRESHOLD } from '../../shared/scoringThresholds';
+import { HOT_THRESHOLD, isHighFit, TRACK_THRESHOLD } from '../../shared/scoringThresholds';
 import { resolveCityState } from '../enrichment/companyFacts';
 import type { Company } from '../../src/types';
 
@@ -241,20 +241,18 @@ describe('Promising — Needs Diligence', () => {
     expect(scoreCompany(c, NOW)).toEqual(before);
   });
 
-  it('every member is provisional, so membership can never imply High-Fit', () => {
+  it('a provisional member scoring 8.0+ IS High-Fit — missing information no longer excludes it (2026-10-28)', () => {
     const c = promisingShape();
     const fit = scoreCompany(c, NOW);
     const v = assessPromising({ company: c, fit, qualityBand: 'high', qualitySignals: SUBSTANTIVE });
     expect(v.eligible).toBe(true);
     expect(fit.provisional).toBe(true);
 
-    // This fixture is the exact case the provisional gate exists for: it
-    // scores ABOVE 8.0 on the 35% of the model that could be judged, and
-    // is still not High-Fit. The Hot rule is `!provisional && >= 8`, and
-    // the first half alone excludes every member of this queue.
+    // This fixture scores ABOVE 8.0 on the part of the model that could be
+    // judged. It used to be the case the provisional gate excluded; High-Fit
+    // is now decided by score alone (isHighFit), so it counts.
     expect(fit.score).toBeGreaterThanOrEqual(HOT_THRESHOLD);
-    const isHighFit = !fit.provisional && fit.score >= HOT_THRESHOLD;
-    expect(isHighFit).toBe(false);
+    expect(isHighFit(fit.score)).toBe(true);
   });
 
   it('invents no threshold of its own — it reuses TRACK_THRESHOLD', () => {
