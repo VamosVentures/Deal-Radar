@@ -1,6 +1,7 @@
 import { audit } from '../lib/guard';
 import { aiConfigured } from '../env';
 import { callBudgetedModel } from './aiClient';
+import { queueAutoResearch } from './autoResearch';
 import { fenceNonce, fenceUntrusted, parseModelJson, sanitizeUntrustedContent } from './aiGuard';
 import {
   commitImportedCompany, importedCompanySchema, PLACEHOLDER_FOUNDED_YEAR, slug,
@@ -439,6 +440,7 @@ export function approveEmailIntakeCandidate(
     provider: 'system', mode: 'local', action: 'email-intake-approve', subject: companyId,
     outcome: 'ok', detail: `Candidate ${id} approved by ${actor}${possibleDuplicate ? ' (flagged as a possible duplicate)' : ''}.`,
   });
+  queueAutoResearch([companyId], actor);
   return { ok: true, companyId, possibleDuplicate };
 }
 

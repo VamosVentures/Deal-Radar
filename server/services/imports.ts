@@ -8,6 +8,7 @@ import {
   addPossibleDuplicate, clearCsvImportedCompanies, countCsvImportedCompanies, listCompanies, matchRecords, saveCompany,
 } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';
+import { queueAutoResearch } from './autoResearch';
 import { matchCompany } from '../sourcing/identity';
 import { scoreCompany } from '../../src/lib/scoring';
 import type { Company } from '../../src/types';
@@ -224,6 +225,8 @@ export interface ImportReport {
   total: number;
   /** Rows imported but flagged as possible duplicates awaiting human review. */
   possibleDuplicates: number;
+  /** Imported companies queued for background research (see ./autoResearch.ts). */
+  researchQueued: number;
 }
 
 /**
@@ -279,7 +282,8 @@ export function commitImportedCompany(
 
 export function importCompaniesCsv(csvText: string): ImportReport {
   const rows = parseCsv(csvText);
-  const report: ImportReport = { imported: 0, skipped: [], total: rows.length, possibleDuplicates: 0 };
+  const report: ImportReport = { imported: 0, skipped: [], total: rows.length, possibleDuplicates: 0, researchQueued: 0 };
+  const importedIds = new Set<string>();
   // Identity/demographic columns are refused outright — see module docs.
   const forbidden = ['identity', 'latinoLed', 'femaleLed', 'demographics', 'ethnicity', 'gender', 'race'];
   const header = rows[0] ? Object.keys(rows[0]) : [];
@@ -324,10 +328,13 @@ export function importCompaniesCsv(csvText: string): ImportReport {
       });
       return;
     }
-    const { possibleDuplicate } = commitImportedCompany(parsed.data, { source: 'local-csv' });
+    const { possibleDuplicate, companyId } = commitImportedCompany(parsed.data, { source: 'local-csv' });
     if (possibleDuplicate) report.possibleDuplicates += 1;
     report.imported += 1;
+    importedIds.add(companyId);
   });
+  queueAutoResearch([...importedIds], 'csv-import');
+  report.researchQueued = importedIds.size;
   audit({
     provider: 'system', mode: 'local', action: 'csv-import', subject: 'local-csv',
     outcome: report.skipped.length === 0 ? 'ok' : 'blocked',

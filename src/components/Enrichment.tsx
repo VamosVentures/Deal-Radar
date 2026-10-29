@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { verticalById } from '../data/taxonomy';
+import type { Founder } from '../types';
 import {
   PRIMARY_SECTORS, RESOLUTION_STATE_LABELS, SECTOR_LABELS, STAGE_LABELS, STAGE_RESULTS,
   NON_SECTOR_STATUS,
@@ -79,11 +80,26 @@ function EvidenceLinks({ evidence }: { evidence: EnrichedField<unknown>['evidenc
  * a conflict says so; an exhausted search says when it completed. None
  * of these is a blank.
  */
-export function FounderCell({ enrichment }: { enrichment: CompanyEnrichment | undefined }) {
+export function FounderCell({ enrichment, founders = [] }: { enrichment: CompanyEnrichment | undefined; founders?: Founder[] }) {
+  // Founders already on the record — e.g. named in a forwarded email and
+  // approved by a reviewer — still count when Research names none. Many
+  // early-stage sites list no team, and showing "research completed" over
+  // a founder the reviewer approved hid real data. Shown as unconfirmed,
+  // the same way VerticalCell falls back to the import-time bucket.
+  const recorded = founders.filter((x) => x.name.trim() && !/^unknown/i.test(x.name.trim()));
+  const recordedFallback = recorded.length > 0 && (
+    <span className="text-sm" title={recorded.map((x) => x.name).join(', ')}>
+      <span className="font-semibold text-ink">{recorded[0].name}</span>
+      {recorded[0].role && !/^unknown/i.test(recorded[0].role) && <span className="text-slate-mid"> · {recorded[0].role}</span>}
+      {recorded.length > 1 && <span className="text-slate-mid"> +{recorded.length - 1}</span>}
+      <span className="block text-[10px] text-slate-mid">As entered — not confirmed by research</span>
+    </span>
+  );
   if (!enrichment) {
-    return <span className="text-xs italic text-slate-mid">Not yet researched</span>;
+    return recordedFallback || <span className="text-xs italic text-slate-mid">Not yet researched</span>;
   }
   const f = enrichment.founder;
+  if (!f.value && recordedFallback && !f.candidates.some((c) => c.reviewDecision !== 'rejected')) return recordedFallback;
   if (f.value) {
     return (
       <span className="text-sm">
