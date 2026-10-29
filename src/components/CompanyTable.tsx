@@ -751,7 +751,7 @@ export function CompanyTable({
                     <td className="cursor-pointer px-3 py-2.5 text-xs font-medium" onClick={() => requestOpen(open ? null : c.id)}><StageCell enrichment={enrichment[c.id]} /></td>
                     <td className="cursor-pointer px-3 py-2.5 whitespace-nowrap text-xs" onClick={() => requestOpen(open ? null : c.id)}>{c.city}, {c.state}</td>
                     <td className="cursor-pointer px-3 py-2.5" onClick={() => requestOpen(open ? null : c.id)}>
-                      <FounderCell enrichment={enrichment[c.id]} />
+                      <FounderCell enrichment={enrichment[c.id]} founders={c.founders} />
                       <IdentityChips founders={c.founders} />
                     </td>
                   </tr>
