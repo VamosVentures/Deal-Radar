@@ -30,7 +30,7 @@ import type { Company } from '../../src/types';
  *     inserted; earlier rows are untouched.
  *  5. NEVER AUTO-HOT. Nothing here writes a review status, moves a CRM
  *     stage, marks a company High-Fit, syncs, or contacts anyone. A
- *     company becomes High-Fit only by scoring >= 8 non-provisionally
+ *     company becomes High-Fit only by scoring >= 8 (isHighFit)
  *     under the unchanged rubric, which is decided by scoreCompany and
  *     read by the KPI — not by this function.
  */

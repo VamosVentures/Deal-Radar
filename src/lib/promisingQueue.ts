@@ -19,9 +19,8 @@ import { TRACK_THRESHOLD } from '../../shared/scoringThresholds';
  * has no authority of its own —
  *
  *   - it never changes a score, a weight, or a threshold;
- *   - it never marks anything High-Fit (every member is provisional by
- *     definition, and provisional records are excluded from High-Fit by
- *     the scorer, not by this file);
+ *   - it never marks anything High-Fit itself (High-Fit is decided only
+ *     by score, via isHighFit in shared/scoringThresholds.ts);
  *   - it adds no Overview KPI card. The ten approved cards are
  *     untouched; this lives inside the existing All Deals workflow as a
  *     filter.

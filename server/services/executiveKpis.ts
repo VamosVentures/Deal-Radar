@@ -2,7 +2,7 @@ import { getDb } from '../db/client';
 import { latestScoresForAllCompanies } from '../db/repos/operations';
 import { TERMINAL_COMPANY_STATUSES } from '../../shared/integrations';
 import { CORE_VERTICAL_IDS } from '../../src/data/taxonomy';
-import { HOT_THRESHOLD } from '../../shared/scoringThresholds';
+import { isHighFit } from '../../shared/scoringThresholds';
 import type { VerticalId } from '../../src/types';
 import type {
   CumulativePeriod, CumulativePeriodResult, EntityKpis, ExecutiveKpis, VerticalBreakdown,
@@ -273,17 +273,17 @@ export function computeCompanyKpis(now: number = Date.now()): EntityKpis {
   });
   const stale = buildBreakdown(staleCompanies.map((c) => c.vertical));
 
-  // Hot: the MOST RECENT scoring_results row per company (MAX(id), see
-  // latestScoresForAllCompanies) must itself be non-provisional and
-  // >= HOT_THRESHOLD. This is deliberately "is the current score hot",
-  // not "was any past score hot" — if the latest scoring pass for a
-  // company happens to be provisional, that company is not Hot this
-  // instant even if an older pass had scored higher; falling back to a
-  // stale earlier score would contradict "always reflects current state".
+  // High-Fit (`hot`): the MOST RECENT scoring_results row per company
+  // (MAX(id), see latestScoresForAllCompanies) is >= HOT_THRESHOLD — see
+  // isHighFit. Provisional scores count: missing information no longer
+  // keeps a company out. This is deliberately "is the current score
+  // high", not "was any past score high". Quarantined (disqualified)
+  // companies never count, as with Discovered This Week above.
   const scores = latestScoresForAllCompanies();
   const hotCompanies = rows.filter((c) => {
+    if (c.quarantined) return false;
     const s = scores.get(c.id);
-    return !!s && !s.provisional && s.score >= HOT_THRESHOLD;
+    return !!s && isHighFit(s.score);
   });
   const hot = buildBreakdown(hotCompanies.map((c) => c.vertical));
 
@@ -417,12 +417,17 @@ export function computeFounderKpis(now: number = Date.now()): EntityKpis {
   // no fit score of their own, the same inheritance the task specifies
   // for vertical. Rejected candidates are excluded here specifically:
   // a dismissed candidate is not a live prospect regardless of its
-  // company's score.
+  // company's score. Same isHighFit rule as companies, including that a
+  // quarantined (disqualified) company's founders never count.
   const scores = latestScoresForAllCompanies();
+  const quarantinedCompanies = new Set(
+    (db.prepare("SELECT id FROM companies WHERE quarantined = 1").all() as { id: string }[]).map((r) => r.id),
+  );
   const hotFounders = rows.filter((f) => {
     if (f.review_decision === 'rejected') return false;
+    if (quarantinedCompanies.has(f.company_id)) return false;
     const s = scores.get(f.company_id);
-    return !!s && !s.provisional && s.score >= HOT_THRESHOLD;
+    return !!s && isHighFit(s.score);
   });
   const hot = buildBreakdown(hotFounders.map((f) => f.vertical));
 

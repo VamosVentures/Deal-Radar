@@ -70,8 +70,9 @@ export const SCORING_VERSION = 'v4.1 (2026-08, evidence-gated provisional)';
  *
  * Nothing here changes any score, weight, or the 8.0 High-Fit threshold.
  * The policy only moves records in ONE direction — from "assessed" to
- * "provisional" — which removes them from High-Fit. It can never promote
- * a record or raise a number.
+ * "provisional". It can never promote a record or raise a number. (It
+ * used to remove them from High-Fit too; since 2026-10-28 it does not —
+ * see isHighFit in shared/scoringThresholds.ts.)
  *
  * WHY `mission` IS NOT CRITICAL. Mission alignment can only come from a
  * founder's voluntary public self-identification; this codebase forbids
@@ -500,8 +501,10 @@ export function scoreCompany(c: Company, today: Date = new Date()): FitScore {
   // traction, no founder and no funding scored 7.1 at 35% completeness
   // and was presented as assessed. Every requirement below has to hold
   // now, and a record failing any of them is still scored and still
-  // shown — it is simply labelled provisional, told exactly what is
-  // missing, and kept out of High-Fit.
+  // shown — it is simply labelled provisional and told exactly what is
+  // missing. (Since 2026-10-28 provisional scores DO count toward
+  // High-Fit and are no longer ranked below assessed ones — see isHighFit
+  // in shared/scoringThresholds.ts.)
   const byKey = new Map(components.map((x) => [x.key, x]));
   const missingCritical = NON_PROVISIONAL_POLICY.requiredComponents
     .filter((k) => !byKey.get(k)?.assessable)
@@ -530,7 +533,6 @@ export function scoreCompany(c: Company, today: Date = new Date()): FitScore {
   const provisionalReason = provisional
     ? `Provisional — not a fully assessed score. ${provisionalCauses.join('; ')}. `
       + `The number shown is normalized over only what could be judged, so it is a confident answer about a small amount of evidence rather than a verdict on the company. `
-      + `It is ranked below assessed companies and is excluded from High-Fit. `
       + `Research the missing component(s) to turn it into a real fit score — nothing about the company is being counted against it.`
     : null;
 
