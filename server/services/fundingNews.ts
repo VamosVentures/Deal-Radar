@@ -11,7 +11,7 @@ import {
 import { eventIdentity, independentPublishers, type FundingEvent, type RssReasonCode } from '../sourcing/fundingEvent';
 import { discoverOfficialWebsite } from './corroborate';
 import { addDealEvidence, reclassifyCompany } from '../db/repos/opportunities';
-import { saveCompany, matchRecords, listCompanies } from '../db/repos/companies';
+import { findRemovedCompany, saveCompany, matchRecords, listCompanies } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';
 import { importedCompanySchema, PLACEHOLDER_FOUNDED_YEAR } from './imports';
 import { candidateToDealEvidence } from './shortlist';
@@ -258,6 +258,11 @@ export async function runFundingNews(opts: RunOptions = {}): Promise<FundingNews
       continue;
     }
 
+    // Deleted on purpose by a reviewer (removed_companies) — never re-create it.
+    if (findRemovedCompany({ name: event.companyName, website: website.url ?? null })) {
+      log(`skipped ${event.companyName} — previously removed by a reviewer`);
+      continue;
+    }
     const persisted = persistEvent(event, website, today);
     if (!persisted) {
       run.skipped.push({ company: event.companyName, code: 'company-name-not-extractable', detail: 'Failed company-record validation.' });
