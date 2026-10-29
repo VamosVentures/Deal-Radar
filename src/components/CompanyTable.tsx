@@ -21,7 +21,7 @@ import { PendingEvidencePanel } from './PendingEvidencePanel';
 import { DEMO_MODE } from '../lib/demoMode';
 import { confirmLeaveUnsavedNotes } from '../lib/unsavedNotes';
 import { useCompanies } from '../store/companies';
-import { btnGhost, btnPrimary } from './Modal';
+import { btnGhost, btnPrimary, Modal } from './Modal';
 import { api, ApiError, type PossibleDuplicateEntry } from '../lib/api';
 import type { CompanyStatus } from '../../shared/integrations';
 import { meetsOperatingCompanyStandard } from '../../shared/qualification';
@@ -861,9 +861,26 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
       setDuplicateBusy(null);
     }
   };
-  const [modal, setModal] = useState<'hubspot' | 'outreach' | null>(null);
+  const [modal, setModal] = useState<'hubspot' | 'outreach' | 'delete' | null>(null);
   const [statusBusy, setStatusBusy] = useState<string | null>(null);
   const [statusNote, setStatusNote] = useState<string | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const deleteThisCompany = async () => {
+    setDeleteBusy(true);
+    setStatusNote(null);
+    try {
+      await api.imports.removeCompany(c.id, deleteReason.trim());
+      setModal(null);
+      await refresh();
+    } catch (e) {
+      setStatusNote(e instanceof ApiError ? e.message : (e as Error).message);
+      setModal(null);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   const setStatus = async (status: CompanyStatus, then?: () => void) => {
     setStatusBusy(status);
@@ -1048,6 +1065,9 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
               <button className={`${btnGhost} w-full`} onClick={() => setModal('outreach')}>
                 Generate founder outreach
               </button>
+              <button className={`${btnGhost} w-full text-alerta`} onClick={() => setModal('delete')}>
+                Delete company…
+              </button>
             </div>
             {statusNote && <p className="mt-2 text-xs text-alerta">{statusNote}</p>}
           </div>
@@ -1071,6 +1091,33 @@ export function CompanyDetail({ c, duplicates = [], onDuplicatesChange }: {
         <div className="min-w-0 flex-1">
           {modal === 'hubspot' && <HubSpotModal c={c} onClose={() => setModal(null)} />}
           {modal === 'outreach' && <OutreachPanel c={c} onClose={() => setModal(null)} />}
+          {modal === 'delete' && (
+            <Modal eyebrow="Permanent delete" title={`Delete ${c.name}?`} onClose={() => setModal(null)}>
+              <p className="text-sm leading-relaxed text-ink">
+                This permanently deletes <strong>{c.name}</strong> and everything recorded on it (founders, evidence,
+                scores, review history). It can&rsquo;t be undone from here.
+              </p>
+              <p className="mt-2 text-[12px] leading-relaxed text-slate-mid">
+                Automated sourcing will never add it back. You can still re-add it on purpose through email intake or a CSV.
+              </p>
+              <label className="mt-3 block font-mono text-[9px] uppercase tracking-wider text-slate-mid" htmlFor={`${c.id}-delete-reason`}>
+                Reason (optional, kept in the audit log)
+              </label>
+              <input
+                id={`${c.id}-delete-reason`}
+                className="mt-1 w-full border border-line bg-paper px-2 py-1.5 text-sm"
+                placeholder="e.g. Acquired — not an early-stage target"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <button className={btnGhost} onClick={() => setModal(null)}>Cancel</button>
+                <button className={`${btnPrimary} bg-alerta`} disabled={deleteBusy} onClick={() => void deleteThisCompany()}>
+                  {deleteBusy ? 'Deleting…' : 'Delete permanently'}
+                </button>
+              </div>
+            </Modal>
+          )}
 
           <MemoSection n="01" id={`${c.id}-overview`} title="Company overview">
             <div className="grid gap-x-6 sm:grid-cols-2">

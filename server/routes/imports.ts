@@ -11,6 +11,7 @@ import {
   clearImportedCompanies, csvImportedCount, importCompaniesCsv, importedCompanies,
 } from '../services/imports';
 import { resolveReviewer } from '../lib/reviewer';
+import { deleteCompany } from '../services/companyRemoval';
 import { refreshCompanyResearch } from '../services/companyRefresh';
 import { allCompanyEnrichment } from '../services/enrichmentView';
 import {
@@ -114,6 +115,21 @@ importsRouter.post('/companies/imported/clear', wrap(async (req, res) => {
  * silently dropped or silently forced through.
  */
 const BULK_STATUSES = ['Awaiting Review', 'Research Needed', 'Monitor', 'Passed'] as const;
+importsRouter.post('/companies/:id/remove', wrap(async (req, res) => {
+  const reviewer = resolveReviewer(req);
+  if (!reviewer) {
+    res.status(401).json({ error: 'auth_failed', message: 'Administrator sign-in required.' });
+    return;
+  }
+  const { reason } = z.object({ reason: z.string().trim().max(500).optional() }).parse(req.body ?? {});
+  const result = deleteCompany(req.params.id as string, reviewer.label, reason || null);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.status === 404 ? 'not_found' : 'conflict', message: result.error });
+    return;
+  }
+  res.json({ ok: true, removed: result.removed });
+}));
+
 importsRouter.post('/companies/bulk-status', wrap(async (req, res) => {
   const { ids, status, actor } = z.object({
     ids: z.array(z.string().min(1)).min(1).max(200),

@@ -535,6 +535,64 @@ export function clearCsvImportedCompanies(): number {
   return Number(getDb().prepare(`DELETE FROM companies WHERE ${CSV_IMPORTED_WHERE}`).run().changes);
 }
 
+// ── Removed companies ────────────────────────────────────────────
+// A reviewer deleting a company on purpose. The identity is recorded in
+// removed_companies (migration 25) so automated sourcing never re-adds it;
+// the row itself is deleted and founders/evidence/scores cascade, exactly
+// as clearCsvImportedCompanies does.
+
+export interface RemovedCompany {
+  companyId: string; name: string; domain: string | null; reason: string | null; removedBy: string; removedAt: string;
+}
+
+/** Delete one company and remember it as removed. Returns null when no such company exists. */
+export function removeCompany(id: string, removedBy: string, reason: string | null): RemovedCompany | null {
+  return inTransaction(() => {
+    const db = getDb();
+    const row = db.prepare('SELECT id, name, normalized_name, domain FROM companies WHERE id = ?').get(id) as
+      { id: string; name: string; normalized_name: string; domain: string | null } | undefined;
+    if (!row) return null;
+    const externalIds = db.prepare('SELECT source_id, external_id FROM company_external_ids WHERE company_id = ?').all(id) as
+      { source_id: string; external_id: string }[];
+    const removedAt = now();
+    db.prepare(`
+      INSERT OR REPLACE INTO removed_companies (company_id, name, normalized_name, domain, external_ids, reason, removed_by, removed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.id, row.name, row.normalized_name || normalizeCompanyKey(row.name), row.domain,
+      JSON.stringify(externalIds.map((e) => ({ sourceId: e.source_id, externalId: e.external_id }))),
+      reason, removedBy, removedAt,
+    );
+    db.prepare('DELETE FROM companies WHERE id = ?').run(id);
+    return { companyId: row.id, name: row.name, domain: row.domain, reason, removedBy, removedAt };
+  });
+}
+
+/**
+ * The removed company this identity matches, if any — by normalized name,
+ * website domain, or a source's external id (the same keys duplicate
+ * detection uses). Automated sourcing checks this before creating a company.
+ */
+export function findRemovedCompany(identity: {
+  name?: string | null; website?: string | null; sourceId?: string | null; externalId?: string | null;
+}): RemovedCompany | null {
+  const db = getDb();
+  const name = identity.name ? normalizeCompanyKey(identity.name) : '';
+  const domain = normalizeDomainKey(identity.website ?? null);
+  const rows = db.prepare(`
+    SELECT company_id, name, domain, external_ids, reason, removed_by, removed_at FROM removed_companies
+    WHERE (? <> '' AND normalized_name = ?) OR (? IS NOT NULL AND domain = ?) OR (? IS NOT NULL)
+  `).all(name, name, domain, domain, identity.externalId ?? null) as
+    { company_id: string; name: string; domain: string | null; external_ids: string; reason: string | null; removed_by: string; removed_at: string }[];
+  const hit = rows.find((r) => (name && normalizeCompanyKey(r.name) === name)
+    || (domain && r.domain === domain)
+    || (identity.externalId && (JSON.parse(r.external_ids) as { sourceId: string; externalId: string }[])
+      .some((e) => e.externalId === identity.externalId && (!identity.sourceId || e.sourceId === identity.sourceId))));
+  return hit
+    ? { companyId: hit.company_id, name: hit.name, domain: hit.domain, reason: hit.reason, removedBy: hit.removed_by, removedAt: hit.removed_at }
+    : null;
+}
+
 /** Exactly the rows clearCsvImportedCompanies would delete — shown to the person confirming it. */
 export function countCsvImportedCompanies(): number {
   return (getDb().prepare(`SELECT COUNT(*) AS n FROM companies WHERE ${CSV_IMPORTED_WHERE}`).get() as { n: number }).n;

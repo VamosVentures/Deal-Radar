@@ -408,6 +408,12 @@ const liveApi = {
     /** Deletes CSV-imported companies only if `expectedCount` still matches — see the route's 409. */
     clear: (expectedCount: number) =>
       call<{ ok: boolean; deleted: number }>('/api/companies/imported/clear', { method: 'POST', body: JSON.stringify({ expectedCount }) }),
+    /** Delete a company on purpose; it is also blocked from automated re-sourcing. */
+    removeCompany: (id: string, reason: string) =>
+      call<{ ok: true; removed: { companyId: string; name: string } }>(`/api/companies/${encodeURIComponent(id)}/remove`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      }),
     setStatus: (id: string, status: CompanyStatus, actor: string) =>
       call<{ ok: boolean; status: CompanyStatus }>(`/api/companies/${id}/status`, {
         method: 'POST',

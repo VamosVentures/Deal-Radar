@@ -10,7 +10,7 @@ import { importedCompanySchema, PLACEHOLDER_FOUNDED_YEAR, type ImportedCompany }
 import { runSource, type RawCandidate } from './sources';
 import { detectDuplicate, existingCandidates } from '../sourcing/dedupe';
 import { mergeIntoRun } from '../sourcing/enrich';
-import { appendEvidence, getCompany, saveCompany } from '../db/repos/companies';
+import { appendEvidence, findRemovedCompany, getCompany, saveCompany } from '../db/repos/companies';
 import {
   getConfig, listRuns, recordReviewDecision, saveRun, saveScore, setConfig, updateRunCounts,
 } from '../db/repos/operations';
@@ -247,6 +247,7 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
     let rejectedByValidation = 0;
     let enrichedInRun = 0;
     let mergedIntoPending = 0;
+    let skippedRemoved = 0;
     let cancelled = false;
     const accepted: DiscoveryCandidate[] = [];
     // Snapshot of every prior candidate, parsed once (held under the run
@@ -283,6 +284,11 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
         }
         let cand = parsed.data;
         if (!matchesQuery(cand, q)) continue;
+        // A reviewer deleted this company on purpose (removed_companies) — never re-surface it.
+        if (findRemovedCompany({ name: cand.companyName, website: cand.website, sourceId: cand.sourceId, externalId: cand.externalId })) {
+          skippedRemoved += 1;
+          continue;
+        }
         if (!passesEvidenceRecency(cand, q)) { filteredByPolicy += 1; continue; }
         cand = { ...cand, ...detectDuplicate(cand) };
         if (cand.duplicateStatus !== 'none') duplicatesIdentified += 1;
@@ -404,7 +410,7 @@ export async function runDiscovery(rawReq: unknown, initiatedBy: string, runType
     audit({
       provider: 'system', mode: liveCount > 0 ? 'live' : 'local', action: 'discovery-run',
       subject: `${q.sources.join(',')}`, outcome: run.status === 'Failed' ? 'error' : 'ok',
-      detail: `${q.preview ? 'PREVIEW (nothing persisted) — ' : ''}${discovered} discovered, ${enrichedInRun} enriched cross-source, ${duplicatesIdentified} duplicates identified (${duplicatesSkipped} skipped, ${mergedIntoPending} merged into an existing pending candidate), ${filteredByPolicy} filtered by recency/refresh-age policy, ${filteredByThesis} filtered by thesis eligibility, ${filteredByQuality} below the triage-priority floor, ${rejectedByValidation} rejected, ${apiCalls} API calls, status ${run.status}${budgetWarnings.length > 0 ? ` (${budgetWarnings.join('; ')})` : ''}`,
+      detail: `${q.preview ? 'PREVIEW (nothing persisted) — ' : ''}${discovered} discovered, ${enrichedInRun} enriched cross-source, ${duplicatesIdentified} duplicates identified (${duplicatesSkipped} skipped, ${mergedIntoPending} merged into an existing pending candidate), ${filteredByPolicy} filtered by recency/refresh-age policy, ${filteredByThesis} filtered by thesis eligibility, ${filteredByQuality} below the triage-priority floor, ${skippedRemoved > 0 ? `${skippedRemoved} skipped as previously removed by a reviewer, ` : ''}${rejectedByValidation} rejected, ${apiCalls} API calls, status ${run.status}${budgetWarnings.length > 0 ? ` (${budgetWarnings.join('; ')})` : ''}`,
     });
     // Preview callers need the candidates themselves to report on; they
     // are attached OUTSIDE the persisted run shape, because a run row is
@@ -446,7 +452,8 @@ export type ImportSkipCode =
   | 'possible-duplicate'
   | 'unsupported-entity-type'  // a fund, university, or government body
   | 'unclassifiable-sector'    // published text carries no sector signal
-  | 'validation-failed';       // failed the ImportedCompany schema
+  | 'validation-failed'        // failed the ImportedCompany schema
+  | 'removed-by-reviewer';     // deleted on purpose (removed_companies)
 
 export interface ImportSkip {
   id: string;
@@ -488,6 +495,9 @@ export function importCandidates(rawReq: unknown): ImportOutcome {
     if (!cand) { skip(id, 'not-found', 'Candidate not found.'); continue; }
     if (cand.status !== 'pending') {
       skip(id, 'terminal-status', `Already ${cand.status}.`, cand.companyName); continue;
+    }
+    if (findRemovedCompany({ name: cand.companyName, website: cand.website, sourceId: cand.sourceId, externalId: cand.externalId })) {
+      skip(id, 'removed-by-reviewer', 'A reviewer deleted this company on purpose — not re-imported.', cand.companyName); continue;
     }
 
     if (cand.duplicateStatus !== 'none') {

@@ -364,6 +364,7 @@ export const demoApi: Api = {
     },
     csvImportedCount: () => Promise.resolve({ count: 0 }),
     clear: () => disabled(),
+    removeCompany: () => disabled(),
     setStatus: () => disabled(),
     refresh: () => disabled(),
     refreshResearch: () => disabled<RefreshResearchResult>(),

@@ -5,7 +5,7 @@ import { checkEntityType } from '../sourcing/classify';
 import { matchCompany } from '../sourcing/identity';
 import { familyOf, tierOf } from '../../shared/opportunity';
 import { addDealEvidence, listDealEvidence, reclassifyCompany } from '../db/repos/opportunities';
-import { saveCompany, matchRecords, listCompanies, getCompany } from '../db/repos/companies';
+import { findRemovedCompany, saveCompany, matchRecords, listCompanies, getCompany } from '../db/repos/companies';
 import { saveScore } from '../db/repos/operations';
 import { importedCompanySchema, PLACEHOLDER_FOUNDED_YEAR } from './imports';
 import { resolveCompanyWebsite, type WebsiteResolution } from './fundingNews';
@@ -127,6 +127,11 @@ export async function runInvestorNews(opts: InvestorRunOptions = {}): Promise<In
       continue;
     }
 
+    // Deleted on purpose by a reviewer (removed_companies) — never re-create it.
+    if (findRemovedCompany({ name: event.companyName, website: website.url ?? null })) {
+      log(`skipped ${event.companyName} — previously removed by a reviewer`);
+      continue;
+    }
     const persisted = persistInvestorEvent(event, website, today);
     if (!persisted) {
       run.skipped.push({

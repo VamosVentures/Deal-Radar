@@ -1451,6 +1451,31 @@ export const MIGRATIONS: Migration[] = [
       UPDATE companies SET intake_source = 'local-csv' WHERE discovery_source IS NULL;
     `,
   },
+  {
+    version: 25,
+    name: 'removed-companies',
+    sql: `
+      -- Companies a reviewer deleted on purpose (e.g. acquired or late-stage
+      -- companies that are not Vamos targets), so automated sourcing never
+      -- re-adds them. Duplicate detection only sees ACTIVE companies, so a
+      -- plain DELETE would let the next run that finds "WePay" in funding
+      -- news create it again. Identity is kept the same three ways sourcing
+      -- matches companies: normalized name, website domain, source ids.
+      -- Not a foreign key: the company row is gone by design.
+      CREATE TABLE removed_companies (
+        company_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        domain TEXT,
+        external_ids TEXT NOT NULL DEFAULT '[]',
+        reason TEXT,
+        removed_by TEXT NOT NULL,
+        removed_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_removed_companies_name ON removed_companies (normalized_name);
+      CREATE INDEX idx_removed_companies_domain ON removed_companies (domain);
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */
