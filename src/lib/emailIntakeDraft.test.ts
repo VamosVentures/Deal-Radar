@@ -35,6 +35,17 @@ describe('email-intake review card draft → PATCH', () => {
     expect(founders.slice(1)).toEqual(EPSILAB.founders.slice(1));
   });
 
+  it('gives a co-founder with no background the same defaults as the first founder', () => {
+    const nuum = {
+      name: 'Nuum Robotics', vertical: 'frontier',
+      founders: [{ name: 'Isaac MacLean', role: 'Co-Founder' }, { name: 'Mark Seemann' }],
+    };
+    expect(patchFrom(draftFor(candidate(nuum)), nuum).founders).toEqual([
+      { name: 'Isaac MacLean', role: 'Co-Founder', background: 'Not on record.' },
+      { name: 'Mark Seemann', role: 'Founder', background: 'Not on record.' },
+    ]);
+  });
+
   it('sends no founders when none were found or entered', () => {
     const none = { name: 'Quiet Co', vertical: 'fow' };
     expect(patchFrom(draftFor(candidate(none)), none).founders).toBeUndefined();

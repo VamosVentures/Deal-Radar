@@ -4,8 +4,7 @@ import { resetDbForTests } from '../db/client';
 import { companyMetaView, getCompany, getProvenance, listCompanies, saveCompany } from '../db/repos/companies';
 import { officialSubcategories } from '../../src/data/taxonomy';
 import { latestScore } from '../db/repos/operations';
-import { clearImportedCompanies, importCompaniesCsv } from '../services/imports';
-import {
+import { clearImportedCompanies, importCompaniesCsv, importedCompanySchema } from '../services/imports';import {
   approvalBlockers, approveEmailIntakeCandidate, discardEmailIntakeCandidate, listEmailIntakeCandidates,
   parseExtractionReply, submitEmailIntakeBatch, updateEmailIntakeCandidate,
 } from '../services/emailIntake';
@@ -131,6 +130,36 @@ describe('email intake', () => {
   });
 
   describe('approveEmailIntakeCandidate', () => {
+    it('approves a card whose co-founder has a name and role but no background (2026-10-30 Nuum Robotics)', () => {
+      // Claude found a second co-founder with no background. The review
+      // card's save used to send it unchanged, the PATCH schema rejected it,
+      // the forwarder never saved, and approve failed with a misleading
+      // "evidence" blocker.
+      const reply = JSON.stringify({ candidates: [{
+        name: 'Nuum Robotics', vertical: 'frontier', quote: 'Snake-like robots for maintenance inside machinery.',
+        founders: [{ name: 'Isaac MacLean', role: 'Co-Founder' }, { name: 'Mark Seemann', role: 'Co-Founder' }],
+      }] });
+      const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });
+      const { id, extracted } = candidates[0];
+      const evidence = [{ ...(extracted.evidence as Record<string, unknown>[])[0], url: 'Forwarded by Valeria Martinez; 10/30/2026' }];
+      const patchSchema = importedCompanySchema.partial(); // what the PATCH route parses
+
+      // The founders exactly as Claude returned them fail the PATCH schema…
+      expect(patchSchema.safeParse({ founders: extracted.founders, evidence }).success).toBe(false);
+      // …so the card's save (src/lib/emailIntakeDraft.ts patchFrom) defaults
+      // every founder's role/background; that shape must pass and approve.
+      const founders = [
+        { name: 'Isaac MacLean', role: 'Co-Founder', background: 'Not on record.' },
+        { name: 'Mark Seemann', role: 'Co-Founder', background: 'Not on record.' },
+      ];
+      expect(updateEmailIntakeCandidate(id, patchSchema.parse({ founders, evidence })).ok).toBe(true);
+
+      const result = approveEmailIntakeCandidate(id, 'test-reviewer');
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(getCompany(result.companyId)!.founders.map((f) => f.name)).toEqual(['Isaac MacLean', 'Mark Seemann']);
+    });
+
     it('refuses to promote a candidate without a vertical or forwarder (422, with exactly those fields)', () => {
       const reply = JSON.stringify({ candidates: [{ name: 'Bare Co' }] });
       const { candidates } = submitEmailIntakeBatch({ reply, submittedBy: 'test-reviewer' });

@@ -82,7 +82,10 @@ export function EmailIntakeQueue() {
     setBusy(c.id);
     setError(null);
     try {
-      await save(c);
+      // Save directly (not via save(), which swallows errors): a failed save
+      // must stop here with its own error, not run the approve against the
+      // stale record and report a misleading "who forwarded it" blocker.
+      await api.emailIntake.updateCandidate(c.id, patchFrom(drafts[c.id] ?? draftFor(c), c.extracted));
       await api.emailIntake.approveCandidate(c.id);
       setNotice(`Approved ${drafts[c.id]?.name || String(c.extracted.name ?? 'the company')}. Founder, stage and sector are being researched in the background — usually done within a minute or two; reload All Deals to see them.`);
       load();
