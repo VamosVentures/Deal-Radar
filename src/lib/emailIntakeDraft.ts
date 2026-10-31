@@ -58,6 +58,18 @@ export function draftFor(c: EmailIntakeCandidate): Draft {
   };
 }
 
+/** Fill the role/background a founder must have to pass the PATCH schema (server/services/imports.ts). */
+function withFounderDefaults(f: Record<string, unknown>): Record<string, unknown> {
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const background = text(f.background);
+  return {
+    ...f,
+    name: text(f.name),
+    role: text(f.role) || 'Founder',
+    background: background.length >= 3 ? background : 'Not on record.',
+  };
+}
+
 /** Build the PATCH body from a draft — only nested groups that have SOMETHING filled in are sent. */
 export function patchFrom(draft: Draft, existing: Record<string, unknown>): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
@@ -79,9 +91,12 @@ export function patchFrom(draft: Draft, existing: Record<string, unknown>): Reco
     // The card edits the first founder only; every other founder Claude
     // found must ride along unchanged. Sending just the edited one used to
     // replace the whole list, so approving silently dropped co-founders.
+    // Co-founders get the same defaults as the first founder: Claude often
+    // finds only a name and role, and the PATCH schema rejects a founder
+    // without a background — which used to fail the save and block approval.
     patch.founders = [
-      { name: draft.founderName.trim(), role: draft.founderRole.trim() || 'Founder', background: draft.founderBackground.trim() || 'Not on record.' },
-      ...otherFounders(existing),
+      withFounderDefaults({ name: draft.founderName, role: draft.founderRole, background: draft.founderBackground }),
+      ...otherFounders(existing).map(withFounderDefaults),
     ];
   }
   set('raising', draft.raising);
