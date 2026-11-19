@@ -97,7 +97,7 @@ export function IdentityChips({ founders }: { founders: { identity?: VerifiedIde
         <span
           key={chip.label}
           className="cursor-help rounded-[2px] border border-verde/30 bg-verde-soft px-1.5 py-0.5 font-mono text-[11px] font-semibold text-verde"
-          title={`Publicly identified founder signal — ${chip.source}`}
+          title={`Founder identity on record — ${chip.source}`}
         >
           {chip.label}
         </span>

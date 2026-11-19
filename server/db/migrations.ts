@@ -1476,6 +1476,43 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_removed_companies_domain ON removed_companies (domain);
     `,
   },
+  {
+    version: 26,
+    name: 'intake-batch-file-source',
+    sql: `
+      -- "Import with Claude": an uploaded CSV/Excel file becomes a batch in
+      -- the same review queue as a forwarded email. A file is read in
+      -- chunks in the background, so its batch also tracks progress.
+      --   source       'email' (every batch before this) or 'file'
+      --   file_name    the uploaded file's name, shown on the queue
+      --   status       'done' | 'running' | 'failed' | 'interrupted'
+      --   chunks_*     progress through the file's chunks of rows
+      --   error        why a chunk or the whole run failed, if it did
+      --   summary_json counts shown to the reviewer (rows, dropped columns…)
+      ALTER TABLE email_intake_batches ADD COLUMN source TEXT NOT NULL DEFAULT 'email';
+      ALTER TABLE email_intake_batches ADD COLUMN file_name TEXT;
+      ALTER TABLE email_intake_batches ADD COLUMN status TEXT NOT NULL DEFAULT 'done';
+      ALTER TABLE email_intake_batches ADD COLUMN chunks_total INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE email_intake_batches ADD COLUMN chunks_done INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE email_intake_batches ADD COLUMN error TEXT;
+      ALTER TABLE email_intake_batches ADD COLUMN finished_at TEXT;
+      ALTER TABLE email_intake_batches ADD COLUMN summary_json TEXT;
+    `,
+  },
+  {
+    version: 27,
+    name: 'founder-identity',
+    sql: `
+      -- A founder's identity indicators (src/types.ts VerifiedIdentity:
+      -- Latino-led, female-led, other underrepresented, immigrant
+      -- background, previous company — each with a mandatory basis and
+      -- named source), as JSON. Until now the type existed and the scorer
+      -- and HubSpot mapping read it, but nothing could persist it, so
+      -- every real company's "Mission alignment" was unassessable. First
+      -- writer: "Import with Claude", for identity a file states explicitly.
+      ALTER TABLE founders ADD COLUMN identity_json TEXT;
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */

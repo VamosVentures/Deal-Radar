@@ -26,7 +26,7 @@
  */
 import { VERTICALS } from '../data/taxonomy';
 
-const VERTICAL_DEFINITIONS = VERTICALS
+export const VERTICAL_DEFINITIONS = VERTICALS
   .map((v) => `- ${v.id} (${v.name}): ${v.description} Subcategories: ${v.subcategories.map((s) => s.name).join('; ')}.`)
   .join('\n');
 

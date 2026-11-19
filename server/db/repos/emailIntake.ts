@@ -1,15 +1,19 @@
 import { getDb } from '../client';
 
 /**
- * Email-intake staging queue: a batch per paste-back submission, one
- * candidate row per company Claude reported inside it. See
- * server/services/emailIntake.ts for how a candidate gets here and how
- * it's promoted into a real company.
+ * Intake staging queue: a batch per submission — a forwarded email, or
+ * (since migration 26) an uploaded CSV/Excel file read by "Import with
+ * Claude" — and one candidate row per company Claude reported inside it.
+ * See server/services/emailIntake.ts for how a candidate gets here and
+ * how it's promoted into a real company, and server/services/fileImport.ts
+ * for file batches.
  */
 
 const now = () => new Date().toISOString();
 
 export type EmailIntakeCandidateStatus = 'pending' | 'promoted' | 'discarded';
+export type IntakeBatchSource = 'email' | 'file';
+export type IntakeBatchStatus = 'done' | 'running' | 'failed' | 'interrupted';
 
 export interface EmailIntakeCandidate {
   id: number;
@@ -22,6 +26,24 @@ export interface EmailIntakeCandidate {
   decidedAt: string | null;
   decisionNote: string | null;
   createdAt: string;
+  /** Where the candidate's batch came from: a forwarded email or an uploaded CSV/Excel file. */
+  source: IntakeBatchSource;
+  /** The uploaded file's name, for a 'file' batch. */
+  fileName: string | null;
+}
+
+export interface IntakeBatch {
+  id: string;
+  submittedBy: string;
+  submittedAt: string;
+  source: IntakeBatchSource;
+  fileName: string | null;
+  status: IntakeBatchStatus;
+  chunksTotal: number;
+  chunksDone: number;
+  error: string | null;
+  finishedAt: string | null;
+  summary: Record<string, unknown> | null;
 }
 
 function rowToCandidate(r: Record<string, unknown>): EmailIntakeCandidate {
@@ -35,12 +57,87 @@ function rowToCandidate(r: Record<string, unknown>): EmailIntakeCandidate {
     decidedAt: (r.decided_at as string | null) ?? null,
     decisionNote: (r.decision_note as string | null) ?? null,
     createdAt: r.created_at as string,
+    source: (r.batch_source as IntakeBatchSource | null) ?? 'email',
+    fileName: (r.batch_file_name as string | null) ?? null,
   };
 }
 
-export function createBatch(id: string, submittedBy: string): void {
-  getDb().prepare('INSERT INTO email_intake_batches (id, submitted_by, submitted_at) VALUES (?, ?, ?)')
-    .run(id, submittedBy, now());
+function rowToBatch(r: Record<string, unknown>): IntakeBatch {
+  return {
+    id: r.id as string,
+    submittedBy: r.submitted_by as string,
+    submittedAt: r.submitted_at as string,
+    source: (r.source as IntakeBatchSource) ?? 'email',
+    fileName: (r.file_name as string | null) ?? null,
+    status: (r.status as IntakeBatchStatus) ?? 'done',
+    chunksTotal: Number(r.chunks_total ?? 0),
+    chunksDone: Number(r.chunks_done ?? 0),
+    error: (r.error as string | null) ?? null,
+    finishedAt: (r.finished_at as string | null) ?? null,
+    summary: r.summary_json ? JSON.parse(r.summary_json as string) as Record<string, unknown> : null,
+  };
+}
+
+const CANDIDATE_SELECT = `
+  SELECT c.*, b.source AS batch_source, b.file_name AS batch_file_name
+  FROM email_intake_candidates c
+  LEFT JOIN email_intake_batches b ON b.id = c.batch_id
+`;
+
+export function createBatch(
+  id: string,
+  submittedBy: string,
+  opts: {
+    source?: IntakeBatchSource;
+    fileName?: string | null;
+    status?: IntakeBatchStatus;
+    chunksTotal?: number;
+    summary?: Record<string, unknown>;
+  } = {},
+): void {
+  getDb().prepare(`
+    INSERT INTO email_intake_batches (id, submitted_by, submitted_at, source, file_name, status, chunks_total, summary_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, submittedBy, now(), opts.source ?? 'email', opts.fileName ?? null, opts.status ?? 'done',
+    opts.chunksTotal ?? 0, opts.summary ? JSON.stringify(opts.summary) : null,
+  );
+}
+
+export function getBatch(id: string): IntakeBatch | null {
+  const row = getDb().prepare('SELECT * FROM email_intake_batches WHERE id = ?').get(id) as
+    Record<string, unknown> | undefined;
+  return row ? rowToBatch(row) : null;
+}
+
+/** Append a line to a batch's error log (newest last) — a reviewer needs to know which rows were not read. */
+function appendError(id: string, error: string): void {
+  getDb().prepare(`
+    UPDATE email_intake_batches
+    SET error = CASE WHEN error IS NULL THEN ? ELSE error || char(10) || ? END
+    WHERE id = ?
+  `).run(error, error, id);
+}
+
+/** Record one more chunk of a file batch as processed — successfully, or with the error that stopped it. */
+export function recordBatchChunkDone(id: string, error?: string | null): void {
+  getDb().prepare('UPDATE email_intake_batches SET chunks_done = chunks_done + 1 WHERE id = ?').run(id);
+  if (error) appendError(id, error);
+}
+
+export function finishBatch(id: string, status: Exclude<IntakeBatchStatus, 'running'>, error?: string | null): void {
+  getDb().prepare('UPDATE email_intake_batches SET status = ?, finished_at = ? WHERE id = ?').run(status, now(), id);
+  if (error) appendError(id, error);
+}
+
+/** File batches still marked running. */
+export function listRunningBatchIds(): string[] {
+  return (getDb().prepare("SELECT id FROM email_intake_batches WHERE status = 'running'").all() as { id: string }[])
+    .map((r) => r.id);
+}
+
+export function countCandidatesInBatch(batchId: string): number {
+  return Number((getDb().prepare('SELECT COUNT(*) AS n FROM email_intake_candidates WHERE batch_id = ?').get(batchId) as { n: number }).n);
 }
 
 export function insertCandidate(batchId: string, extracted: Record<string, unknown>): EmailIntakeCandidate {
@@ -53,7 +150,7 @@ export function insertCandidate(batchId: string, extracted: Record<string, unkno
 }
 
 export function getCandidate(id: number): EmailIntakeCandidate | null {
-  const row = getDb().prepare('SELECT * FROM email_intake_candidates WHERE id = ?').get(id) as
+  const row = getDb().prepare(`${CANDIDATE_SELECT} WHERE c.id = ?`).get(id) as
     Record<string, unknown> | undefined;
   return row ? rowToCandidate(row) : null;
 }
@@ -61,8 +158,8 @@ export function getCandidate(id: number): EmailIntakeCandidate | null {
 export function listCandidates(status?: EmailIntakeCandidateStatus): EmailIntakeCandidate[] {
   const db = getDb();
   const rows = (status
-    ? db.prepare('SELECT * FROM email_intake_candidates WHERE status = ? ORDER BY id DESC').all(status)
-    : db.prepare('SELECT * FROM email_intake_candidates ORDER BY id DESC').all()) as Record<string, unknown>[];
+    ? db.prepare(`${CANDIDATE_SELECT} WHERE c.status = ? ORDER BY c.id DESC`).all(status)
+    : db.prepare(`${CANDIDATE_SELECT} ORDER BY c.id DESC`).all()) as Record<string, unknown>[];
   return rows.map(rowToCandidate);
 }
 

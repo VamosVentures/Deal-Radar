@@ -239,7 +239,7 @@ function missionAlignment(c: Company): ScoreComponent {
   const rationale =
     verified.length === 0
       ? 'No verified self-identification on record. Excluded from the score rather than counted as zero — and never inferred from names, photos, or other proxies. Ask during outreach if the founder is open to sharing.'
-      : `Publicly identified founder signal (${verified
+      : `Founder identity on record (${verified
           .map((f) => `${f.name}: ${f.identity!.basis.toLowerCase()}, ${f.identity!.source}`)
           .join('; ')}). Indicators: ${parts.join(', ') || 'recorded, none matching focus'}.`;
   // Absent self-identification is NOT a zero — it is unmeasured, and the

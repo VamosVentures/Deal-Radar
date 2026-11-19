@@ -35,6 +35,10 @@ import { overviewRouter } from './routes/overview';
  */
 export function createApp() {
   const app = express();
+  // An uploaded spreadsheet's rows ("Import with Claude") can exceed the
+  // general 1 MB body limit; only those routes get a larger one. The
+  // service still refuses files over MAX_FILE_ROWS.
+  app.use('/api/companies/import-file', express.json({ limit: '10mb' }));
   app.use(express.json({ limit: '1mb' }));
   // credentials: false is safe as long as the frontend reaches the API
   // same-origin (the Vite dev proxy, or a single origin in production).
@@ -92,6 +96,11 @@ export function createApp() {
   app.use(
     '/api/companies/import-email/extract',
     rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: true, legacyHeaders: false }),
+  );
+  // Starting a file import fans out into one paid call per chunk of rows.
+  app.use(
+    '/api/companies/import-file/start',
+    rateLimit({ windowMs: 60_000, limit: 5, standardHeaders: true, legacyHeaders: false }),
   );
   // Live research refresh makes several real outbound requests per
   // call — cheaper than outreach generation, but still not something

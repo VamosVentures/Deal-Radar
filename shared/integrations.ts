@@ -44,13 +44,34 @@ export type SourceEvidence = z.infer<typeof sourceEvidenceSchema>;
  * status. Anything less is rejected server-side before any CRM write.
  * Nothing is ever inferred.
  */
+export const IDENTITY_BASES = ['Self-identified', 'Verified public statement', 'Recorded in uploaded file'] as const;
+
 export const verifiedDemographicSchema = z.object({
   indicator: z.string().min(2), // e.g. "Latino-led", "Female-led"
-  basis: z.enum(['Self-identified', 'Verified public statement']),
+  basis: z.enum(IDENTITY_BASES),
   sourceName: z.string().min(8, 'Demographic claims require a named source'),
   sourceRef: z.string().min(4, 'Demographic claims require a source URL or identifier'),
-  verificationStatus: z.enum(['Verified', 'Self-reported']),
+  verificationStatus: z.enum(['Verified', 'Self-reported', 'Recorded by Vamos']),
 });
+
+/**
+ * A founder's identity indicators as stored (src/types.ts VerifiedIdentity):
+ * a basis and a named source are mandatory, and at least one indicator
+ * must actually be stated — an identity object asserting nothing is noise.
+ */
+export const verifiedIdentitySchema = z.object({
+  latinoLed: z.boolean().optional(),
+  femaleLed: z.boolean().optional(),
+  otherUnderrepresented: z.string().min(2).optional(),
+  immigrantBackground: z.enum(['Immigrant', 'First-generation immigrant']).optional(),
+  previousCompanyName: z.string().min(1).optional(),
+  basis: z.enum(IDENTITY_BASES),
+  source: z.string().min(8, 'Identity requires a named source'),
+}).refine(
+  (i) => i.latinoLed !== undefined || i.femaleLed !== undefined || !!i.otherUnderrepresented
+    || !!i.immigrantBackground || !!i.previousCompanyName,
+  { message: 'An identity record must state at least one indicator' },
+);
 export type VerifiedDemographic = z.infer<typeof verifiedDemographicSchema>;
 
 // ── HubSpot record payloads ──────────────────────────────────────

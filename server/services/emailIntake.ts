@@ -112,27 +112,98 @@ function resolveSubcategory(raw: Record<string, unknown>, vertical: unknown): st
   return officialSubcategory(vertical, text ? matchSubvertical(vertical, text) : null) ?? undefined;
 }
 
-/** Wrap one raw candidate object (as Claude reported it) into the shape the review queue and approve path expect. */
-function toQueuedCandidate(raw: Record<string, unknown>): Record<string, unknown> {
-  const { quote, ...rest } = raw;
-  const vertical = resolveProposedVertical(raw);
+/**
+ * Where a candidate came from, when the app already knows it. An email
+ * leaves "who forwarded this" for the reviewer; an uploaded file states
+ * its own provenance (file name, row, who uploaded it, when), so the
+ * reviewer never has to type it on every row.
+ */
+export interface KnownProvenance {
+  fileName: string;
+  submittedBy: string;
+}
+
+function rowsLabel(raw: Record<string, unknown>): string {
+  const rows = Array.isArray(raw.sourceRows)
+    ? raw.sourceRows.map(Number).filter((n) => Number.isInteger(n) && n > 0)
+    : [];
+  if (rows.length === 0) return '';
+  return rows.length === 1 ? `row ${rows[0]}` : `rows ${rows.join(', ')}`;
+}
+
+/**
+ * Founder identity a file states explicitly (Claude reports it with the
+ * column/value it came from — see FILE_IMPORT_PROMPT), recorded with
+ * basis 'Recorded in uploaded file' and a source naming the file, row,
+ * uploader and that column/value. Only positive, explicit indicators are
+ * kept; anything malformed is dropped rather than guessed at. Returns
+ * undefined when nothing usable was stated.
+ */
+function fileIdentity(raw: unknown, provenance: KnownProvenance, rows: string): Record<string, unknown> | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  if (r.latinoLed === true) out.latinoLed = true;
+  if (r.femaleLed === true) out.femaleLed = true;
+  if (typeof r.otherUnderrepresented === 'string' && r.otherUnderrepresented.trim().length >= 2) {
+    out.otherUnderrepresented = r.otherUnderrepresented.trim();
+  }
+  if (r.immigrantBackground === 'Immigrant' || r.immigrantBackground === 'First-generation immigrant') {
+    out.immigrantBackground = r.immigrantBackground;
+  }
+  if (Object.keys(out).length === 0) return undefined;
+  const statedIn = typeof r.statedIn === 'string' && r.statedIn.trim() ? r.statedIn.trim().slice(0, 200) : '';
   return {
-    ...rest,
-    ...vertical,
-    subcategory: resolveSubcategory(raw, vertical.vertical ?? vertical.suggestedVertical),
-    evidence: [{
+    ...out,
+    basis: 'Recorded in uploaded file',
+    source: `${rows ? `${rows[0].toUpperCase()}${rows.slice(1)} of ` : ''}"${provenance.fileName}", uploaded by ${provenance.submittedBy} on ${today()}`
+      + (statedIn ? ` (${statedIn})` : ''),
+  };
+}
+
+/** Wrap one raw candidate object (as Claude reported it) into the shape the review queue and approve path expect. */
+export function toQueuedCandidate(raw: Record<string, unknown>, provenance?: KnownProvenance): Record<string, unknown> {
+  // Identity is accepted only from an uploaded file, as fileIdentity shapes
+  // it — never from an email extraction or a pasted reply.
+  const { quote, identity: rawIdentity, ...rest } = raw;
+  const vertical = resolveProposedVertical(raw);
+  const quoted = typeof quote === 'string' && quote.trim() ? quote.trim() : '';
+  const rows = rowsLabel(raw);
+  const evidence = provenance
+    ? {
+      type: 'Inbound referral',
+      claim: quoted || `Listed in the uploaded file "${provenance.fileName}"${rows ? ` (${rows})` : ''}.`,
+      source: `Uploaded file "${provenance.fileName}"`,
+      url: `${rows ? `${rows[0].toUpperCase()}${rows.slice(1)} of ` : ''}"${provenance.fileName}", uploaded by ${provenance.submittedBy} on ${today()}`,
+      date: today(),
+    }
+    : {
       type: 'Inbound referral',
       // Empty when Claude quoted nothing; completeForApproval fills a
       // plain description at approve time instead.
-      claim: typeof quote === 'string' && quote.trim() ? quote.trim() : '',
+      claim: quoted,
       source: 'Forwarded email',
       // Left for the reviewer to fill in — only a human knows who
       // forwarded this and when. See the 'Inbound referral' evidence
       // type in src/types.ts: this field holds a description, not a link.
       url: '',
       date: today(),
-    }],
+    };
+  const identity = provenance ? fileIdentity(rawIdentity, provenance, rows) : undefined;
+  return {
+    ...rest,
+    ...vertical,
+    subcategory: resolveSubcategory(raw, vertical.vertical ?? vertical.suggestedVertical),
+    evidence: [evidence],
+    ...(identity ? { identity } : {}),
   };
+}
+
+/** A raw reported entry the queue can act on: an object with a non-blank name. */
+export function isNamedCandidate(raw: unknown): raw is Record<string, unknown> {
+  return typeof raw === 'object' && raw !== null
+    && typeof (raw as Record<string, unknown>).name === 'string'
+    && String((raw as Record<string, unknown>).name).trim().length > 0;
 }
 
 export interface EmailIntakeSubmitResult {
@@ -154,12 +225,11 @@ export function submitEmailIntakeBatch(args: { reply: string; submittedBy: strin
   const candidates: EmailIntakeCandidate[] = [];
   let skipped = 0;
   for (const raw of parsed.candidates) {
-    if (typeof raw !== 'object' || raw === null || typeof (raw as Record<string, unknown>).name !== 'string'
-      || !(raw as Record<string, unknown>).name || !String((raw as Record<string, unknown>).name).trim()) {
+    if (!isNamedCandidate(raw)) {
       skipped += 1;
       continue;
     }
-    candidates.push(insertCandidate(batchId, toQueuedCandidate(raw as Record<string, unknown>)));
+    candidates.push(insertCandidate(batchId, toQueuedCandidate(raw)));
   }
 
   audit({
@@ -364,6 +434,13 @@ function completeForApproval(id: string, extracted: Record<string, unknown>): {
       }));
     record.founders = named.length > 0 ? named : structuredClone(PLACEHOLDERS.founders);
   }
+  // A file's identity indicators describe the team; the data model keeps
+  // identity per founder, so it rides on the first founder (a placeholder
+  // too — setResolvedFounders carries it over when research names people).
+  if (record.identity && Array.isArray(record.founders) && record.founders.length > 0) {
+    (record.founders as Record<string, unknown>[])[0] = { ...(record.founders as Record<string, unknown>[])[0], identity: record.identity };
+  }
+  delete record.identity;
   const evidence = firstEvidence(record);
   if (evidence) {
     record.evidence = [{
@@ -382,6 +459,8 @@ export function updateEmailIntakeCandidate(
   const existing = getCandidate(id);
   if (!existing) return { ok: false, status: 404, error: `No email-intake candidate with id ${id}.` };
   const merged = { ...existing.extracted, ...patch };
+  // The reviewer chose not to record the file's identity indicators.
+  if (patch.identity === null) delete merged.identity;
   if (present(merged.subcategory) && !officialSubcategory(merged.vertical as string, merged.subcategory)) {
     if ('subcategory' in patch) {
       return { ok: false, status: 422, error: `"${String(patch.subcategory)}" is not an official subcategory of that vertical.` };
@@ -428,7 +507,9 @@ export function approveEmailIntakeCandidate(
   }
 
   const { possibleDuplicate, companyId } = commitImportedCompany(parsed.data, {
-    source: 'email-intake',
+    // A company from an uploaded file is a CSV import like any other:
+    // tagged 'local-csv' so Settings' "Clear imported" can undo it.
+    source: existing.source === 'file' ? 'local-csv' : 'email-intake',
     extraUnknownFields: unknownFields,
   });
   const decided = decideCandidate(id, 'promoted', actor, { promotedCompanyId: companyId });
@@ -442,6 +523,42 @@ export function approveEmailIntakeCandidate(
   });
   queueAutoResearch([companyId], actor);
   return { ok: true, companyId, possibleDuplicate };
+}
+
+export interface ApproveReadyResult {
+  approved: number;
+  possibleDuplicates: number;
+  /** Pending candidates left in the queue: still missing a required field, or refused on approve. */
+  notApproved: { id: number; name: string; reason: string }[];
+}
+
+/**
+ * "Approve all ready": approve every pending candidate in one batch that
+ * has nothing blocking it (name, vertical, provenance, and an official
+ * subcategory if one is set). Each goes through exactly the same
+ * approveEmailIntakeCandidate path as a single Approve click — same
+ * checks, same dedupe, same audit entry, same background research — and
+ * anything that isn't ready stays in the queue for the reviewer.
+ */
+export function approveReadyInBatch(batchId: string, actor: string): ApproveReadyResult {
+  const result: ApproveReadyResult = { approved: 0, possibleDuplicates: 0, notApproved: [] };
+  const pending = listCandidates('pending').filter((c) => c.batchId === batchId).reverse(); // file order
+  for (const c of pending) {
+    const name = String(c.extracted.name ?? '(unnamed)');
+    const blockers = approvalBlockers(c.extracted);
+    if (blockers.length > 0) {
+      result.notApproved.push({ id: c.id, name, reason: `missing ${blockers.join(', ')}` });
+      continue;
+    }
+    const r = approveEmailIntakeCandidate(c.id, actor);
+    if (r.ok) {
+      result.approved += 1;
+      if (r.possibleDuplicate) result.possibleDuplicates += 1;
+    } else {
+      result.notApproved.push({ id: c.id, name, reason: r.missingFields?.join('; ') || r.error });
+    }
+  }
+  return result;
 }
 
 export function discardEmailIntakeCandidate(

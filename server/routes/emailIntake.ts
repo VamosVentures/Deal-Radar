@@ -4,14 +4,67 @@ import { wrap } from './helpers';
 import { resolveReviewer } from '../lib/reviewer';
 import { importedCompanySchema } from '../services/imports';
 import {
-  approveEmailIntakeCandidate, candidateMissingFields, discardEmailIntakeCandidate, extractEmailWithAi,
+  approveEmailIntakeCandidate, approveReadyInBatch, candidateMissingFields, discardEmailIntakeCandidate, extractEmailWithAi,
   listEmailIntakeCandidates, MAX_EMAIL_CHARS, submitEmailIntakeBatch, updateEmailIntakeCandidate,
 } from '../services/emailIntake';
+import { fileImportStatus, previewFileImport, startFileImport } from '../services/fileImport';
 
 export const emailIntakeRouter = Router();
 
+/**
+ * An uploaded spreadsheet as the browser parsed it: raw rows of cells.
+ * Generous structural bounds only — the service does the real cleaning
+ * and enforces the row limit with a clear message.
+ */
+const fileBodySchema = z.object({
+  fileName: z.string().min(1).max(500),
+  rows: z.array(
+    z.array(z.union([z.string().max(100_000), z.number(), z.boolean(), z.null()])).max(500),
+  ).min(1).max(20_000),
+});
+
+emailIntakeRouter.post('/companies/import-file/preview', wrap(async (req, res) => {
+  const reviewer = resolveReviewer(req);
+  if (!reviewer) {
+    res.status(401).json({ error: 'auth_failed', message: 'Administrator sign-in required.' });
+    return;
+  }
+  res.json(previewFileImport(fileBodySchema.parse(req.body)));
+}));
+
+emailIntakeRouter.post('/companies/import-file/start', wrap(async (req, res) => {
+  const reviewer = resolveReviewer(req);
+  if (!reviewer) {
+    res.status(401).json({ error: 'auth_failed', message: 'Administrator sign-in required.' });
+    return;
+  }
+  res.json(startFileImport({ ...fileBodySchema.parse(req.body), submittedBy: reviewer.label }));
+}));
+
+emailIntakeRouter.get('/companies/import-file/:batchId', wrap(async (req, res) => {
+  const status = fileImportStatus(String(req.params.batchId));
+  if (!status) {
+    res.status(404).json({ error: 'not_found', message: 'No file import with that id.' });
+    return;
+  }
+  res.json(status);
+}));
+
+emailIntakeRouter.post('/companies/import-email/batches/:batchId/approve-ready', wrap(async (req, res) => {
+  const reviewer = resolveReviewer(req);
+  if (!reviewer) {
+    res.status(401).json({ error: 'auth_failed', message: 'Administrator sign-in required.' });
+    return;
+  }
+  res.json(approveReadyInBatch(String(req.params.batchId), reviewer.label));
+}));
+
 /** Every field optional for a PATCH — a reviewer edits one field at a time, not the whole candidate. */
-const candidatePatchSchema = importedCompanySchema.partial();
+const candidatePatchSchema = importedCompanySchema.partial().extend({
+  // A reviewer may only REMOVE identity a file stated (null) — never type
+  // one in here; identity always carries the file's own provenance.
+  identity: z.null().optional(),
+});
 
 emailIntakeRouter.post('/companies/import-email/batches', wrap(async (req, res) => {
   const reviewer = resolveReviewer(req);

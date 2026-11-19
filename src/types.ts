@@ -48,9 +48,12 @@ export type PolicyFlag = 'defi-adjacent' | 'hardware-heavy' | 'outside-thesis';
 
 /**
  * Demographic indicators are ONLY recorded when self-identified by the
- * founder or verified via a public statement / accelerator profile the
- * founder controls. They are never inferred from names, photos, or any
- * other proxy. `basis` + `source` are required for every indicator.
+ * founder, verified via a public statement / accelerator profile the
+ * founder controls, or stated explicitly in a deal-flow file a Vamos
+ * reviewer uploaded and approved ('Recorded in uploaded file' — Andrew's
+ * call, 2026-11-18; its source names the file and row). They are never
+ * inferred from names, photos, or any other proxy. `basis` + `source`
+ * are required for every indicator.
  */
 export interface VerifiedIdentity {
   latinoLed?: boolean;
@@ -60,7 +63,7 @@ export interface VerifiedIdentity {
   immigrantBackground?: 'Immigrant' | 'First-generation immigrant';
   /** A founder's own prior company, when their bio/statement names it explicitly — never inferred. */
   previousCompanyName?: string;
-  basis: 'Self-identified' | 'Verified public statement';
+  basis: 'Self-identified' | 'Verified public statement' | 'Recorded in uploaded file';
   source: string; // where the verification lives
 }
 
