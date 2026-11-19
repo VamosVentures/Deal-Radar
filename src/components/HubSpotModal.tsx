@@ -403,10 +403,7 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
             above is the one that DOES go to HubSpot.
           */}
           <section className="rounded-[2px] border-2 border-alerta bg-paper p-3" data-testid="hubspot-modal-internal-notes">
-            <h3 className="font-mono text-[11px] font-bold uppercase tracking-widest text-marigold">Internal notes <span className="text-alerta">* Required</span></h3>
-            <p className="mb-2 mt-0.5 text-[11px] text-slate-mid">
-              For the Vamos team only — saved in Deal Radar and <strong>never sent to HubSpot</strong>.
-            </p>
+            <h3 className="mb-1 font-mono text-[11px] font-bold uppercase tracking-widest text-marigold">Internal notes <span className="text-alerta">* Required</span></h3>
             <CompanyNotes companyId={c.id} />
           </section>
 

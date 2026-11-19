@@ -252,10 +252,9 @@ export function CompanyNotes({ companyId }: { companyId: string }) {
 
   return (
     <div data-testid="company-notes">
-      <p className="mb-3 text-[11px] leading-relaxed text-slate-mid">
-        The team's own assessment, kept apart from sourced evidence and never included in the CSV export.
-        Notes are plain text and are never deleted — archiving is reversible, so the reasoning behind a
-        past decision stays readable.
+      {/* Wording set by Andrew, 2026-11-19: notes feed the "learn from reviews" work. */}
+      <p className="mb-3 text-[11px] leading-relaxed text-slate-mid" data-testid="company-notes-purpose">
+        For the VamosVentures team only - used by the Deal Radar for fine tuning.
       </p>
 
       {/* ── Compose / edit ── */}
