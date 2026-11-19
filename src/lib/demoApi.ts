@@ -350,6 +350,7 @@ export const demoApi: Api = {
     get: () => Promise.resolve({ active: false, label: 'Configured but inactive — sourcing runs are disabled in this demo build.', jobs: [] }),
     save: () => disabled(),
     remove: () => disabled(),
+    setTiming: () => disabled(),
     runNow: () => disabled(),
   },
 

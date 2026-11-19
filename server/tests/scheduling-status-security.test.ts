@@ -262,9 +262,13 @@ describe('scheduled jobs that select more sources than one run allows', () => {
     expect(batches.every((b) => b.maxResults === 20 && b.vertical === 'fintech' && b.maxApiCalls === 28)).toBe(true);
   });
 
+  // A new schedule first runs at its first slot after being saved, so the
+  // tick is evaluated a week ahead (at least one slot later, whatever today is).
+  const WEEK_LATER = () => Date.now() + 8 * 24 * 3600_000;
+
   it('a scheduler tick searches every selected source, one recorded run per batch', async () => {
     const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: WIDE_QUERY as never, enabled: true });
-    expect(await tickScheduler()).toBe(1);
+    expect(await tickScheduler(WEEK_LATER())).toBe(1);
     const runs = discoveryRuns();
     expect(runs).toHaveLength(3);
     expect(runs.flatMap((r) => r.query.sources).sort()).toEqual([...ALL_SEVEN].sort());
@@ -278,7 +282,7 @@ describe('scheduled jobs that select more sources than one run allows', () => {
     const job = saveJob({ cadence: 'weekly', jobType: 'incremental-sourcing', query: WIDE_QUERY as never, enabled: true });
     // Another run holding the lock makes every batch (and its retry) fail.
     setConfig('discovery-run-lock', { startedAt: new Date().toISOString(), initiatedBy: 'someone else' });
-    expect(await tickScheduler()).toBe(0);
+    expect(await tickScheduler(WEEK_LATER())).toBe(0);
     expect(discoveryRuns()).toHaveLength(0);
     let saved = listJobs().find((j) => j.id === job.id)!;
     expect(saved.lastRunAt).toBeNull();
@@ -286,7 +290,7 @@ describe('scheduled jobs that select more sources than one run allows', () => {
 
     // Once the lock clears, the very next tick runs it and clears the error.
     setConfig('discovery-run-lock', null);
-    expect(await tickScheduler()).toBe(1);
+    expect(await tickScheduler(WEEK_LATER())).toBe(1);
     saved = listJobs().find((j) => j.id === job.id)!;
     expect(saved.lastRunAt).toBeTruthy();
     expect(saved.lastError).toBeNull();
