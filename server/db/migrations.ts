@@ -1513,6 +1513,29 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE founders ADD COLUMN identity_json TEXT;
     `,
   },
+  {
+    version: 28,
+    name: 'company-stage-decisions',
+    sql: `
+      -- The team's call on each company, as recorded when it is added to
+      -- HubSpot: the HubSpot stage chosen and, for a Passed/Revisit stage,
+      -- the pass/revisit reason (HubSpot's own dropdown) and free-text
+      -- context. Every company goes to HubSpot, fit or not (Andrew,
+      -- 2026-11-19), so this — not "synced to HubSpot" — is the fit signal
+      -- the "learn from reviews" work reads. Append-only: a company synced
+      -- twice keeps both decisions, newest last.
+      CREATE TABLE company_stage_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        hubspot_stage TEXT NOT NULL,
+        pass_reason TEXT,
+        pass_notes TEXT,
+        decided_by TEXT,
+        decided_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_company_stage_decisions_company ON company_stage_decisions (company_id, decided_at);
+    `,
+  },
 ];
 
 /** The highest migration version this build of the app knows about — used by /health/ready. */
