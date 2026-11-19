@@ -18,7 +18,48 @@ export interface EmailIntakeCandidate {
   createdAt: string;
   /** Fields that block approval: any of name, vertical, evidence (who forwarded it). Everything else may stay blank. */
   missingFields: string[];
+  /** Where the candidate's batch came from: a forwarded email, or an uploaded CSV/Excel file. */
+  source: 'email' | 'file';
+  /** The uploaded file's name, for a 'file' batch. */
+  fileName: string | null;
 }
+
+/** What "Import with Claude" will do with a file, before any AI call is made. */
+export interface FileImportPreview {
+  fileName: string;
+  columns: string[];
+  rowCount: number;
+  /** Columns naming founder identity — kept; Claude records only what they explicitly state. */
+  identityColumns: string[];
+  skippedLeadingRows: number;
+  shortenedCells: number;
+  chunks: number;
+  estimatedCostUsd: number;
+  model: string;
+  aiConfigured: boolean;
+  sample: string[];
+}
+
+/** Progress of a file being read by Claude in the background. */
+export interface FileImportStatus {
+  batchId: string;
+  fileName: string | null;
+  status: 'done' | 'running' | 'failed' | 'interrupted';
+  chunksTotal: number;
+  chunksDone: number;
+  candidates: number;
+  error: string | null;
+  summary: Record<string, unknown> | null;
+}
+
+export interface ApproveReadyResult {
+  approved: number;
+  possibleDuplicates: number;
+  notApproved: { id: number; name: string; reason: string }[];
+}
+
+/** One spreadsheet's rows as the browser parsed them (strings, numbers, booleans, blanks). */
+export type SpreadsheetRows = (string | number | boolean | null)[][];
 
 /** One extractor finding awaiting an accept / edit / reject decision. */
 export interface PendingEvidenceItem {
@@ -513,6 +554,33 @@ const liveApi = {
         method: 'POST',
         body: JSON.stringify({ note: note ?? null }),
       }),
+    /** Approve every pending candidate in one batch that has nothing blocking it. */
+    approveReady: (batchId: string) =>
+      call<ApproveReadyResult>(`/api/companies/import-email/batches/${encodeURIComponent(batchId)}/approve-ready`, {
+        method: 'POST',
+        body: '{}',
+      }),
+  },
+
+  /**
+   * "Import with Claude" for a loosely formatted CSV/Excel file: preview
+   * (no AI call; gives the cost estimate), start (reads the rows in the
+   * background), then poll status. Companies land in the intake review
+   * queue.
+   */
+  fileImport: {
+    preview: (fileName: string, rows: SpreadsheetRows) =>
+      call<FileImportPreview>('/api/companies/import-file/preview', {
+        method: 'POST',
+        body: JSON.stringify({ fileName, rows }),
+      }),
+    start: (fileName: string, rows: SpreadsheetRows) =>
+      call<FileImportStatus>('/api/companies/import-file/start', {
+        method: 'POST',
+        body: JSON.stringify({ fileName, rows }),
+      }),
+    status: (batchId: string) =>
+      call<FileImportStatus>(`/api/companies/import-file/${encodeURIComponent(batchId)}`),
   },
 
   outreach: {

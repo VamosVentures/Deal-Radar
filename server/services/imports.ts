@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { store } from '../lib/store';
 import { audit } from '../lib/guard';
-import { portfolioCompanySchema } from '../../shared/integrations';
+import { portfolioCompanySchema, verifiedIdentitySchema } from '../../shared/integrations';
 import { VERTICAL_ID_VALUES } from '../../shared/discovery';
 import { EMPTY_CATEGORY, subverticalLabelsForSector } from '../enrichment/verticalClassifier';
 import {
@@ -15,10 +15,12 @@ import type { Company } from '../../src/types';
 
 /**
  * Local CSV import. Rows pass the SAME guardrails as bundled data:
- * every company needs at least one sourced evidence item, and
- * demographic/identity data is NOT importable via CSV at all —
- * identity indicators require a verified basis + source and must be
- * entered through the reviewed data layer, never a bulk file.
+ * every company needs at least one sourced evidence item, and the strict
+ * template refuses demographic/identity columns — identity indicators
+ * require a basis + named source, which a template row can't carry. A
+ * file whose identity columns should count goes through "Import with
+ * Claude" instead (server/services/fileImport.ts), where each company's
+ * identity is labeled with its file and row and confirmed on approve.
  */
 
 const VERTICALS = VERTICAL_ID_VALUES;
@@ -42,6 +44,13 @@ export const importedCompanySchema = z.object({
     name: z.string().min(2),
     role: z.string().min(1),
     background: z.string().min(3),
+    /**
+     * Identity indicators, only ever with a basis + named source (see
+     * verifiedIdentitySchema). The strict template CSV has no identity
+     * columns, so this is reachable only through a reviewed path — today,
+     * "Import with Claude" approvals ('Recorded in uploaded file').
+     */
+    identity: verifiedIdentitySchema.optional(),
   })).min(1),
   evidence: z.array(z.object({
     claim: z.string().min(3),
@@ -290,7 +299,7 @@ export function importCompaniesCsv(csvText: string): ImportReport {
   const badCols = header.filter((h) => forbidden.some((f) => h.toLowerCase().includes(f.toLowerCase())));
   if (badCols.length > 0) {
     throw Object.assign(
-      new Error(`CSV import refused: demographic/identity columns are not importable (${badCols.join(', ')}). Identity indicators require verified sources and are entered through the reviewed data layer only.`),
+      new Error(`CSV import refused: the strict template can't carry demographic/identity columns (${badCols.join(', ')}). Use "Spreadsheet deal flow" (Import with Claude) for this file instead — it records identity the file states, labeled with its row, for you to confirm on approve.`),
       { status: 422 },
     );
   }

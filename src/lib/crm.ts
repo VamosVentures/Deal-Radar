@@ -87,7 +87,11 @@ export function founderDemographics(f: Founder): VerifiedDemographic[] {
     basis: id.basis,
     sourceName: id.source,
     sourceRef: id.source,
-    verificationStatus: (id.basis === 'Verified public statement' ? 'Verified' : 'Self-reported') as VerifiedDemographic['verificationStatus'],
+    verificationStatus: (
+      id.basis === 'Verified public statement' ? 'Verified'
+        : id.basis === 'Recorded in uploaded file' ? 'Recorded by Vamos'
+          : 'Self-reported'
+    ) as VerifiedDemographic['verificationStatus'],
   };
   if (id.latinoLed) out.push({ indicator: 'Latino-led', ...base });
   if (id.femaleLed) out.push({ indicator: 'Female-led', ...base });

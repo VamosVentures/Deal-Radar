@@ -92,8 +92,9 @@ interface CompanyRow {
 
 function rowToCompany(row: CompanyRow): ImportedCompany {
   const db = getDb();
-  const founders = db.prepare('SELECT name, role, background FROM founders WHERE company_id = ? ORDER BY position').all(row.id) as
-    { name: string; role: string; background: string }[];
+  const founders = (db.prepare('SELECT name, role, background, identity_json FROM founders WHERE company_id = ? ORDER BY position').all(row.id) as
+    { name: string; role: string; background: string; identity_json: string | null }[])
+    .map(({ identity_json, ...f }) => (identity_json ? { ...f, identity: JSON.parse(identity_json) as StoredIdentity } : f));
   const evidence = db.prepare('SELECT claim, source, url, date, type FROM evidence WHERE company_id = ? ORDER BY id').all(row.id) as
     { claim: string; source: string; url: string; date: string; type: string }[];
   return {
@@ -376,11 +377,53 @@ function saveCompanyUnsafe(record: ImportedCompany, opts: SaveOptions): { create
   return { created: false };
 }
 
+type StoredIdentity = NonNullable<ImportedCompany['founders'][number]['identity']>;
+type FounderInput = { name: string; role: string; background: string; identity?: StoredIdentity };
+
+function founderKey(name: string): string {
+  return name.toLowerCase().replace(/[^\p{L}\s]/gu, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Rewriting a company's founders must never silently erase identity a
+ * reviewer recorded. An incoming founder without identity keeps the one
+ * already stored under the same name; any stored identity left over
+ * (e.g. a team-level "Latino-led" recorded on an "Unknown founder"
+ * placeholder that research has now replaced with real names) moves to
+ * the first founder, so the company-level indicator survives.
+ */
+export function carryFounderIdentities(
+  existing: readonly { name: string; identity: StoredIdentity | null }[],
+  incoming: readonly FounderInput[],
+): FounderInput[] {
+  const out = incoming.map((f) => ({ ...f }));
+  const leftovers: StoredIdentity[] = [];
+  for (const e of existing) {
+    if (!e.identity) continue;
+    const match = out.find((f) => founderKey(f.name) === founderKey(e.name));
+    if (match) { if (!match.identity) match.identity = e.identity; }
+    else leftovers.push(e.identity);
+  }
+  if (out.length > 0 && leftovers.length > 0 && !out.some((f) => f.identity)) out[0].identity = leftovers[0];
+  return out;
+}
+
+function storedFounderIdentities(companyId: string): { name: string; identity: StoredIdentity | null }[] {
+  return (getDb().prepare('SELECT name, identity_json FROM founders WHERE company_id = ? ORDER BY position').all(companyId) as
+    { name: string; identity_json: string | null }[])
+    .map((r) => ({ name: r.name, identity: r.identity_json ? JSON.parse(r.identity_json) as StoredIdentity : null }));
+}
+
+function insertFounders(companyId: string, founders: readonly FounderInput[]): void {
+  const insert = getDb().prepare('INSERT INTO founders (company_id, position, name, role, background, identity_json) VALUES (?, ?, ?, ?, ?, ?)');
+  founders.forEach((f, i) => insert.run(companyId, i, f.name, f.role, f.background, f.identity ? JSON.stringify(f.identity) : null));
+}
+
 function replaceFounders(companyId: string, founders: ImportedCompany['founders']): void {
   const db = getDb();
+  const merged = carryFounderIdentities(storedFounderIdentities(companyId), founders);
   db.prepare('DELETE FROM founders WHERE company_id = ?').run(companyId);
-  const insert = db.prepare('INSERT INTO founders (company_id, position, name, role, background) VALUES (?, ?, ?, ?, ?)');
-  founders.forEach((f, i) => insert.run(companyId, i, f.name, f.role, f.background));
+  insertFounders(companyId, merged);
 }
 
 /** Append-only; rows with an already-cited URL are skipped so re-imports don't duplicate evidence. */
@@ -480,11 +523,13 @@ export function setResolvedFounders(
    * with — destroying rows to add rows is only safe if the pair is
    * atomic.
    */
+  // Identity recorded on a placeholder ("Unknown founder", Latino-led per an
+  // uploaded file) moves to the real founders rather than being deleted with it.
+  const merged = carryFounderIdentities(storedFounderIdentities(companyId), unique);
   db.exec('BEGIN');
   try {
     for (const r of rows) db.prepare('DELETE FROM founders WHERE id = ?').run(r.id);
-    const insert = db.prepare('INSERT INTO founders (company_id, position, name, role, background) VALUES (?, ?, ?, ?, ?)');
-    unique.forEach((f, i) => insert.run(companyId, i, f.name, f.role, f.background));
+    insertFounders(companyId, merged);
     db.prepare('UPDATE companies SET updated_at = ? WHERE id = ?').run(now(), companyId);
     db.exec('COMMIT');
   } catch (e) {

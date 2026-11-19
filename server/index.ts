@@ -4,6 +4,7 @@ import { aiConfigured, env, outlookConfigured } from './env';
 import { hubspotConnected } from './services/hubspot';
 import { store } from './lib/store';
 import { closeDb } from './db/client';
+import { markInterruptedFileImports } from './services/fileImport';
 
 const app = createApp();
 
@@ -26,6 +27,10 @@ const server = app.listen(env.PORT, () => {
     console.log('No integrations are connected. External actions will fail honestly until credentials are added — see .env.example.');
   }
 });
+
+// A restart cuts off any "Import with Claude" file still being read — say so instead of showing it as running forever.
+const interrupted = markInterruptedFileImports();
+if (interrupted > 0) console.log(`[startup] ${interrupted} file import(s) were cut off by the restart and marked interrupted.`);
 
 startScheduler(); // no-op unless RUN_SCHEDULER=true
 

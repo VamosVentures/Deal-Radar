@@ -60,7 +60,7 @@ describe('local CSV import', () => {
   it('refuses identity/demographic columns outright', () => {
     expect(() =>
       importCompaniesCsv([`${CSV_HEADER},latinoLed`, `${GOOD_ROW},true`].join('\n')),
-    ).toThrow(/not importable/i);
+    ).toThrow(/strict template can't carry/i);
   });
 
   it('re-importing the same file does not duplicate companies', () => {

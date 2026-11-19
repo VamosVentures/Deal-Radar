@@ -391,6 +391,13 @@ export const demoApi: Api = {
     updateCandidate: () => disabled(),
     approveCandidate: () => disabled(),
     discardCandidate: () => disabled(),
+    approveReady: () => disabled(),
+  },
+
+  fileImport: {
+    preview: () => disabled(),
+    start: () => disabled(),
+    status: () => disabled(),
   },
 
   outreach: {

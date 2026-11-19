@@ -14,6 +14,7 @@ import { DiversityAnalyticsPanel } from '../components/DiversityAnalytics';
 import { BackupPanel } from '../components/BackupPanel';
 import { EmailIntakePanel } from '../components/EmailIntakePanel';
 import { EmailIntakeQueue } from '../components/EmailIntakeQueue';
+import { FileImportPanel } from '../components/FileImportPanel';
 import { useIntegrations } from '../store/integrations';
 import { api, type AuthStatus } from '../lib/api';
 
@@ -23,10 +24,11 @@ export function DataSources() {
   const { refresh } = useIntegrations();
   const [connectedBanner, setConnectedBanner] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
-  // Bumped after a successful email-intake submission to force the review
-  // queue below to remount and reload — simpler than lifting its list
-  // state up here just to expose a refresh callback.
+  // Bumped when an email is extracted or an uploaded file yields more
+  // companies, so the review queue below reloads in place (keeping any
+  // unsaved edits) — simpler than lifting its list state up here.
   const [emailIntakeVersion, setEmailIntakeVersion] = useState(0);
+  const bumpIntake = useCallback(() => setEmailIntakeVersion((v) => v + 1), []);
 
   const loadAuth = useCallback(() => {
     api.auth.status().then(setAuth).catch(() => setAuth(null));
@@ -113,12 +115,13 @@ export function DataSources() {
         <>
           <SystemStatus />
 
+          <EmailIntakePanel onSubmitted={bumpIntake} />
+          <FileImportPanel onProgress={bumpIntake} />
+          <EmailIntakeQueue refreshKey={emailIntakeVersion} />
+
           <IntegrationCards />
 
           <ConnectorPanel />
-
-          <EmailIntakePanel onSubmitted={() => setEmailIntakeVersion((v) => v + 1)} />
-          <EmailIntakeQueue key={emailIntakeVersion} />
 
           <SchedulePanel />
 
