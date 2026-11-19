@@ -106,12 +106,18 @@ describe('auto-research after a reviewer adds companies', () => {
     expect(runner.mock.calls[0][0].companyIds).toEqual([next]);
   });
 
-  it('caps one run at 600 requests however many companies are queued', async () => {
+  it('splits a big batch ("Approve all" on a spreadsheet) into runs of 20, so every company gets its full 30 requests', async () => {
     const runner = vi.fn<Runner>().mockResolvedValue(okResult);
     setAutoResearchRunnerForTests(runner);
-    queueAutoResearch(Array.from({ length: 50 }, (_, i) => `c-${i}`), 'tester');
+    const ids = Array.from({ length: 50 }, (_, i) => `c-${i}`);
+    queueAutoResearch(ids, 'tester');
     await autoResearchIdleForTests();
-    expect(runner.mock.calls[0][0].maxRequests).toBe(600);
+
+    const runs = runner.mock.calls.map((c) => c[0]);
+    expect(runs.map((r) => r.companyIds!.length)).toEqual([20, 20, 10]);
+    expect(runs.map((r) => r.maxRequests)).toEqual([600, 600, 300]);
+    // Every company researched exactly once, oldest first.
+    expect(runs.flatMap((r) => r.companyIds)).toEqual(ids);
   });
 
   it('does nothing in the test environment without an installed runner (no accidental network)', async () => {
