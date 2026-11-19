@@ -1,6 +1,7 @@
 import { audit } from '../lib/guard';
 import { aiConfigured } from '../env';
 import { callBudgetedModel } from './aiClient';
+import { normalizeEmail, normalizeLinkedInUrl } from '../../shared/founderContact';
 import { queueAutoResearch } from './autoResearch';
 import { fenceNonce, fenceUntrusted, parseModelJson, sanitizeUntrustedContent } from './aiGuard';
 import {
@@ -190,6 +191,18 @@ export function toQueuedCandidate(raw: Record<string, unknown>, provenance?: Kno
       date: today(),
     };
   const identity = provenance ? fileIdentity(rawIdentity, provenance, rows) : undefined;
+  // A founder email/LinkedIn Claude reported is kept only if it is a
+  // well-formed address / personal profile URL. A malformed one is dropped
+  // here, at queue time, so it can never make the reviewer's Save fail.
+  if (Array.isArray(rest.founders)) {
+    rest.founders = (rest.founders as unknown[]).map((f) => {
+      if (typeof f !== 'object' || f === null) return f;
+      const { email: rawEmail, linkedin: rawLinkedin, ...founder } = f as Record<string, unknown>;
+      const email = normalizeEmail(rawEmail);
+      const linkedin = normalizeLinkedInUrl(rawLinkedin);
+      return { ...founder, ...(email ? { email } : {}), ...(linkedin ? { linkedin } : {}) };
+    });
+  }
   return {
     ...rest,
     ...vertical,
@@ -424,14 +437,29 @@ function completeForApproval(id: string, extracted: Record<string, unknown>): {
     else if (!/^https?:\/\//i.test(w)) record.website = `https://${w}`;
   }
   if (Array.isArray(record.founders)) {
+    // Where a stated email came from: the uploaded file (with its row and
+    // uploader), or the forwarded email (with who forwarded it, which the
+    // reviewer fills in before approving).
+    const statedIn = firstEvidence(record);
+    const contactSource = statedIn
+      ? `Stated in ${String(statedIn.source)}${typeof statedIn.url === 'string' && statedIn.url.trim() ? ` — ${statedIn.url.trim()}` : ''}`
+      : 'Stated in the intake source';
     const named = (record.founders as Record<string, unknown>[])
       .filter((f) => typeof f?.name === 'string' && f.name.trim().length >= 2)
-      .map((f) => ({
-        name: (f.name as string).trim(),
-        role: typeof f.role === 'string' && f.role.trim() ? f.role.trim() : 'Unknown',
-        background: typeof f.background === 'string' && f.background.trim().length >= 3
-          ? f.background.trim() : 'Unknown — requires manual research',
-      }));
+      .map((f) => {
+        // A malformed address or a non-profile link is dropped, never
+        // allowed to block the approval or reach HubSpot.
+        const email = normalizeEmail(f.email);
+        const linkedin = normalizeLinkedInUrl(f.linkedin);
+        return {
+          name: (f.name as string).trim(),
+          role: typeof f.role === 'string' && f.role.trim() ? f.role.trim() : 'Unknown',
+          background: typeof f.background === 'string' && f.background.trim().length >= 3
+            ? f.background.trim() : 'Unknown — requires manual research',
+          ...(email ? { email, emailSource: contactSource } : {}),
+          ...(linkedin ? { linkedin } : {}),
+        };
+      });
     record.founders = named.length > 0 ? named : structuredClone(PLACEHOLDERS.founders);
   }
   // A file's identity indicators describe the team; the data model keeps

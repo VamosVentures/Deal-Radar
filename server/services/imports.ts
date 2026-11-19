@@ -51,6 +51,13 @@ export const importedCompanySchema = z.object({
      * "Import with Claude" approvals ('Recorded in uploaded file').
      */
     identity: verifiedIdentitySchema.optional(),
+    /**
+     * Contact details a source STATED (shared/founderContact.ts), with
+     * where they came from. Optional everywhere: most sources state none.
+     */
+    email: z.string().email().optional(),
+    emailSource: z.string().min(1).optional(),
+    linkedin: z.string().url().optional(),
   })).min(1),
   evidence: z.array(z.object({
     claim: z.string().min(3),

@@ -295,6 +295,12 @@ export function EmailIntakeQueue({ refreshKey = 0 }: { refreshKey?: number }) {
           <Field label="Founder background" missing={false}>
             <input className={inputCls} disabled={disabled} placeholder={notStated} value={d.founderBackground} onChange={(e) => updateDraft(c.id, 'founderBackground', e.target.value)} />
           </Field>
+          <Field label="Founder email" missing={false}>
+            <input className={inputCls} disabled={disabled} placeholder={notStated} value={d.founderEmail ?? ''} onChange={(e) => updateDraft(c.id, 'founderEmail', e.target.value)} data-testid="intake-founder-email" />
+          </Field>
+          <Field label="Founder LinkedIn" missing={false}>
+            <input className={inputCls} disabled={disabled} placeholder={notStated} value={d.founderLinkedin ?? ''} onChange={(e) => updateDraft(c.id, 'founderLinkedin', e.target.value)} data-testid="intake-founder-linkedin" />
+          </Field>
           <Field label="Raising" missing={false}>
             <input className={inputCls} disabled={disabled} placeholder={notStated} value={d.raising} onChange={(e) => updateDraft(c.id, 'raising', e.target.value)} />
           </Field>

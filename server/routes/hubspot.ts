@@ -5,7 +5,8 @@ import { audit } from '../lib/guard';
 import { requireAdmin } from '../lib/auth';
 import { resolveReviewer } from '../lib/reviewer';
 import { wrap } from './helpers';
-import { companyMetaView, setCompanyMeta } from '../db/repos/companies';
+import { companyMetaView, saveFounderContacts, setCompanyMeta } from '../db/repos/companies';
+import { normalizeEmail, normalizeLinkedInUrl } from '../../shared/founderContact';
 import { failedHubspotSyncs, getConfig, lastFailedHubspotSync, recordHubspotSync, setConfig } from '../db/repos/operations';
 import {
   beginHubSpotConnect, disconnectHubSpot, handleHubSpotCallback,
@@ -233,6 +234,22 @@ hubspotRouter.post('/hubspot/sync-company', wrap(async (req, res) => {
   const reviewer = resolveReviewer(req);
   const approvedBy = parsed.deal.approvedBy
     ?? (reviewer?.source === 'microsoft-sso' ? reviewer.label : null);
+  /**
+   * Keep what the reviewer typed. The popup's email and LinkedIn boxes
+   * used to go to HubSpot and nowhere else, so the next time anyone
+   * opened the company in Deal Radar the boxes were empty again. Saved
+   * before the sync, because the reviewer's entry is worth keeping even
+   * if HubSpot then refuses the request. Only founders already on the
+   * record are updated (matched by name), and only with a well-formed
+   * address / profile URL.
+   */
+  saveFounderContacts(parsed.deal.dealRadarId, parsed.contacts.map((ct) => ({
+    name: `${ct.firstName} ${ct.lastName}`.trim(),
+    email: normalizeEmail(ct.email),
+    linkedin: normalizeLinkedInUrl(ct.linkedinUrl),
+    source: `Entered by ${reviewer?.label ?? 'a reviewer'} in Add to HubSpot on ${new Date().toISOString().slice(0, 10)}`,
+    overwrite: true,
+  })));
   res.json(await performSync({ ...parsed, deal: { ...parsed.deal, approvedBy } }));
 }));
 

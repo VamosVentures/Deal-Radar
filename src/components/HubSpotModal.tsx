@@ -65,12 +65,20 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
   const [contacts, setContacts] = useState(() => {
     const verified = enrichment?.founder.value;
     if (verified) {
+      // The email/LinkedIn on record live on the founder row of the same
+      // name; without this the boxes opened empty for every researched
+      // company even when a contact was saved.
+      const key = (n: string) => n.toLowerCase().replace(/[^\p{L}\s]/gu, '').replace(/\s+/g, ' ').trim();
+      const stored = c.founders.find((f) => key(f.name) === key(verified.name));
       return [founderToHubSpot(
         c,
         {
           name: verified.name,
           role: verified.title ?? '',
           background: enrichment.founder.summary,
+          email: stored?.email,
+          emailSource: stored?.emailSource,
+          linkedin: stored?.linkedin,
         },
       )];
     }

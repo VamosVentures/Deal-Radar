@@ -1,4 +1,5 @@
 import { readableText } from '../sourcing/pageSignals';
+import { emailMatchesName, linkedInMatchesName, normalizeEmail, normalizeLinkedInUrl } from '../../shared/founderContact';
 
 /**
  * Pulling named people with stated titles out of a public page.
@@ -30,6 +31,42 @@ import { readableText } from '../sourcing/pageSignals';
  *   - No treating an author byline, a testimonial, or an advisor block as
  *     leadership.
  */
+
+/**
+ * Contact details a page PUBLISHES for a named person.
+ *
+ * The people extractor below reads the page as plain text, so it cannot
+ * tell which link sits in which person's card. Instead the tie is the
+ * value itself: a LinkedIn profile is attributed only when its URL slug
+ * names the person (both first and last name), and an email only when it
+ * is on the company's own domain, published on the company's own site,
+ * and shaped like the person's name (jane@, jane.doe@, jdoe@ …). Anything
+ * that matches nobody, or matches the person ambiguously (two profiles
+ * that both fit), is dropped. Generic inboxes (hello@, founders@) never
+ * match a person, so they are never attached to one.
+ */
+export function publishedContactsFor(
+  html: string,
+  name: string,
+  opts: { pageIsCompanySite: boolean; companyDomain: string | null },
+): { linkedin: string | null; email: string | null } {
+  const linkedins = new Set<string>();
+  for (const m of html.matchAll(/https?:\/\/(?:[a-z]{2,3}\.|www\.)?linkedin\.com\/in\/[^\s"'<>)]+/gi)) {
+    const url = normalizeLinkedInUrl(m[0]);
+    if (url && linkedInMatchesName(url, name)) linkedins.add(url);
+  }
+  const emails = new Set<string>();
+  if (opts.pageIsCompanySite) {
+    for (const m of html.matchAll(/(?:mailto:)?([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/gi)) {
+      const email = normalizeEmail(m[1]);
+      if (email && emailMatchesName(email, name, opts.companyDomain)) emails.add(email);
+    }
+  }
+  return {
+    linkedin: linkedins.size === 1 ? [...linkedins][0] : null,
+    email: emails.size === 1 ? [...emails][0] : null,
+  };
+}
 
 /** A person as STATED by a page: a name, and a title only when the page gives one. */
 export interface ExtractedPerson {

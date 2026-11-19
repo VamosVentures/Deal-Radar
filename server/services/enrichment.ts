@@ -1,5 +1,7 @@
 import { getDb } from '../db/client';
-import { applyFieldUpdate, getCompany, setResolvedFounders } from '../db/repos/companies';
+import { applyFieldUpdate, getCompany, saveFounderContacts, setResolvedFounders } from '../db/repos/companies';
+import { normalizeDomainKey } from '../sourcing/identity';
+import { normalizeLinkedInUrl } from '../../shared/founderContact';
 import { saveScore } from '../db/repos/operations';
 import { scoreCompany } from '../../src/lib/scoring';
 import type { Company } from '../../src/types';
@@ -11,7 +13,7 @@ import { getQualification } from './issuerQualification';
 import { recordYcPendingEvidence } from './pendingEvidence';
 import { discoverOfficialWebsite, findInYc } from './corroborate';
 import {
-  classifyFormDRelationship, extractPeopleFromHtml, truncateSupport,
+  classifyFormDRelationship, extractPeopleFromHtml, publishedContactsFor, truncateSupport,
 } from '../enrichment/founderExtraction';
 import {
   classifyCompany, EMPTY_CATEGORY, matchSubvertical, subverticalLabelsForSector,
@@ -255,6 +257,10 @@ interface FoundCandidate {
   matchSignals: MatchSignal[];
   matchScore: number;
   confidence: number;
+  /** A LinkedIn profile the source publishes for this person (canonical URL). */
+  linkedinUrl?: string | null;
+  /** An email address the company's own site publishes for this person. */
+  email?: string | null;
 }
 
 /**
@@ -555,6 +561,9 @@ async function researchFamily(
             matchSignals: signals,
             matchScore: score,
             confidence: candidateConfidence(score, plan.family, f.role !== null),
+            // YC links each founder's LinkedIn in their own card, so the
+            // parser's per-person link is attributable as-is.
+            linkedinUrl: normalizeLinkedInUrl(f.linkedInUrl),
           });
         }
         notes.push(
@@ -575,6 +584,10 @@ async function researchFamily(
       });
       if (!meetsMatchThreshold(signals)) continue;
       const score = scoreMatch(signals);
+      const contacts = publishedContactsFor(res.body, person.fullName, {
+        pageIsCompanySite: isOnCompanyDomain(fetchPlan.url, c.website),
+        companyDomain: normalizeDomainKey(c.website),
+      });
       candidates.push({
         personKey: personKey(person.fullName),
         fullName: person.fullName,
@@ -587,6 +600,8 @@ async function researchFamily(
         matchSignals: signals,
         matchScore: score,
         confidence: candidateConfidence(score, plan.family, person.title !== null),
+        linkedinUrl: contacts.linkedin,
+        email: contacts.email,
       });
     }
     notes.push(people.length > 0
@@ -1577,6 +1592,32 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
             field: 'founder-row',
             previous: 'Unknown founder',
             next: rows.map((r) => r.name).join(', '),
+          });
+        }
+
+        /**
+         * Contact details the sources published for these verified
+         * founders. Attached by name to rows already on the record —
+         * including real names an import put there, which
+         * setResolvedFounders deliberately leaves alone — and only into
+         * EMPTY fields, so research never overwrites what a reviewer or
+         * a stated source recorded. Before 2026-11-19 these were parsed
+         * and thrown away.
+         */
+        const contactUpdates = verified
+          .filter((cand) => cand.linkedinUrl || cand.email)
+          .map((cand) => ({
+            name: cand.fullName,
+            linkedin: cand.linkedinUrl ?? null,
+            email: cand.email ?? null,
+            source: `Published on ${cand.sourceType} (${cand.sourceUrl})`,
+            overwrite: false,
+          }));
+        if (contactUpdates.length > 0 && saveFounderContacts(c.id, contactUpdates) > 0) {
+          changes.push({
+            field: 'founder-contact',
+            previous: null,
+            next: contactUpdates.map((u) => u.name).join(', '),
           });
         }
       }
