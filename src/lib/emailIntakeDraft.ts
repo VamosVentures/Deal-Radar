@@ -14,10 +14,11 @@ export function otherFounders(extracted: Record<string, unknown>): Record<string
   return Array.isArray(extracted.founders) ? (extracted.founders as Record<string, unknown>[]).slice(1) : [];
 }
 
-function firstFounder(extracted: Record<string, unknown>): { name: string; role: string; background: string } {
+function firstFounder(extracted: Record<string, unknown>): { name: string; role: string; background: string; email: string; linkedin: string } {
   const f = Array.isArray(extracted.founders) ? (extracted.founders as Record<string, unknown>[])[0] : undefined;
   return {
     name: (f?.name as string) ?? '', role: (f?.role as string) ?? '', background: (f?.background as string) ?? '',
+    email: (f?.email as string) ?? '', linkedin: (f?.linkedin as string) ?? '',
   };
 }
 
@@ -52,6 +53,8 @@ export function draftFor(c: EmailIntakeCandidate): Draft {
     founderName: founder.name,
     founderRole: founder.role,
     founderBackground: founder.background,
+    founderEmail: founder.email,
+    founderLinkedin: founder.linkedin,
     raising: (x.raising as string) ?? '',
     accelerator: (x.accelerator as string) ?? '',
     evidenceDescription: evidence.url,
@@ -94,8 +97,13 @@ export function patchFrom(draft: Draft, existing: Record<string, unknown>): Reco
     // Co-founders get the same defaults as the first founder: Claude often
     // finds only a name and role, and the PATCH schema rejects a founder
     // without a background — which used to fail the save and block approval.
+    // Email and LinkedIn are only sent when present: the PATCH schema
+    // rejects an empty string, and a cleared box means "not stated".
+    const contact: Record<string, string> = {};
+    if ((draft.founderEmail ?? '').trim()) contact.email = draft.founderEmail.trim();
+    if ((draft.founderLinkedin ?? '').trim()) contact.linkedin = draft.founderLinkedin.trim();
     patch.founders = [
-      withFounderDefaults({ name: draft.founderName, role: draft.founderRole, background: draft.founderBackground }),
+      withFounderDefaults({ name: draft.founderName, role: draft.founderRole, background: draft.founderBackground, ...contact }),
       ...otherFounders(existing).map(withFounderDefaults),
     ];
   }

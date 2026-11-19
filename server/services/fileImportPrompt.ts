@@ -65,7 +65,7 @@ Respond with ONLY a JSON object, no other text, shaped exactly like this:
       "foundedYear": "a number, if stated",
       "teamSize": "a number, if stated",
       "founders": [
-        { "name": "string", "role": "string, e.g. CEO — only if the row states it (a column name like 'Contact' is not a role)", "background": "a sentence on their background, if stated" }
+        { "name": "string", "role": "string, e.g. CEO — only if the row states it (a column name like 'Contact' is not a role)", "background": "a sentence on their background, if stated", "email": "THIS founder's email address, copied exactly from a cell — only if the row states it (e.g. an 'Email' or 'Founder email' column). Never a generic inbox like info@ or hello@, never constructed from a name and domain", "linkedin": "THIS founder's LinkedIn profile URL (linkedin.com/in/...), copied exactly from a cell — only if the row states it" }
       ],
       "raising": "a short description of what round/amount they're raising, if stated",
       "accelerator": "an accelerator/program name, if stated",

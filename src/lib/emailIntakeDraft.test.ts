@@ -22,6 +22,21 @@ const EPSILAB = {
 const candidate = (extracted: Record<string, unknown>) => ({ id: 1, extracted } as unknown as EmailIntakeCandidate);
 
 describe('email-intake review card draft → PATCH', () => {
+  it('keeps the first founder\'s email and LinkedIn on save, and sends a reviewer\'s edit', () => {
+    const withContact = {
+      ...EPSILAB,
+      founders: [{ ...EPSILAB.founders[0], email: 'evan@epsilab.ai', linkedin: 'https://www.linkedin.com/in/evanhu' }, ...EPSILAB.founders.slice(1)],
+    };
+    const draft = draftFor(candidate(withContact));
+    expect(draft).toMatchObject({ founderEmail: 'evan@epsilab.ai', founderLinkedin: 'https://www.linkedin.com/in/evanhu' });
+    const untouched = (patchFrom(draft, withContact).founders as Record<string, string>[])[0];
+    expect(untouched).toMatchObject({ email: 'evan@epsilab.ai', linkedin: 'https://www.linkedin.com/in/evanhu' });
+    const edited = (patchFrom({ ...draft, founderEmail: 'evan.hu@epsilab.ai', founderLinkedin: '' }, withContact).founders as Record<string, string>[])[0];
+    expect(edited.email).toBe('evan.hu@epsilab.ai');
+    // A cleared box sends nothing — the PATCH schema rejects an empty string.
+    expect(edited).not.toHaveProperty('linkedin');
+  });
+
   it('keeps every founder when saving an untouched card', () => {
     const patch = patchFrom(draftFor(candidate(EPSILAB)), EPSILAB);
     expect((patch.founders as { name: string }[]).map((f) => f.name))

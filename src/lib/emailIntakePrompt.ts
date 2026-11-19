@@ -64,7 +64,7 @@ Respond with ONLY a JSON object, no other text, shaped exactly like this:
       "foundedYear": "a number, if stated",
       "teamSize": "a number, if stated",
       "founders": [
-        { "name": "string", "role": "string, e.g. CEO", "background": "a sentence on their background, if stated" }
+        { "name": "string", "role": "string, e.g. CEO", "background": "a sentence on their background, if stated", "email": "THIS founder's own email address, copied exactly — only if the email states it for them (e.g. in their signature, or 'reach Jane at jane@acme.com'). Never a generic inbox like info@ or hello@, never the forwarder's or another person's, never constructed from a name and domain", "linkedin": "THIS founder's LinkedIn profile URL (linkedin.com/in/...), copied exactly — only if the email states it for them" }
       ],
       "raising": "a short description of what round/amount they're raising, if stated",
       "accelerator": "an accelerator/program name, if stated",

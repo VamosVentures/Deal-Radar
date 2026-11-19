@@ -92,9 +92,15 @@ interface CompanyRow {
 
 function rowToCompany(row: CompanyRow): ImportedCompany {
   const db = getDb();
-  const founders = (db.prepare('SELECT name, role, background, identity_json FROM founders WHERE company_id = ? ORDER BY position').all(row.id) as
-    { name: string; role: string; background: string; identity_json: string | null }[])
-    .map(({ identity_json, ...f }) => (identity_json ? { ...f, identity: JSON.parse(identity_json) as StoredIdentity } : f));
+  const founders = (db.prepare('SELECT name, role, background, identity_json, email, email_source, linkedin FROM founders WHERE company_id = ? ORDER BY position').all(row.id) as
+    { name: string; role: string; background: string; identity_json: string | null; email: string | null; email_source: string | null; linkedin: string | null }[])
+    .map(({ identity_json, email, email_source, linkedin, ...f }) => ({
+      ...f,
+      ...(identity_json ? { identity: JSON.parse(identity_json) as StoredIdentity } : {}),
+      ...(email ? { email } : {}),
+      ...(email_source ? { emailSource: email_source } : {}),
+      ...(linkedin ? { linkedin } : {}),
+    }));
   const evidence = db.prepare('SELECT claim, source, url, date, type FROM evidence WHERE company_id = ? ORDER BY id').all(row.id) as
     { claim: string; source: string; url: string; date: string; type: string }[];
   return {
@@ -378,7 +384,10 @@ function saveCompanyUnsafe(record: ImportedCompany, opts: SaveOptions): { create
 }
 
 type StoredIdentity = NonNullable<ImportedCompany['founders'][number]['identity']>;
-type FounderInput = { name: string; role: string; background: string; identity?: StoredIdentity };
+type FounderInput = {
+  name: string; role: string; background: string; identity?: StoredIdentity;
+  email?: string; emailSource?: string; linkedin?: string;
+};
 
 function founderKey(name: string): string {
   return name.toLowerCase().replace(/[^\p{L}\s]/gu, '').replace(/\s+/g, ' ').trim();
@@ -414,16 +423,95 @@ function storedFounderIdentities(companyId: string): { name: string; identity: S
     .map((r) => ({ name: r.name, identity: r.identity_json ? JSON.parse(r.identity_json) as StoredIdentity : null }));
 }
 
+interface StoredContact { name: string; email: string | null; emailSource: string | null; linkedin: string | null }
+
+function storedFounderContacts(companyId: string): StoredContact[] {
+  return (getDb().prepare('SELECT name, email, email_source, linkedin FROM founders WHERE company_id = ? ORDER BY position').all(companyId) as
+    { name: string; email: string | null; email_source: string | null; linkedin: string | null }[])
+    .map((r) => ({ name: r.name, email: r.email, emailSource: r.email_source, linkedin: r.linkedin }));
+}
+
+/**
+ * Rewriting a company's founders must never silently erase a contact
+ * detail already on record. An incoming founder with no email/LinkedIn
+ * keeps the one stored under the same name. Unlike identity, a contact
+ * detail is never moved to a DIFFERENT person — an email belongs to
+ * exactly one human.
+ */
+export function carryFounderContacts(existing: readonly StoredContact[], incoming: readonly FounderInput[]): FounderInput[] {
+  return incoming.map((f) => {
+    const match = existing.find((e) => founderKey(e.name) === founderKey(f.name));
+    if (!match) return { ...f };
+    const out = { ...f };
+    if (!out.email && match.email) { out.email = match.email; out.emailSource = match.emailSource ?? undefined; }
+    if (!out.linkedin && match.linkedin) out.linkedin = match.linkedin;
+    return out;
+  });
+}
+
 function insertFounders(companyId: string, founders: readonly FounderInput[]): void {
-  const insert = getDb().prepare('INSERT INTO founders (company_id, position, name, role, background, identity_json) VALUES (?, ?, ?, ?, ?, ?)');
-  founders.forEach((f, i) => insert.run(companyId, i, f.name, f.role, f.background, f.identity ? JSON.stringify(f.identity) : null));
+  const insert = getDb().prepare('INSERT INTO founders (company_id, position, name, role, background, identity_json, email, email_source, linkedin) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  founders.forEach((f, i) => insert.run(
+    companyId, i, f.name, f.role, f.background, f.identity ? JSON.stringify(f.identity) : null,
+    f.email ?? null, f.email ? (f.emailSource ?? null) : null, f.linkedin ?? null,
+  ));
 }
 
 function replaceFounders(companyId: string, founders: ImportedCompany['founders']): void {
   const db = getDb();
-  const merged = carryFounderIdentities(storedFounderIdentities(companyId), founders);
+  const merged = carryFounderContacts(
+    storedFounderContacts(companyId),
+    carryFounderIdentities(storedFounderIdentities(companyId), founders),
+  );
   db.prepare('DELETE FROM founders WHERE company_id = ?').run(companyId);
   insertFounders(companyId, merged);
+}
+
+export interface FounderContactUpdate {
+  /** Matched to an existing founder row by normalized name; no match, no write. */
+  name: string;
+  email?: string | null;
+  linkedin?: string | null;
+  /** Where the email came from — stored with it and shown to HubSpot as the info source. */
+  source: string;
+  /**
+   * true: replace what is stored (a reviewer typing a correction).
+   * false: only fill an empty field (research, which must never overwrite
+   * a value a person or a stated source already recorded).
+   */
+  overwrite: boolean;
+}
+
+/**
+ * Attach contact details to founders ALREADY on the record. Never creates
+ * a founder: a detail whose name matches no row is dropped, because a
+ * contact with no person is not something the record can hold honestly.
+ * Values are expected pre-normalized (shared/founderContact.ts). Returns
+ * how many founder rows changed.
+ */
+export function saveFounderContacts(companyId: string, updates: readonly FounderContactUpdate[]): number {
+  const db = getDb();
+  const rows = db.prepare('SELECT id, name, email, linkedin FROM founders WHERE company_id = ? ORDER BY position')
+    .all(companyId) as { id: number; name: string; email: string | null; linkedin: string | null }[];
+  let changed = 0;
+  for (const u of updates) {
+    const row = rows.find((r) => founderKey(r.name) === founderKey(u.name));
+    if (!row) continue;
+    let touched = false;
+    if (u.email && u.email !== row.email && (u.overwrite || !row.email)) {
+      db.prepare('UPDATE founders SET email = ?, email_source = ? WHERE id = ?').run(u.email, u.source, row.id);
+      row.email = u.email;
+      touched = true;
+    }
+    if (u.linkedin && u.linkedin !== row.linkedin && (u.overwrite || !row.linkedin)) {
+      db.prepare('UPDATE founders SET linkedin = ? WHERE id = ?').run(u.linkedin, row.id);
+      row.linkedin = u.linkedin;
+      touched = true;
+    }
+    if (touched) changed += 1;
+  }
+  if (changed > 0) db.prepare('UPDATE companies SET updated_at = ? WHERE id = ?').run(now(), companyId);
+  return changed;
 }
 
 /** Append-only; rows with an already-cited URL are skipped so re-imports don't duplicate evidence. */
@@ -525,7 +613,10 @@ export function setResolvedFounders(
    */
   // Identity recorded on a placeholder ("Unknown founder", Latino-led per an
   // uploaded file) moves to the real founders rather than being deleted with it.
-  const merged = carryFounderIdentities(storedFounderIdentities(companyId), unique);
+  const merged = carryFounderContacts(
+    storedFounderContacts(companyId),
+    carryFounderIdentities(storedFounderIdentities(companyId), unique),
+  );
   db.exec('BEGIN');
   try {
     for (const r of rows) db.prepare('DELETE FROM founders WHERE id = ?').run(r.id);
