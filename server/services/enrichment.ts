@@ -225,6 +225,10 @@ interface ResearchedFacts {
   /** The sentence a raise was read from, cited when the amount is stored. */
   fundingEvidence?: string;
   description?: string;
+  /** Stated on the company's YC profile ("Founded: 2024", "Team Size: 5"); cited to `ycProfileUrl`. */
+  foundedYear?: number;
+  teamSize?: number;
+  ycProfileUrl?: string;
 }
 
 interface FoundCandidate {
@@ -498,7 +502,21 @@ async function researchFamily(
           if (loc) {
             facts.city = loc.city;
             if (loc.state) facts.state = loc.state;
+            // Cite the YC page, not the SEC fallback the location stamp uses otherwise.
+            facts.locationEvidence ??= `Y Combinator profile: ${profile.location} (${profile.canonicalUrl})`;
           }
+        }
+        // Parsed from the profile's own "Founded" / "Team Size" fields
+        // (ycProfile.ts) but, until now, never saved — so no company that
+        // arrived by email had a founded year. Stamped below only where
+        // the record has none.
+        if (profile.foundedYear && !facts.foundedYear) {
+          facts.foundedYear = profile.foundedYear;
+          facts.ycProfileUrl ??= profile.canonicalUrl;
+        }
+        if (profile.teamSize && !facts.teamSize) {
+          facts.teamSize = profile.teamSize;
+          facts.ycProfileUrl ??= profile.canonicalUrl;
         }
         for (const f of profile.founders) {
           const signals = signalsFor({
@@ -1384,9 +1402,9 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
        * overwrites a `verified` or `user-entered` value — a reviewer's
        * correction and a human-confirmed website both survive this.
        */
-      const stamp = (field: Parameters<typeof applyFieldUpdate>[1], value: string, source: string) => {
+      const stamp = (field: Parameters<typeof applyFieldUpdate>[1], value: string | number, source: string) => {
         const res = applyFieldUpdate(c.id, field, value, 'extracted', source);
-        if (res.applied) changes.push({ field: String(field), previous: null, next: value });
+        if (res.applied) changes.push({ field: String(field), previous: null, next: String(value) });
       };
 
       /**
@@ -1474,6 +1492,12 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       }
       if (facts.fundingDate) stamp('lastFundingDate', facts.fundingDate, secUrl);
       if (facts.accelerator && !c.accelerator) stamp('accelerator', facts.accelerator, 'Y Combinator public directory');
+      // Only where nothing is on record (c.foundedYear / c.teamSize are null
+      // for placeholders and `missing` provenance); a user-entered value
+      // also outranks this in applyFieldUpdate.
+      const ycSource = facts.ycProfileUrl ?? 'Y Combinator public profile';
+      if (facts.foundedYear && c.foundedYear === null) stamp('foundedYear', facts.foundedYear, ycSource);
+      if (facts.teamSize && c.teamSize === null) stamp('teamSize', facts.teamSize, ycSource);
       if (facts.description) {
         stamp('oneLiner', facts.description, c.website ?? `enrichment:${ENRICHMENT_VERSION}`);
       }
