@@ -8,6 +8,8 @@ import { saveCompany } from '../db/repos/companies';
 import type { ImportedCompany } from '../services/imports';
 import { installMockIntegrations, installTestPipelineMapping, uninstallMockIntegrations } from './mocks/install';
 import { adminAgent } from './testAuth';
+import request from 'supertest';
+import { createSessionToken, SESSION_COOKIE } from '../lib/auth';
 
 /**
  * The screening workflow, end to end over HTTP. HubSpot stays the
@@ -250,5 +252,32 @@ describe('screening workflow (fixture integrations, end to end over HTTP)', () =
     });
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/recipient email/i);
+  });
+
+  /**
+   * The HubSpot popup no longer has an "Approved by" picker (2026-11-18):
+   * the note names the signed-in person, and only a real one.
+   */
+  describe('the approver on the HubSpot note', () => {
+    const noteBody = (dealId: string) => {
+      const note = store.raw.mockHubSpot.find((o) => o.type === 'note' && o.associations.includes(dealId))!;
+      return String(note.properties.hs_note_body);
+    };
+
+    it('names the signed-in Microsoft SSO user when the popup sends no approver', async () => {
+      const token = createSessionToken({ sub: 'entra-123', label: 'Dana Partner', source: 'microsoft-sso', email: 'dana@vamos.example.com' });
+      const res = await request(app).post('/api/hubspot/sync-company')
+        .set('Cookie', `${SESSION_COOKIE}=${token}`).set('Idempotency-Key', 'wf-approver-sso')
+        .send({ ...syncPayload(), deal: { ...deal, approvedBy: null } });
+      expect(res.status).toBe(200);
+      expect(noteBody(res.body.dealId)).toContain('Approved by Dana Partner <dana@vamos.example.com> on ');
+    });
+
+    it('leaves the line off under the shared password, which is not a person', async () => {
+      const res = await agent.post('/api/hubspot/sync-company').set('Idempotency-Key', 'wf-approver-local')
+        .send({ ...syncPayload(), deal: { ...deal, approvedBy: null } });
+      expect(res.status).toBe(200);
+      expect(noteBody(res.body.dealId)).not.toContain('Approved by');
+    });
   });
 });

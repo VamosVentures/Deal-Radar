@@ -7,6 +7,8 @@ import { useIntegrations } from '../store/integrations';
 import { useCompanies } from '../store/companies';
 import { ExceptionBadge, ScoreGauge } from './ui';
 import { btnGhost, btnPrimary, ErrorNote, Field, Modal } from './Modal';
+import { CompanyNotes } from './CompanyNotes';
+import { confirmLeaveUnsavedNotes } from '../lib/unsavedNotes';
 import {
   HUBSPOT_ACCELERATOR_OPTIONS,
   HUBSPOT_BUSINESS_MODEL_OPTIONS,
@@ -23,15 +25,6 @@ import {
   type SyncResult,
 } from '../../shared/integrations';
 
-/**
- * Who may sign off on a HubSpot sync — recorded on the sync Note
- * ("Approved by X on <date>"), not to be confused with HubSpot's actual
- * Company/Deal owner, which is assigned automatically by industry (see
- * OWNER_ID_BY_INDUSTRY in server/services/hubspot.ts). The same 5 people
- * that mapping already names, confirmed by Andrew 2026-09-01.
- */
-const APPROVERS = ['Andrew Gonzalez', 'Andres Morin', 'Ashley Ryder', 'Maya Trujillo', 'Valeria Martinez'];
-
 type Step = 'review' | 'duplicates' | 'done';
 
 /**
@@ -39,13 +32,23 @@ type Step = 'review' | 'duplicates' | 'done';
  * every field is editable, duplicates are surfaced before anything is
  * created, and nothing is written until the reviewer confirms.
  */
-export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: () => void; onSynced?: () => void }) {
+export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = false }: {
+  c: Company;
+  onClose: () => void;
+  onSynced?: () => void;
+  /**
+   * Opened from a company page: record "Approved for HubSpot" when the
+   * reviewer actually submits — not when the popup opens. Opening it only
+   * to read or write internal notes, then cancelling, changes nothing
+   * (Andrew, 2026-11-18). Off for callers with no company row (Stealth Radar).
+   */
+  markApprovedOnSubmit?: boolean;
+}) {
   const { status } = useIntegrations();
-  const { enrichment: enrichmentMap } = useCompanies();
+  const { enrichment: enrichmentMap, refresh: refreshCompanies } = useCompanies();
   const fit = useMemo(() => scoreCompany(c), [c]);
 
   const [company, setCompany] = useState(() => companyToHubSpot(c));
-  const [approvedBy, setApprovedBy] = useState(APPROVERS[0]);
   const [notes, setNotes] = useState('');
   const [radarStage, setRadarStage] = useState<RadarHubSpotStage>('To Be Reviewed');
   /**
@@ -85,10 +88,25 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
   const setCompanyField = (k: keyof typeof company) => (v: string) =>
     setCompany((prev) => ({ ...prev, [k]: v || null }));
 
+  /**
+   * The internal-notes box lives in this popup now, so every way out of
+   * the review step — Cancel, ✕, Escape, clicking outside, or moving on
+   * to the duplicate check — asks first when a note is half-written
+   * (same guard the company page uses; see src/lib/unsavedNotes.ts).
+   */
+  const close = () => { if (confirmLeaveUnsavedNotes()) onClose(); };
+
   async function runDuplicateCheck() {
+    if (!confirmLeaveUnsavedNotes()) return;
     setBusy(true);
     setError(null);
     try {
+      if (markApprovedOnSubmit) {
+        // The approval decision is this click — recorded before the sync,
+        // exactly as the old open-time status change did.
+        await api.imports.setStatus(c.id, 'Approved for HubSpot', 'team');
+        void refreshCompanies();
+      }
       const { matches } = await api.hubspot.checkDuplicate({
         name: company.name,
         domain: company.domain,
@@ -111,7 +129,9 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
     setBusy(true);
     setError(null);
     try {
-      const base = dealToHubSpot(c, approvedBy);
+      // No "Approved by" picker (removed 2026-11-18, Andrew): the server
+      // records the signed-in reviewer as the approver instead.
+      const base = dealToHubSpot(c, null);
       const deal = {
         ...base,
         rationale: notes ? `${notes} — ${base.rationale}` : base.rationale,
@@ -139,7 +159,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
     <Modal
       title={step === 'done' ? 'Added to HubSpot' : `Review before adding ${c.name} to HubSpot`}
       eyebrow="HubSpot sync"
-      onClose={onClose}
+      onClose={close}
       wide
     >
       {step === 'review' && (
@@ -236,20 +256,14 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           <Field label="Sourcing notes (added to the deal rationale)" value={notes} onChange={setNotes} textarea placeholder="Optional analyst notes" />
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid">
-              Suggested HubSpot stage
-              <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
+            <label className="block font-mono text-[10px] font-bold uppercase tracking-wider text-marigold">
+              Choose the HubSpot stage
+              <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs font-normal normal-case text-ink">
                 {RADAR_HUBSPOT_STAGE_GROUPS.map((g) => (
                   <optgroup key={g.pipelineLabel} label={g.pipelineLabel}>
                     {g.stages.map((s) => <option key={s}>{s}</option>)}
                   </optgroup>
                 ))}
-              </select>
-            </label>
-            <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-mid" title="Recorded on the sync note as the approver, e.g. &quot;Approved by Andrew Gonzalez on 2026-09-01&quot;. HubSpot's actual Company/Deal owner is assigned automatically by industry (e.g. Health & Wellness → Ashley Ryder) — a separate thing from this picker.">
-              Approved by
-              <select value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs normal-case">
-                {APPROVERS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </label>
           </div>
@@ -321,10 +335,26 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
             </ul>
           </section>
 
+          {/*
+            Internal notes live here, next to the "add to HubSpot" action,
+            because the reviewer writes them as part of that decision
+            (moved from the company page's section 09, Andrew 2026-11-18).
+            They are Deal Radar's own notes: saved through the notes API,
+            never part of the sync payload. The "Sourcing notes" field
+            above is the one that DOES go to HubSpot.
+          */}
+          <section className="rounded-[2px] border border-line bg-paper p-3" data-testid="hubspot-modal-internal-notes">
+            <h3 className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">Internal notes</h3>
+            <p className="mb-2 mt-0.5 text-[11px] text-slate-mid">
+              For the Vamos team only — saved in Deal Radar and <strong>never sent to HubSpot</strong>.
+            </p>
+            <CompanyNotes companyId={c.id} />
+          </section>
+
           {error && <ErrorNote message={error.message} hint={error.hint} issues={error.issues} />}
 
           <footer className="flex items-center justify-end gap-2 border-t border-line pt-3">
-            <button className={btnGhost} onClick={onClose}>Cancel</button>
+            <button className={btnGhost} onClick={close} data-testid="hubspot-modal-cancel">Cancel</button>
             <button className={btnPrimary} onClick={runDuplicateCheck} disabled={busy || !company.name.trim() || hubspotNotConnected}>
               {busy ? 'Checking for duplicates…' : 'Check duplicates & add to HubSpot'}
             </button>
@@ -357,7 +387,7 @@ export function HubSpotModal({ c, onClose, onSynced }: { c: Company; onClose: ()
           </div>
           {error && <ErrorNote message={error.message} hint={error.hint} issues={error.issues} />}
           <footer className="flex items-center justify-end gap-2 border-t border-line pt-3">
-            <button className={btnGhost} onClick={onClose} disabled={busy}>Cancel</button>
+            <button className={btnGhost} onClick={close} disabled={busy}>Cancel</button>
             <button className={btnGhost} onClick={() => setStep('review')} disabled={busy}>Back to review</button>
             <button className={btnPrimary} onClick={() => submit('create-new', null)} disabled={busy}>
               {busy ? 'Submitting…' : 'Create a new record anyway'}

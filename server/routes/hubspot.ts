@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '../env';
 import { audit } from '../lib/guard';
 import { requireAdmin } from '../lib/auth';
+import { resolveReviewer } from '../lib/reviewer';
 import { wrap } from './helpers';
 import { companyMetaView, setCompanyMeta } from '../db/repos/companies';
 import { failedHubspotSyncs, getConfig, lastFailedHubspotSync, recordHubspotSync, setConfig } from '../db/repos/operations';
@@ -222,7 +223,17 @@ async function performSync(parsed: CompanySyncRequest) {
 
 hubspotRouter.post('/hubspot/sync-company', wrap(async (req, res) => {
   const parsed = companySyncRequestSchema.parse(req.body);
-  res.json(await performSync(parsed));
+  /**
+   * The HubSpot note's "Approved by X on <date>" line names whoever is
+   * signed in — there is no longer a picker to choose a name (removed
+   * 2026-11-18). Only a real person counts: a Microsoft SSO session's
+   * name/email. The shared-password session is not a person, so the line
+   * is simply left off rather than reading "Approved by Local administrator".
+   */
+  const reviewer = resolveReviewer(req);
+  const approvedBy = parsed.deal.approvedBy
+    ?? (reviewer?.source === 'microsoft-sso' ? reviewer.label : null);
+  res.json(await performSync({ ...parsed, deal: { ...parsed.deal, approvedBy } }));
 }));
 
 /** Retry the most recent FAILED synchronization for a company, using its stored payload. */
