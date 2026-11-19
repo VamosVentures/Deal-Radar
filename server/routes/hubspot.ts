@@ -6,6 +6,7 @@ import { requireAdmin } from '../lib/auth';
 import { resolveReviewer } from '../lib/reviewer';
 import { wrap } from './helpers';
 import { companyMetaView, saveFounderContacts, setCompanyMeta } from '../db/repos/companies';
+import { recordStageDecision } from '../db/repos/stageDecisions';
 import { normalizeEmail, normalizeLinkedInUrl } from '../../shared/founderContact';
 import { failedHubspotSyncs, getConfig, lastFailedHubspotSync, recordHubspotSync, setConfig } from '../db/repos/operations';
 import {
@@ -13,7 +14,9 @@ import {
   hubspotConnected, hubspotService,
 } from '../services/hubspot';
 import {
+  companySyncRequestFieldsSchema,
   companySyncRequestSchema,
+  isPassRevisitStage,
   hubspotPipelineMappingSchema,
   isSyncableContactName,
   RADAR_HUBSPOT_STAGES,
@@ -134,7 +137,7 @@ const singleCompany = z.object({ record: z.unknown(), radarStage: z.enum(RADAR_H
 
 hubspotRouter.post('/hubspot/company', wrap(async (req, res) => {
   const { record } = singleCompany.parse(req.body);
-  const company = companySyncRequestSchema.shape.company.parse(record);
+  const company = companySyncRequestFieldsSchema.shape.company.parse(record);
   const svc = hubspotService();
   const result = await svc.syncCompany({
     company, contacts: [],
@@ -152,7 +155,7 @@ hubspotRouter.post('/hubspot/company', wrap(async (req, res) => {
  * is already linked to a HubSpot company always updates that company,
  * regardless of what the caller asked for.
  */
-async function performSync(parsed: CompanySyncRequest) {
+async function performSync(parsed: CompanySyncRequest, decidedBy: string | null = null) {
   const svc = hubspotService();
 
   /**
@@ -209,6 +212,15 @@ async function performSync(parsed: CompanySyncRequest) {
     // A real, confirmed sync is the one event allowed to move the
     // status forward automatically — it isn't a guess, it's a fact.
     setCompanyMeta(parsed.company.dealRadarId, { hubspotCompanyId: result.companyId, hubspotDealId: result.dealId, reviewStatus: 'Synced to HubSpot' });
+    // The team's call on this company, kept in Deal Radar to learn from
+    // (every company goes to HubSpot, so the stage is the fit signal).
+    recordStageDecision({
+      companyId: parsed.company.dealRadarId,
+      hubspotStage: parsed.radarStage,
+      passReason: parsed.deal.passRevisitReason ?? null,
+      passNotes: parsed.deal.passRevisitNotes ?? null,
+      decidedBy,
+    });
     return result;
   } catch (e) {
     recordHubspotSync({
@@ -250,7 +262,7 @@ hubspotRouter.post('/hubspot/sync-company', wrap(async (req, res) => {
     source: `Entered by ${reviewer?.label ?? 'a reviewer'} in Add to HubSpot on ${new Date().toISOString().slice(0, 10)}`,
     overwrite: true,
   })));
-  res.json(await performSync({ ...parsed, deal: { ...parsed.deal, approvedBy } }));
+  res.json(await performSync({ ...parsed, deal: { ...parsed.deal, approvedBy } }, reviewer?.label ?? null));
 }));
 
 /** Retry the most recent FAILED synchronization for a company, using its stored payload. */
@@ -273,7 +285,7 @@ hubspotRouter.get('/hubspot/failed-syncs', requireAdmin, wrap(async (_req, res) 
 hubspotRouter.post('/hubspot/contact', wrap(async (req, res) => {
   // Standalone contact creation reuses syncCompany's contact path.
   // Validation (identity guardrails) happens in the schema parse below.
-  const contact = companySyncRequestSchema.shape.contacts.element.parse(req.body);
+  const contact = companySyncRequestFieldsSchema.shape.contacts.element.parse(req.body);
   const svc = hubspotService();
   const result = await svc.syncCompany({
     company: {
@@ -294,7 +306,14 @@ hubspotRouter.post('/hubspot/contact', wrap(async (req, res) => {
 
 hubspotRouter.post('/hubspot/deal', wrap(async (req, res) => {
   const body = z.object({ deal: z.unknown(), radarStage: z.enum(RADAR_HUBSPOT_STAGES).default('To Be Reviewed') }).parse(req.body);
-  const deal = companySyncRequestSchema.shape.deal.parse(body.deal);
+  const parsedDeal = companySyncRequestFieldsSchema.shape.deal.parse(body.deal);
+  // Same rule as a full sync: a Passed/Revisit stage needs a reason, and
+  // a Live Deals stage never carries one.
+  if (isPassRevisitStage(body.radarStage) && !parsedDeal.passRevisitReason) {
+    res.status(422).json({ error: 'error', message: 'Choose a pass/revisit reason — it is required for a Passed/Revisit Deals Pipeline stage.' });
+    return;
+  }
+  const deal = isPassRevisitStage(body.radarStage) ? parsedDeal : { ...parsedDeal, passRevisitReason: null, passRevisitNotes: null };
   const svc = hubspotService();
   const { pipelineId, stageId } = resolveStage(body.radarStage);
   const result = await svc.syncCompany({

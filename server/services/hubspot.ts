@@ -289,6 +289,10 @@ export function buildDealProperties(d: HubSpotDealRecord, stageId: string, pipel
     pipeline: pipelineId,
     dealstage: stageId,
     hubspot_owner_id: OWNER_ID_BY_INDUSTRY[d.vertical] ?? null,
+    // Vamos's own pass/revisit properties — set only for a Passed/Revisit
+    // stage (companySyncRequestSchema clears them otherwise).
+    pass_revisit_reasons: d.passRevisitReason ?? null,
+    additional_notes_for_pass___revisit_reasons: d.passRevisitNotes || null,
   });
 }
 

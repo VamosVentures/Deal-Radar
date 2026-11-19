@@ -405,6 +405,29 @@ test.describe('Internal company notes', () => {
     expect(order).toEqual({ foundersBeforeStage: true, stageThenNotes: true });
   });
 
+  test('a Passed/Revisit stage asks for HubSpot\'s pass/revisit reason and context; a Live Deals stage does not', async ({ page }) => {
+    await page.goto('/companies');
+    await page.getByText(HEALTH).click();
+    await openNotesPopup(page);
+    const stageBox = page.getByTestId('hubspot-modal-stage');
+    const stageSelect = stageBox.getByRole('combobox').first();
+
+    await expect(page.getByTestId('hubspot-modal-pass-reason')).toHaveCount(0);
+    await stageSelect.selectOption('Not A Fit');
+    const reasonBox = page.getByTestId('hubspot-modal-pass-reason');
+    await expect(reasonBox).toContainText('Pass/Revisit reason');
+    await expect(reasonBox).toContainText('* Required');
+    await expect(reasonBox.getByRole('combobox')).toContainText('Founding Team');
+    await expect(page.getByTestId('hubspot-modal-pass-reason-missing')).toBeVisible();
+
+    await reasonBox.getByRole('combobox').selectOption('Team');
+    await reasonBox.getByRole('textbox').fill('Solo technical founder; revisit with a GTM hire.');
+    await expect(page.getByTestId('hubspot-modal-pass-reason-missing')).toHaveCount(0);
+
+    await stageSelect.selectOption('Intro Meeting');
+    await expect(page.getByTestId('hubspot-modal-pass-reason')).toHaveCount(0);
+  });
+
   /**
    * A full pass through the feature with the console watched.
    *

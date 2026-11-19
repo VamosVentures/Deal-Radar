@@ -319,6 +319,33 @@ export function cleanJobTitle(role: string): string {
   return /^unknown$/i.test((role ?? '').trim()) ? '' : role;
 }
 
+/**
+ * HubSpot's own "Pass/Revisit Reasons" deal property (`pass_revisit_reasons`),
+ * a single-choice dropdown — values and labels copied from Vamos's portal
+ * on 2026-11-19. The team picks one of these, plus optional free-text
+ * context, whenever a deal moves into the Passed/Revisit Deals Pipeline;
+ * Deal Radar asks the same question at the same moment (Andrew, 2026-11-19)
+ * so the reason lands in HubSpot AND stays in Deal Radar to learn from.
+ * If the portal's options change, update this list to match.
+ */
+export const PASS_REVISIT_REASONS = [
+  { value: 'Traction', label: 'Traction' },
+  { value: 'Market', label: 'Market' },
+  { value: 'Product', label: 'Product' },
+  { value: 'Team', label: 'Founding Team' },
+  { value: 'Business Model', label: 'Business Model' },
+  { value: 'Exit', label: 'Exit Potential' },
+  { value: 'Geography', label: 'Geography' },
+  { value: 'Competition', label: 'Competition' },
+  { value: 'Industry', label: 'Industry' },
+] as const;
+export const PASS_REVISIT_REASON_VALUES = PASS_REVISIT_REASONS.map((r) => r.value) as [
+  (typeof PASS_REVISIT_REASONS)[number]['value'], ...(typeof PASS_REVISIT_REASONS)[number]['value'][],
+];
+export type PassRevisitReason = (typeof PASS_REVISIT_REASONS)[number]['value'];
+/** HubSpot's single-line text property; generous, but bounded. */
+export const PASS_REVISIT_NOTES_MAX = 2000;
+
 export const hubspotDealRecordSchema = z.object({
   companyName: z.string().min(1),
   fitScore: z.number().min(1).max(10),
@@ -343,6 +370,13 @@ export const hubspotDealRecordSchema = z.object({
   approvalDate: z.string().nullable().default(null),
   /** Evidence source URLs backing the recommendation. */
   sourceUrls: z.array(z.string()).default([]),
+  /**
+   * Why the deal is passed or set to revisit — required for, and only sent
+   * with, a Passed/Revisit Deals Pipeline stage (see companySyncRequestSchema).
+   * Written to HubSpot's own `pass_revisit_reasons` / `additional_notes_for_pass___revisit_reasons`.
+   */
+  passRevisitReason: z.enum(PASS_REVISIT_REASON_VALUES).nullable().optional(),
+  passRevisitNotes: z.string().trim().max(PASS_REVISIT_NOTES_MAX).nullable().optional(),
 });
 export type HubSpotDealRecord = z.infer<typeof hubspotDealRecordSchema>;
 
@@ -377,6 +411,11 @@ export const RADAR_HUBSPOT_STAGE_GROUPS = [
   { pipelineLabel: 'Live Deals Pipeline', stages: ['To Be Reviewed', 'Intro Meeting', 'Company Dilligence', 'Negotiations', 'Legal Dilligence', 'Fund Onboarding', 'Portfolio Company'] as const },
   { pipelineLabel: 'Passed/Revisit Deals Pipeline', stages: ['Not A Fit', 'Revisit in 6 months', 'Revisit in 1 year', 'Revisit in + 1 year'] as const },
 ] as const;
+
+/** Is this one of the Passed/Revisit Deals Pipeline stages — the ones that need a pass/revisit reason? */
+export function isPassRevisitStage(stage: string): boolean {
+  return (RADAR_HUBSPOT_STAGE_GROUPS[1].stages as readonly string[]).includes(stage);
+}
 
 /**
  * Each stage name maps to its own {pipelineId, stageId} — deliberately
@@ -463,7 +502,8 @@ export const STALE_SETTINGS_KEY = 'stale-settings';
 
 // ── Sync request / result ────────────────────────────────────────
 
-export const companySyncRequestSchema = z.object({
+/** The request's fields, for routes that reuse pieces of it (`.shape`). Validate a full request with companySyncRequestSchema. */
+export const companySyncRequestFieldsSchema = z.object({
   company: hubspotCompanyRecordSchema,
   contacts: z.array(hubspotContactRecordSchema),
   deal: hubspotDealRecordSchema,
@@ -471,6 +511,17 @@ export const companySyncRequestSchema = z.object({
   duplicateResolution: z.enum(['create-new', 'update-existing']).default('create-new'),
   existingRecordId: z.string().nullable().default(null),
 });
+
+export const companySyncRequestSchema = companySyncRequestFieldsSchema
+  // HubSpot's rule, enforced here too: a Passed/Revisit stage needs a reason.
+  .refine((r) => !isPassRevisitStage(r.radarStage) || !!r.deal.passRevisitReason, {
+    message: 'Choose a pass/revisit reason — it is required for a Passed/Revisit Deals Pipeline stage.',
+    path: ['deal', 'passRevisitReason'],
+  })
+  // …and only there: a Live Deals stage never carries a stale reason to HubSpot.
+  .transform((r) => (isPassRevisitStage(r.radarStage)
+    ? r
+    : { ...r, deal: { ...r.deal, passRevisitReason: null, passRevisitNotes: null } }));
 export type CompanySyncRequest = z.infer<typeof companySyncRequestSchema>;
 
 export interface DuplicateMatch {

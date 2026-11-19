@@ -18,8 +18,12 @@ import {
   HUBSPOT_RAISE_RANGE_OPTIONS,
   HUBSPOT_ROUND_OPTIONS,
   HUBSPOT_STATE_OPTIONS,
+  isPassRevisitStage,
   normalizeDomain,
+  PASS_REVISIT_NOTES_MAX,
+  PASS_REVISIT_REASONS,
   RADAR_HUBSPOT_STAGE_GROUPS,
+  type PassRevisitReason,
   type DuplicateMatch,
   type RadarHubSpotStage,
   type SyncResult,
@@ -51,6 +55,10 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
   const [company, setCompany] = useState(() => companyToHubSpot(c));
   const [notes, setNotes] = useState('');
   const [radarStage, setRadarStage] = useState<RadarHubSpotStage>('To Be Reviewed');
+  const [passReason, setPassReason] = useState<PassRevisitReason | ''>('');
+  const [passNotes, setPassNotes] = useState('');
+  const passStage = isPassRevisitStage(radarStage);
+  const needsPassReason = passStage && !passReason;
   /**
    * Contacts come from the ENRICHED founder when research verified one,
    * and otherwise from any imported founder row that is a real person.
@@ -143,6 +151,9 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
       const deal = {
         ...base,
         rationale: notes ? `${notes} — ${base.rationale}` : base.rationale,
+        // Only for a Passed/Revisit stage; the server drops them otherwise too.
+        passRevisitReason: passStage && passReason ? passReason : null,
+        passRevisitNotes: passStage && passNotes.trim() ? passNotes.trim() : null,
       };
       const res = await api.hubspot.syncCompany({
         company: { ...company, domain: normalizeDomain(company.website) },
@@ -348,6 +359,39 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
                 ))}
               </select>
             </label>
+            {/*
+              HubSpot requires a pass/revisit reason (its own dropdown) plus
+              optional context whenever a deal moves into the Passed/Revisit
+              Deals Pipeline; Deal Radar asks at the same moment, sends both
+              to HubSpot's own properties, and keeps them to learn from
+              (Andrew, 2026-11-19).
+            */}
+            {passStage && (
+              <div className="mt-3 grid gap-3 border-t border-line pt-3 sm:grid-cols-2" data-testid="hubspot-modal-pass-reason">
+                <label className="block font-mono text-[11px] font-bold uppercase tracking-widest text-marigold">
+                  Pass/Revisit reason <span className="text-alerta">* Required</span>
+                  <select
+                    value={passReason}
+                    onChange={(e) => setPassReason(e.target.value as PassRevisitReason | '')}
+                    className={`mt-1.5 block w-full rounded-[2px] border bg-panel px-2 py-1.5 font-body text-xs font-normal normal-case tracking-normal text-ink ${passReason ? 'border-line' : 'border-alerta'}`}
+                  >
+                    <option value="">— choose a reason —</option>
+                    {PASS_REVISIT_REASONS.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                  </select>
+                </label>
+                <label className="block font-mono text-[11px] font-bold uppercase tracking-widest text-marigold sm:col-span-2">
+                  Additional notes for pass/revisit reason
+                  <textarea
+                    value={passNotes}
+                    onChange={(e) => setPassNotes(e.target.value)}
+                    maxLength={PASS_REVISIT_NOTES_MAX}
+                    rows={3}
+                    placeholder="Added context — goes to HubSpot with the reason."
+                    className="mt-1.5 block w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs font-normal normal-case tracking-normal text-ink"
+                  />
+                </label>
+              </div>
+            )}
           </section>
 
           {/*
@@ -370,7 +414,10 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
 
           <footer className="flex items-center justify-end gap-2 border-t border-line pt-3">
             <button className={btnGhost} onClick={close} data-testid="hubspot-modal-cancel">Cancel</button>
-            <button className={btnPrimary} onClick={runDuplicateCheck} disabled={busy || !company.name.trim() || hubspotNotConnected}>
+            {needsPassReason && (
+              <span className="mr-auto text-[11px] text-alerta" data-testid="hubspot-modal-pass-reason-missing">Choose a pass/revisit reason first.</span>
+            )}
+            <button className={btnPrimary} onClick={runDuplicateCheck} disabled={busy || !company.name.trim() || hubspotNotConnected || needsPassReason}>
               {busy ? 'Checking for duplicates…' : 'Check duplicates & add to HubSpot'}
             </button>
           </footer>
