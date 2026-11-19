@@ -376,7 +376,8 @@ test.describe('Internal company notes', () => {
     await expect(page.getByTestId('company-notes')).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Internal notes' })).toHaveCount(0);
     await openNotesPopup(page);
-    await expect(page.getByTestId('hubspot-modal-internal-notes')).toContainText('never sent to HubSpot');
+    await expect(page.getByTestId('company-notes-purpose')).toHaveText('For the VamosVentures team only - used by the Deal Radar for fine tuning.');
+    await expect(page.getByTestId('hubspot-modal-internal-notes')).not.toContainText('never sent to HubSpot');
     await expect(page.getByTestId('note-draft')).toBeVisible();
   });
 
