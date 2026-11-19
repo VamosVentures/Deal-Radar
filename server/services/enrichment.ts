@@ -130,6 +130,18 @@ export interface EnrichmentRunResult {
 
 // ── Loading a company's raw material ──────────────────────────────
 
+/**
+ * Is this company already tied to YC on its own record — an accelerator
+ * value naming YC ("Y Combinator F26", "YC W26"), YC deal evidence, or a
+ * YC link? Only these are looked up in the YC directory, so the lookup is
+ * never a fishing expedition for an unrelated same-named company.
+ */
+function isYcLinked(c: Pick<PlanCompany, 'accelerator' | 'evidence' | 'dealEvidence'>): boolean {
+  return /\b(y\s*combinator|yc)\b/i.test(c.accelerator ?? '')
+    || c.dealEvidence.some((d) => d.sourceId === 'yc')
+    || c.evidence.some((e) => /ycombinator/i.test(e.url));
+}
+
 interface RawCompany extends PlanCompany {
   oneLiner: string;
   /** The vertical bucket already on the row — never auto-corrected by this pipeline. */
@@ -1021,6 +1033,34 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
       }
     }
 
+    /**
+     * A company the record says is in YC, but with no YC link on file —
+     * e.g. a YC newsletter lead from email intake, whose only evidence is
+     * "Forwarded email". Its YC profile (founders, location, founded
+     * year, team size) was never searched, because the research plan only
+     * visits accelerator pages it has a URL for: 0 of 53 email leads in
+     * production had a founded year. Ask the YC directory for the profile
+     * URL first, and hand it to the plan so the existing YC-profile step
+     * reads it — including its identity check against the website.
+     */
+    const ycLinked = isYcLinked(c);
+    let ycLookup: Awaited<ReturnType<typeof findInYc>> | undefined;
+    const hasYcProfileUrl = [...c.evidence.map((e) => e.url), ...c.dealEvidence.map((d) => d.url)].some((u) => isYcProfileUrl(u));
+    if (ycLinked && !hasYcProfileUrl && !c.quarantined) {
+      try {
+        ycLookup = await findInYc(c.name);
+      } catch {
+        ycLookup = null; // best effort, like every other source here
+      }
+      if (ycLookup && isYcProfileUrl(ycLookup.url)) {
+        // In memory only: it widens this run's plan; nothing is written for it.
+        c.evidence = [...c.evidence, {
+          claim: 'Listed in the Y Combinator directory', source: 'Y Combinator public profile',
+          url: ycLookup.url, date: '', type: 'Database record',
+        }];
+      }
+    }
+
     const plans = buildResearchPlan(c);
     const attempts: { family: SourceFamily; outcome: ResearchOutcome; detail: string; url: string | null; found: number }[] = [];
     const candidates: FoundCandidate[] = [];
@@ -1220,12 +1260,10 @@ export async function runEnrichment(opts: EnrichmentOptions): Promise<Enrichment
      * Only consulted for companies already linked to YC, and only for
      * fields still missing, so it is not a fishing expedition.
      */
-    const ycLinked = c.accelerator?.toLowerCase().includes('combinator')
-      || c.dealEvidence.some((d) => d.sourceId === 'yc')
-      || c.evidence.some((e) => /ycombinator/i.test(e.url));
     if (ycLinked && (!facts.city || !facts.state || !c.website)) {
       try {
-        const yc = await findInYc(c.name);
+        // Reuse the lookup made before planning, when there was one.
+        const yc = ycLookup !== undefined ? ycLookup : await findInYc(c.name);
         if (yc) {
           const loc = yc.record.locations?.[0];
           const resolved = loc ? resolveCityState(loc) : null;
