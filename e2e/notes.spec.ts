@@ -12,6 +12,11 @@ import { E2E_ADMIN_PASSWORD } from './env';
  * archiving hides a note without destroying it, and that a half-written
  * opinion is not silently thrown away when the panel closes.
  *
+ * Since 2026-11-18 the notes box lives in the "Add to HubSpot" popup (it
+ * moved there from the company page's section 09): the reviewer writes
+ * notes as part of that decision. The notes stay internal — they are
+ * never part of the HubSpot sync payload.
+ *
  * Each test tags its note with a unique marker and asserts on that
  * marker rather than on how many notes exist, so the tests stay
  * independent while sharing one seeded database.
@@ -20,10 +25,21 @@ import { E2E_ADMIN_PASSWORD } from './env';
 const HEALTH = 'E2E Health Fixture Co';
 const FINTECH = 'E2E FinTech Fixture Co';
 
+/** Open the "Add to HubSpot" popup on the company already expanded, where the notes box lives. */
+async function openNotesPopup(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Add to HubSpot' }).click();
+  await expect(page.getByTestId('company-notes')).toBeVisible();
+}
+
 async function openCompany(page: Page, name: string): Promise<void> {
   await page.goto('/companies');
   await page.getByText(name).click();
-  await expect(page.getByTestId('company-notes')).toBeVisible();
+  await openNotesPopup(page);
+}
+
+/** The popup's Cancel button (review step footer). */
+function popupCancel(page: Page) {
+  return page.getByTestId('hubspot-modal-cancel');
 }
 
 /** The card holding a specific note, matched by its unique marker text. */
@@ -218,6 +234,7 @@ test.describe('Internal company notes', () => {
 
     await page.reload();
     await page.getByText(HEALTH).click();
+    await openNotesPopup(page);
     await expect(cardWith(page, marker)).toBeVisible();
     await expect(cardWith(page, marker).getByTestId('note-meta')).toContainText('Local administrator');
   });
@@ -239,47 +256,67 @@ test.describe('Internal company notes', () => {
 
     await page.goto('/companies');
     await page.getByText(HEALTH).click();
+    await openNotesPopup(page);
     await expect(cardWith(page, marker)).toBeVisible();
   });
 
-  test('an unsaved draft warns before the panel is closed, and survives declining', async ({ page }) => {
+  test('an unsaved draft warns before the popup is cancelled, and survives declining', async ({ page }) => {
     const draft = 'MARKER-UNSAVED-Half-written thought that must not vanish.';
     await openCompany(page, HEALTH);
     await page.getByTestId('note-draft').fill(draft);
 
-    // Decline the warning: the panel stays open with the draft intact.
+    // Decline the warning: the popup stays open with the draft intact.
     let seen = '';
     const decline = (d: import('@playwright/test').Dialog) => { seen = d.message(); void d.dismiss(); };
     page.on('dialog', decline);
-    await page.getByText(HEALTH).first().click();
+    await popupCancel(page).click();
     await expect.poll(() => seen).toContain('unsaved internal note');
     await expect(page.getByTestId('note-draft')).toHaveValue(draft);
     page.off('dialog', decline);
 
-    // Accept it: the panel closes and the draft is deliberately gone.
+    // Accept it: the popup closes and the draft is deliberately gone.
     page.on('dialog', (d) => void d.accept());
-    await page.getByText(HEALTH).first().click();
+    await popupCancel(page).click();
     await expect(page.getByTestId('company-notes')).toHaveCount(0);
   });
 
-  test('an unsaved draft warns before switching to a different company', async ({ page }) => {
-    const draft = 'MARKER-SWITCH-Draft that should block navigation.';
+  test('Escape with an unsaved draft asks first, too', async ({ page }) => {
+    const draft = 'MARKER-ESCAPE-Draft that Escape must not silently drop.';
     await openCompany(page, HEALTH);
     await page.getByTestId('note-draft').fill(draft);
 
     let seen = '';
     const decline = (d: import('@playwright/test').Dialog) => { seen = d.message(); void d.dismiss(); };
     page.on('dialog', decline);
-    await page.getByText(FINTECH).click();
+    await page.keyboard.press('Escape');
     await expect.poll(() => seen).toContain('unsaved internal note');
-    // Still on the original company, draft untouched.
     await expect(page.getByTestId('note-draft')).toHaveValue(draft);
     page.off('dialog', decline);
 
     page.on('dialog', (d) => void d.accept());
-    await page.getByText(FINTECH).click();
-    // The other company's panel is open, with its own empty draft box.
-    await expect(page.getByTestId('note-draft')).toHaveValue('');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('company-notes')).toHaveCount(0);
+  });
+
+  test('opening Add to HubSpot just to write a note, then cancelling, does not mark the company approved', async ({ page }) => {
+    const reviewStatusOf = async () => {
+      const body = await (await page.request.get('/api/companies/imported')).json() as {
+        companies: { id: string; name: string }[]; companyMeta: Record<string, { reviewStatus?: string }>;
+      };
+      const id = body.companies.find((c) => c.name === HEALTH)!.id;
+      return body.companyMeta[id]?.reviewStatus ?? 'New';
+    };
+    const before = await reviewStatusOf();
+    expect(before).not.toBe('Approved for HubSpot');
+
+    const marker = 'MARKER-NO-APPROVE-Only here to leave a note.';
+    await openCompany(page, HEALTH);
+    await addNote(page, marker);
+    await popupCancel(page).click();
+    await expect(page.getByTestId('company-notes')).toHaveCount(0);
+
+    // The status is recorded on submit ("Check duplicates & add to HubSpot"), never on open.
+    expect(await reviewStatusOf()).toBe(before);
   });
 
   test('a saved note does not trigger the unsaved-work warning', async ({ page }) => {
@@ -289,7 +326,7 @@ test.describe('Internal company notes', () => {
 
     let dialogs = 0;
     page.on('dialog', (d) => { dialogs += 1; void d.dismiss(); });
-    await page.getByText(HEALTH).first().click();
+    await popupCancel(page).click();
     await expect(page.getByTestId('company-notes')).toHaveCount(0);
     expect(dialogs).toBe(0);
   });
@@ -325,16 +362,21 @@ test.describe('Internal company notes', () => {
 
     await page.goto('/companies');
     await page.getByText(HEALTH).click();
+    await page.getByRole('button', { name: 'Add to HubSpot' }).click();
     await expect(page.getByTestId('notes-load-error')).toBeVisible();
     // Critically NOT the empty state — "no notes" and "could not load
     // the notes" must never look the same to a reviewer.
     await expect(page.getByTestId('notes-empty')).toHaveCount(0);
   });
 
-  test('the internal notes section is reachable from the memo table of contents', async ({ page }) => {
-    await openCompany(page, HEALTH);
-    await expect(page.getByRole('link', { name: 'Internal notes' })).toBeVisible();
-    await page.getByRole('link', { name: 'Internal notes' }).click();
+  test('notes live in the Add to HubSpot popup, not on the company page', async ({ page }) => {
+    await page.goto('/companies');
+    await page.getByText(HEALTH).click();
+    // The company page itself no longer carries the notes box or a link to it.
+    await expect(page.getByTestId('company-notes')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Internal notes' })).toHaveCount(0);
+    await openNotesPopup(page);
+    await expect(page.getByTestId('hubspot-modal-internal-notes')).toContainText('never sent to HubSpot');
     await expect(page.getByTestId('note-draft')).toBeVisible();
   });
 
