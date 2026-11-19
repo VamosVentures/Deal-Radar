@@ -4,9 +4,10 @@ import { store } from '../lib/store';
 import { audit } from '../lib/guard';
 import { getConfig, setConfig } from '../db/repos/operations';
 import {
-  MAX_RESULTS_PER_RUN, MAX_SOURCES_PER_RUN, scheduledJobSchema,
+  MAX_RESULTS_PER_RUN, MAX_SOURCES_PER_RUN, scheduledJobSchema, scheduledJobTimingSchema,
   type DiscoveryQuery, type DiscoveryRun, type ScheduledJob,
 } from '../../shared/discovery';
+import { latestSlot, nextSlot, WEEKDAYS } from '../../shared/scheduleTime';
 import { runDiscovery, importCandidates } from './discovery';
 import { existingCandidates } from '../sourcing/dedupe';
 import { runEnrichment } from './enrichment';
@@ -118,10 +119,67 @@ export function schedulerStatus(): { active: boolean; label: string } {
   };
 }
 
-export function saveJob(raw: unknown): ScheduledJob {
-  const input = scheduledJobSchema.omit({ id: true, lastRunAt: true, lastError: true }).parse(raw);
+/**
+ * Is this job due at `now`? A job runs at its weekly slot (runDay/runTime
+ * in its time zone): it is due once the most recent slot has passed and it
+ * has not run since. A biweekly job also needs ~two weeks since its last
+ * run (13 days, so a run that happened a little after its slot does not
+ * push the next one back a week).
+ *
+ * A job that has never run waits for the first slot after it was saved.
+ * If the server was down at the slot, the job runs at the first check
+ * after it comes back — late rather than skipped.
+ */
+export function isJobDue(job: ScheduledJob, now: number): boolean {
+  const slot = latestSlot(now, job);
+  if (job.lastRunAt) {
+    const last = new Date(job.lastRunAt).getTime();
+    if (last >= slot) return false;
+    if (job.cadence === 'biweekly' && now - last < 13 * 24 * 3600_000) return false;
+    return true;
+  }
+  return !job.createdAt || new Date(job.createdAt).getTime() < slot;
+}
+
+/** When the job will next start, for display. A job that is due now reports its overdue slot. */
+export function nextRunAt(job: ScheduledJob, now: number): string {
+  if (isJobDue(job, now)) return new Date(latestSlot(now, job)).toISOString();
+  let at = nextSlot(now, job);
+  if (job.cadence === 'biweekly' && job.lastRunAt) {
+    const last = new Date(job.lastRunAt).getTime();
+    while (at - last < 13 * 24 * 3600_000) at = nextSlot(at, job);
+  }
+  return new Date(at).toISOString();
+}
+
+/** The jobs as Settings shows them: stored configuration plus the computed next start. */
+export function jobsView(now = Date.now()): (ScheduledJob & { nextRunAt: string | null })[] {
+  return listJobs().map((j) => ({ ...j, nextRunAt: j.enabled && j.query ? nextRunAt(j, now) : null }));
+}
+
+/**
+ * Change when an existing schedule runs, keeping everything else — its
+ * sources, its run history, its last-run time. Before this, the only way
+ * to change a schedule was to delete it and save a new one.
+ */
+export function updateJobTiming(id: string, raw: unknown): ScheduledJob {
+  const timing = scheduledJobTimingSchema.parse(raw);
   const jobs = listJobs();
-  const job: ScheduledJob = { ...input, id: store.nextId('job'), lastRunAt: null, lastError: null };
+  const job = jobs.find((j) => j.id === id);
+  if (!job) throw Object.assign(new Error('Scheduled job not found.'), { status: 404 });
+  const updated = { ...job, ...timing };
+  saveJobs(jobs.map((j) => (j.id === id ? updated : j)));
+  audit({
+    provider: 'system', mode: 'local', action: 'schedule-timing', subject: id, outcome: 'ok',
+    detail: `Runs ${WEEKDAYS[timing.runDay]} at ${timing.runTime} ${timing.timeZone} (was ${WEEKDAYS[job.runDay]} at ${job.runTime} ${job.timeZone})`,
+  });
+  return updated;
+}
+
+export function saveJob(raw: unknown): ScheduledJob {
+  const input = scheduledJobSchema.omit({ id: true, lastRunAt: true, lastError: true, createdAt: true }).parse(raw);
+  const jobs = listJobs();
+  const job: ScheduledJob = { ...input, id: store.nextId('job'), lastRunAt: null, lastError: null, createdAt: new Date().toISOString() };
   saveJobs([...jobs, job]);
   audit({
     provider: 'system', mode: 'local', action: 'schedule-save', subject: job.id, outcome: 'ok',
@@ -219,9 +277,11 @@ export async function runJobNow(jobId: string, actor: string): Promise<{ runs: D
 
 // ── Execution loop (only started when RUN_SCHEDULER=true) ────────
 
-const CADENCE_MS = { weekly: 7 * 24 * 3600_000, biweekly: 14 * 24 * 3600_000 } as const;
 let running = false; // duplicate-run protection within this process
 let timer: ReturnType<typeof setInterval> | null = null;
+let firstTick: ReturnType<typeof setTimeout> | null = null;
+/** Checks run every 15 minutes, on the quarter hour, so a 6:00 PM schedule starts at 6:00, not up to an hour late. */
+const TICK_MS = 15 * 60_000;
 
 export async function tickScheduler(now = Date.now()): Promise<number> {
   if (!schedulerEnabled() || running) return 0;
@@ -230,8 +290,7 @@ export async function tickScheduler(now = Date.now()): Promise<number> {
   try {
     for (const job of listJobs()) {
       if (!job.enabled || !job.query) continue;
-      const due = !job.lastRunAt || now - new Date(job.lastRunAt).getTime() >= CADENCE_MS[job.cadence];
-      if (!due) continue;
+      if (!isJobDue(job, now)) continue;
       const { runs, errors } = await executeJob({ ...job, query: job.query }, 'scheduler');
       if (errors.length > 0) {
         audit({ provider: 'system', mode: 'local', action: 'schedule-run', subject: job.id, outcome: 'error', detail: errors.join(' | ') });
@@ -240,7 +299,7 @@ export async function tickScheduler(now = Date.now()): Promise<number> {
       // never lost to a later job in the same tick. lastRunAt advances
       // only when at least one batch actually ran: a job whose every
       // batch failed (another run holding the lock, a source outage)
-      // stays due and is retried at the next hourly check instead of
+      // stays due and is retried at the next 15-minute check instead of
       // waiting a full cadence — and lastError says why meanwhile.
       recordAttempt(job.id, runs.length > 0 ? new Date(now).toISOString() : job.lastRunAt, errors);
       if (runs.length > 0) ran += 1;
@@ -253,20 +312,34 @@ export async function tickScheduler(now = Date.now()): Promise<number> {
 
 /** Start the loop — call ONLY from the server entrypoint, never from tests. */
 export function startScheduler(): void {
-  if (!schedulerEnabled() || timer) return;
-  timer = setInterval(() => { void tickScheduler(); }, 60 * 60_000); // hourly due-check
-  timer.unref?.();
+  if (!schedulerEnabled() || timer || firstTick) return;
+  // Align to the next quarter hour, then check every 15 minutes. One
+  // check right away too, so a slot missed while the server was down
+  // (e.g. a deploy at 6:00 PM Sunday) runs as soon as it is back.
+  void tickScheduler();
+  const untilQuarter = TICK_MS - (Date.now() % TICK_MS);
+  firstTick = setTimeout(() => {
+    firstTick = null;
+    void tickScheduler();
+    timer = setInterval(() => { void tickScheduler(); }, TICK_MS);
+    timer.unref?.();
+  }, untilQuarter);
+  firstTick.unref?.();
 }
 
 /** Stop the loop — used by graceful shutdown so no new tick starts mid-shutdown. */
 export function stopScheduler(): void {
+  if (firstTick) {
+    clearTimeout(firstTick);
+    firstTick = null;
+  }
   if (timer) {
     clearInterval(timer);
     timer = null;
   }
 }
 
-/** Whether the hourly tick timer is currently running (for /health/ready). */
+/** Whether the tick timer is currently running (for /health/ready). */
 export function schedulerRunning(): boolean {
-  return timer !== null;
+  return timer !== null || firstTick !== null;
 }

@@ -1,23 +1,68 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../lib/api';
 import { DEMO_MODE } from '../lib/demoMode';
-import type { DiscoveryQuery, ScheduledJob } from '../../shared/discovery';
+import type { DiscoveryQuery, ScheduledJob, ScheduledJobTiming } from '../../shared/discovery';
+import {
+  DEFAULT_RUN_DAY, DEFAULT_RUN_TIME, DEFAULT_TIME_ZONE, formatInZone, formatRunTime, SCHEDULE_TIME_ZONES,
+  TIME_ZONE_LABELS, WEEKDAYS, type ScheduleTimeZone,
+} from '../../shared/scheduleTime';
 import { GEOGRAPHIES, MAX_RESULTS_PER_RUN, MAX_SOURCES_PER_RUN, PREFERRED_STATES_P4 } from '../../shared/discovery';
 import { VERTICAL_OPTIONS } from '../data/taxonomy';
 
 const STAGES = ['Pre-seed', 'Seed', 'Series A'] as const;
 
+const DEFAULT_TIMING: ScheduledJobTiming = { runDay: DEFAULT_RUN_DAY, runTime: DEFAULT_RUN_TIME, timeZone: DEFAULT_TIME_ZONE };
+
+/** Every quarter hour of the day, as "HH:MM" — the scheduler checks on the quarter hour. */
+const RUN_TIMES = Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, '0')}:${String((i % 4) * 15).padStart(2, '0')}`);
+
+/** Day, time and time zone pickers — used by the new-schedule form and by "Change day/time" on a saved schedule. */
+function TimingFields({ value, onChange, className }: {
+  value: ScheduledJobTiming; onChange: (t: ScheduledJobTiming) => void; className: string;
+}) {
+  return (
+    <>
+      <label className="flex flex-col gap-1">
+        <span className="font-mono text-[10px] uppercase text-slate-mid">Day</span>
+        <select className={className} value={value.runDay} onChange={(e) => onChange({ ...value, runDay: Number(e.target.value) })} aria-label="Run day">
+          {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="font-mono text-[10px] uppercase text-slate-mid">Time</span>
+        <select className={className} value={value.runTime} onChange={(e) => onChange({ ...value, runTime: e.target.value })} aria-label="Run time">
+          {RUN_TIMES.map((t) => <option key={t} value={t}>{formatRunTime(t)}</option>)}
+        </select>
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="font-mono text-[10px] uppercase text-slate-mid">Time zone</span>
+        <select className={className} value={value.timeZone} onChange={(e) => onChange({ ...value, timeZone: e.target.value as ScheduleTimeZone })} aria-label="Time zone">
+          {SCHEDULE_TIME_ZONES.map((z) => <option key={z} value={z}>{TIME_ZONE_LABELS[z]}</option>)}
+        </select>
+      </label>
+    </>
+  );
+}
+
+/** "Sundays at 6:00 PM Central". */
+function describeTiming(t: ScheduledJobTiming, cadence: ScheduledJob['cadence']): string {
+  return `${cadence === 'biweekly' ? 'Every other ' : ''}${WEEKDAYS[t.runDay]}${cadence === 'biweekly' ? '' : 's'} at ${formatRunTime(t.runTime)} ${TIME_ZONE_LABELS[t.timeZone]}`;
+}
+
 /**
  * Server-side scheduled sourcing (Settings — Admin Only). This does
  * NOT depend on an open browser tab: configuration is stored and, when
- * RUN_SCHEDULER=true on a persistently-hosted backend, an hourly
+ * RUN_SCHEDULER=true on a persistently-hosted backend, a 15-minute
  * due-check executes jobs on cadence with no client involved. Runs
  * reuse the exact same discovery pipeline and guardrails as a manual
  * search — results always wait in the candidate preview for a human;
  * nothing here contacts founders, sends email, or changes HubSpot.
  */
 export function SchedulePanel() {
-  const [state, setState] = useState<{ active: boolean; label: string; jobs: ScheduledJob[] } | null>(null);
+  const [state, setState] = useState<{ active: boolean; label: string; jobs: (ScheduledJob & { nextRunAt: string | null })[] } | null>(null);
+  const [timing, setTiming] = useState<ScheduledJobTiming>(DEFAULT_TIMING);
+  /** The saved schedule whose day/time is being changed, and the edit in progress. */
+  const [editing, setEditing] = useState<{ id: string; timing: ScheduledJobTiming } | null>(null);
   const [sources, setSources] = useState<{ id: string; name: string; state: 'live' | 'credentials-required' | 'planned' | 'unavailable' }[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
@@ -62,7 +107,19 @@ export function SchedulePanel() {
     setErr(null);
     if (picked.length === 0) { setErr('Pick at least one source.'); return; }
     try {
-      await api.schedule.save({ cadence, jobType, query: query as DiscoveryQuery, enabled: true });
+      await api.schedule.save({ cadence, jobType, query: query as DiscoveryQuery, enabled: true, ...timing });
+      load();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  const saveTiming = async () => {
+    if (!editing) return;
+    setErr(null);
+    try {
+      await api.schedule.setTiming(editing.id, editing.timing);
+      setEditing(null);
       load();
     } catch (e) {
       setErr((e as Error).message);
@@ -142,6 +199,10 @@ export function SchedulePanel() {
               {VERTICAL_OPTIONS.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </label>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-3" data-testid="new-schedule-timing">
+          <TimingFields value={timing} onChange={setTiming} className={input} />
         </div>
 
         <div className="grid gap-2 sm:grid-cols-3">
@@ -228,14 +289,24 @@ export function SchedulePanel() {
               <span className="font-mono text-[10px] uppercase text-slate-mid">{j.cadence}</span>
               <span className="font-semibold">{j.jobType}</span>
               <span className="font-semibold">{VERTICAL_OPTIONS.find((v) => v.id === j.query?.vertical)?.name ?? 'Any vertical'}</span>
+              <span className="font-semibold text-ink" data-testid="schedule-timing">{describeTiming(j, j.cadence)}</span>
               <span className="text-slate-mid">
-                sources: {j.query?.sources.join(', ') ?? '—'} · last run: {j.lastRunAt ? j.lastRunAt.slice(0, 16).replace('T', ' ') : state.active ? 'pending' : 'will not run (inactive)'}
+                sources: {j.query?.sources.join(', ') ?? '—'}
+                {' · '}next run: {!state.active ? 'will not run (inactive)' : j.nextRunAt ? formatInZone(j.nextRunAt, j.timeZone) : '—'}
+                {' · '}last run: {j.lastRunAt ? formatInZone(j.lastRunAt, j.timeZone) : 'never'}
               </span>
               {j.lastError && <span className="basis-full text-alerta">Last attempt failed: {j.lastError}</span>}
               <button
+                onClick={() => setEditing(editing?.id === j.id ? null : { id: j.id, timing: { runDay: j.runDay, runTime: j.runTime, timeZone: j.timeZone } })}
+                disabled={DEMO_MODE}
+                className="ml-auto rounded-[2px] border border-line px-2 py-0.5 font-mono text-[10px] font-semibold text-ink hover:border-marigold hover:text-marigold disabled:opacity-40"
+              >
+                {editing?.id === j.id ? 'Close' : 'Change day/time'}
+              </button>
+              <button
                 onClick={() => runNow(j.id)}
                 disabled={runningId === j.id || DEMO_MODE}
-                className="ml-auto rounded-[2px] border border-marigold px-2 py-0.5 font-mono text-[10px] font-semibold text-marigold hover:bg-marigold-soft disabled:opacity-40"
+                className="rounded-[2px] border border-marigold px-2 py-0.5 font-mono text-[10px] font-semibold text-marigold hover:bg-marigold-soft disabled:opacity-40"
                 title={DEMO_MODE ? 'Sourcing runs are disabled in this demo.' : "Administrator-only: run this schedule's search immediately, outside its normal cadence."}
               >
                 {DEMO_MODE ? 'Disabled in demo' : runningId === j.id ? 'Running…' : 'Run sourcing now'}
@@ -248,6 +319,19 @@ export function SchedulePanel() {
               >
                 Delete
               </button>
+              {editing?.id === j.id && (
+                <div className="basis-full rounded-[2px] border border-line bg-paper p-2" data-testid="schedule-timing-editor">
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <TimingFields value={editing.timing} onChange={(t) => setEditing({ id: j.id, timing: t })} className={input} />
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button onClick={saveTiming} className="rounded-[2px] border border-line bg-panel px-3 py-1 font-semibold hover:border-marigold hover:text-marigold">
+                      Save day/time
+                    </button>
+                    <span className="text-[11px] text-slate-mid">Only when it runs changes — sources, filters and run history stay as they are.</span>
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>

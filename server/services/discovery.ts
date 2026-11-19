@@ -156,7 +156,7 @@ function passesStaleOnlyFilter(c: DiscoveryCandidate, q: DiscoveryQuery): boolea
 // ── Overlap prevention ───────────────────────────────────────────
 // One sourcing run (manual, scheduled, or an admin's "Run sourcing
 // now") at a time. The lock is persisted (not just in-process) so it
-// holds even across the scheduler's hourly tick and ad hoc admin
+// holds even across the scheduler's 15-minute tick and ad hoc admin
 // triggers; a crashed run can't wedge it forever because a lock older
 // than RUN_LOCK_STALE_MS is treated as abandoned and reclaimed.
 

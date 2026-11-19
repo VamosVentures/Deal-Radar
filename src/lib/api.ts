@@ -97,7 +97,7 @@ import type {
 } from '../../shared/integrations';
 import type {
   DiscoveryCandidate, DiscoveryQuery, DiscoveryRun, FounderHypothesis,
-  ScheduledJob, StealthSignal,
+  ScheduledJob, ScheduledJobTiming, StealthSignal,
 } from '../../shared/discovery';
 import type { OpportunityClass } from '../../shared/opportunity';
 import type { QualificationResult } from '../../shared/qualification';
@@ -412,9 +412,13 @@ const liveApi = {
   },
 
   schedule: {
-    get: () => call<{ active: boolean; label: string; jobs: ScheduledJob[] }>('/api/schedule'),
-    save: (job: Omit<ScheduledJob, 'id' | 'lastRunAt' | 'lastError'>) =>
+    get: () => call<{ active: boolean; label: string; jobs: (ScheduledJob & { nextRunAt: string | null })[] }>('/api/schedule'),
+    // Timing is optional: the server defaults it to Sunday 6:00 PM Central.
+    save: (job: Omit<ScheduledJob, 'id' | 'lastRunAt' | 'lastError' | 'createdAt' | keyof ScheduledJobTiming> & Partial<ScheduledJobTiming>) =>
       call<ScheduledJob>('/api/schedule', { method: 'POST', body: JSON.stringify(job) }),
+    /** Change when a saved schedule runs. */
+    setTiming: (id: string, timing: ScheduledJobTiming) =>
+      call<ScheduledJob>(`/api/schedule/${id}`, { method: 'PATCH', body: JSON.stringify(timing) }),
     remove: (id: string) => call<{ ok: boolean }>(`/api/schedule/${id}`, { method: 'DELETE' }),
     /** Administrator-only: run this schedule's search immediately, outside its cadence. */
     runNow: (id: string, actor: string) =>

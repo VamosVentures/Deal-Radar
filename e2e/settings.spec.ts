@@ -58,4 +58,30 @@ test.describe('Settings', () => {
     await expect(page.getByText('Enabled sources')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Save schedule' })).toBeVisible();
   });
+
+  test('a schedule runs on a day and time, defaulting to Sunday 6:00 PM Central, and can be changed after saving', async ({ page }) => {
+    await openSettings(page);
+    const form = page.getByTestId('new-schedule-timing');
+    await expect(form.getByLabel('Run day')).toHaveValue('0');
+    await expect(form.getByLabel('Run time')).toHaveValue('18:00');
+    await expect(form.getByLabel('Time zone')).toHaveValue('America/Chicago');
+    await page.getByRole('button', { name: 'Save schedule' }).click();
+
+    const timing = page.getByTestId('schedule-timing').last();
+    await expect(timing).toHaveText('Sundays at 6:00 PM Central');
+
+    const row = page.locator('li', { has: timing });
+    await row.getByRole('button', { name: 'Change day/time' }).click();
+    const editor = row.getByTestId('schedule-timing-editor');
+    await editor.getByLabel('Run day').selectOption('1');
+    await editor.getByLabel('Run time').selectOption('07:30');
+    await editor.getByLabel('Time zone').selectOption('America/New_York');
+    await editor.getByRole('button', { name: 'Save day/time' }).click();
+    await expect(timing).toHaveText('Mondays at 7:30 AM Eastern');
+    await expect(editor).toHaveCount(0);
+
+    // Leave nothing behind for other specs.
+    await row.getByRole('button', { name: 'Delete' }).click();
+    await expect(timing).toHaveCount(0);
+  });
 });

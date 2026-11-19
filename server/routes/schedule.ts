@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { wrap } from './helpers';
 import { requireAdmin } from '../lib/auth';
-import { deleteJob, listJobs, runJobNow, saveJob, schedulerStatus } from '../services/schedule';
+import { deleteJob, jobsView, runJobNow, saveJob, schedulerStatus, updateJobTiming } from '../services/schedule';
 
 // Mounted at '/api/schedule' (not the shared '/api') so this router's
 // unconditional requireAdmin gate can never intercept requests bound
@@ -14,11 +14,16 @@ export const scheduleRouter = Router();
 scheduleRouter.use(requireAdmin);
 
 scheduleRouter.get('/', wrap(async (_req, res) => {
-  res.json({ ...schedulerStatus(), jobs: listJobs() });
+  res.json({ ...schedulerStatus(), jobs: jobsView() });
 }));
 
 scheduleRouter.post('/', wrap(async (req, res) => {
   res.json(saveJob(req.body));
+}));
+
+/** Change when a saved schedule runs (day, time, time zone); nothing else about it changes. */
+scheduleRouter.patch('/:id', wrap(async (req, res) => {
+  res.json(updateJobTiming(req.params.id as string, req.body));
 }));
 
 scheduleRouter.delete('/:id', wrap(async (req, res) => {

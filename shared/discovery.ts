@@ -1,5 +1,8 @@
 import { z } from 'zod';
 import { VERTICAL_ID_VALUES } from '../src/types';
+import {
+  DEFAULT_RUN_DAY, DEFAULT_RUN_TIME, DEFAULT_TIME_ZONE, RUN_TIME_PATTERN, SCHEDULE_TIME_ZONES,
+} from './scheduleTime';
 
 // ── Phase 4 shared contracts: discovery, stealth, scheduling ─────
 // Every claim carries source attribution; unknowns stay 'Unknown' —
@@ -430,5 +433,24 @@ export const scheduledJobSchema = z.object({
    * fresh "last run" date and looked healthy for weeks.
    */
   lastError: z.string().nullable().default(null),
+  /**
+   * When the job runs: a weekday (0 = Sunday) and a quarter-hour wall-clock
+   * time in a US time zone (shared/scheduleTime.ts). The defaults ARE the
+   * firm's chosen slot — Sunday 6:00 PM Central (Andrew, 2026-11-19) — so
+   * every schedule saved before these fields existed takes it on read.
+   */
+  runDay: z.number().int().min(0).max(6).default(DEFAULT_RUN_DAY),
+  runTime: z.string().regex(RUN_TIME_PATTERN, 'Use a quarter-hour time like 18:00 or 18:15').default(DEFAULT_RUN_TIME),
+  timeZone: z.enum(SCHEDULE_TIME_ZONES).default(DEFAULT_TIME_ZONE),
+  /**
+   * When the schedule was saved. A new schedule's first run is the first
+   * slot AFTER this, not the moment it is saved. Null on schedules saved
+   * before this existed (they all have a lastRunAt).
+   */
+  createdAt: z.string().nullable().default(null),
 });
 export type ScheduledJob = z.infer<typeof scheduledJobSchema>;
+
+/** The part of a schedule an administrator can change after saving it. */
+export const scheduledJobTimingSchema = scheduledJobSchema.pick({ runDay: true, runTime: true, timeZone: true });
+export type ScheduledJobTiming = z.infer<typeof scheduledJobTimingSchema>;
