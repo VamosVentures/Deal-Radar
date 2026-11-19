@@ -22,6 +22,15 @@ import { runEnrichment } from './enrichment';
 const REQUESTS_PER_COMPANY = 30;
 /** runEnrichment's own default ceiling for a whole run. */
 const MAX_REQUESTS_PER_RUN = 600;
+/**
+ * Companies per enrichment run, so every company gets its full
+ * REQUESTS_PER_COMPANY budget. A run's budget is shared by all its
+ * companies; before this, "Approve all" on a 100-row spreadsheet put 100
+ * companies in one 600-request run (~6 each), and the later ones were
+ * left partly or wholly unresearched. Bigger batches now run as several
+ * consecutive runs of 20.
+ */
+export const COMPANIES_PER_RUN = MAX_REQUESTS_PER_RUN / REQUESTS_PER_COMPANY;
 
 let runnerOverride: typeof runEnrichment | null = null;
 /** Tests only: substitute the enrichment runner (null restores the default). */
@@ -49,15 +58,17 @@ export function autoResearchIdleForTests(): Promise<void> {
 
 async function drain(runner: typeof runEnrichment): Promise<void> {
   while (pending.size > 0) {
-    const batch = [...pending.entries()];
-    pending.clear();
+    // Oldest first, at most COMPANIES_PER_RUN at a time; the rest (plus
+    // anything approved meanwhile) wait for the next run.
+    const batch = [...pending.entries()].slice(0, COMPANIES_PER_RUN);
+    for (const [id] of batch) pending.delete(id);
     const ids = batch.map(([id]) => id);
     const actors = [...new Set(batch.map(([, actor]) => actor))].join(', ');
     try {
       await runner({
         apply: true,
         companyIds: ids,
-        maxRequests: Math.min(MAX_REQUESTS_PER_RUN, REQUESTS_PER_COMPANY * ids.length),
+        maxRequests: REQUESTS_PER_COMPANY * ids.length,
         initiatedBy: `${actors} (auto-research)`,
       });
     } catch (e) {
