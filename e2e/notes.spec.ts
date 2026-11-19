@@ -380,6 +380,31 @@ test.describe('Internal company notes', () => {
     await expect(page.getByTestId('note-draft')).toBeVisible();
   });
 
+  test('HubSpot stage and internal notes sit together below founder contacts, both marked required', async ({ page }) => {
+    await page.goto('/companies');
+    await page.getByText(HEALTH).click();
+    await openNotesPopup(page);
+    const stage = page.getByTestId('hubspot-modal-stage');
+    const notes = page.getByTestId('hubspot-modal-internal-notes');
+    await expect(stage).toContainText('Choose the HubSpot stage');
+    for (const box of [stage, notes]) {
+      await expect(box).toContainText('* Required');
+      await expect(box).toHaveCSS('border-top-width', '2px');
+      await expect(box).toHaveCSS('border-top-color', 'rgb(158, 51, 32)'); // --color-alerta
+    }
+    // Founder contacts → stage → notes, with nothing between stage and notes.
+    const order = await page.evaluate(() => {
+      const founders = [...document.querySelectorAll('h3')].find((h) => h.textContent?.startsWith('Founder contacts'))!.closest('section')!;
+      const stageEl = document.querySelector('[data-testid="hubspot-modal-stage"]')!;
+      const notesEl = document.querySelector('[data-testid="hubspot-modal-internal-notes"]')!;
+      return {
+        foundersBeforeStage: !!(founders.compareDocumentPosition(stageEl) & Node.DOCUMENT_POSITION_FOLLOWING),
+        stageThenNotes: stageEl.nextElementSibling === notesEl,
+      };
+    });
+    expect(order).toEqual({ foundersBeforeStage: true, stageThenNotes: true });
+  });
+
   /**
    * A full pass through the feature with the console watched.
    *

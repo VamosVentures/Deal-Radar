@@ -255,18 +255,18 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
           <Field label="Company description" value={company.description} onChange={setCompanyField('description')} textarea />
           <Field label="Sourcing notes (added to the deal rationale)" value={notes} onChange={setNotes} textarea placeholder="Optional analyst notes" />
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block font-mono text-[10px] font-bold uppercase tracking-wider text-marigold">
-              Choose the HubSpot stage
-              <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-0.5 w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs font-normal normal-case text-ink">
-                {RADAR_HUBSPOT_STAGE_GROUPS.map((g) => (
-                  <optgroup key={g.pipelineLabel} label={g.pipelineLabel}>
-                    {g.stages.map((s) => <option key={s}>{s}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-          </div>
+          <section>
+            <h3 className="mb-1.5 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Evidence going into the record ({c.evidence.length})</h3>
+            <ul className="max-h-32 space-y-1 overflow-y-auto text-xs">
+              {c.evidence.map((e) => (
+                <li key={e.url} className="flex flex-wrap gap-1.5 text-slate-mid">
+                  <span className="text-ink">{e.claim}</span>
+                  <a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{e.source}</a>
+                  <span className="font-mono text-[10px]">{e.date}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
 
           <section>
             <h3 className="mb-1.5 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Founder contacts ({contacts.length})</h3>
@@ -322,17 +322,24 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
             </div>
           </section>
 
-          <section>
-            <h3 className="mb-1.5 font-mono text-[11px] uppercase tracking-widest text-slate-mid">Evidence going into the record ({c.evidence.length})</h3>
-            <ul className="max-h-32 space-y-1 overflow-y-auto text-xs">
-              {c.evidence.map((e) => (
-                <li key={e.url} className="flex flex-wrap gap-1.5 text-slate-mid">
-                  <span className="text-ink">{e.claim}</span>
-                  <a href={e.url} target="_blank" rel="noreferrer" className="text-verde underline decoration-dotted">{e.source}</a>
-                  <span className="font-mono text-[10px]">{e.date}</span>
-                </li>
-              ))}
-            </ul>
+          {/*
+            The reviewer's two action items — HubSpot stage and internal
+            notes — sit together at the bottom, directly above the submit
+            button, each in the same red "required" box so neither is
+            skipped (Andrew 2026-11-19). Evidence moved above Founder
+            contacts so nothing separates the two.
+          */}
+          <section className="rounded-[2px] border-2 border-alerta bg-paper p-3" data-testid="hubspot-modal-stage">
+            <label className="block font-mono text-[11px] font-bold uppercase tracking-widest text-marigold">
+              Choose the HubSpot stage <span className="text-alerta">* Required</span>
+              <select value={radarStage} onChange={(e) => setRadarStage(e.target.value as RadarHubSpotStage)} className="mt-1.5 block w-full rounded-[2px] border border-line bg-panel px-2 py-1.5 font-body text-xs font-normal normal-case tracking-normal text-ink sm:w-1/2">
+                {RADAR_HUBSPOT_STAGE_GROUPS.map((g) => (
+                  <optgroup key={g.pipelineLabel} label={g.pipelineLabel}>
+                    {g.stages.map((s) => <option key={s}>{s}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
           </section>
 
           {/*
@@ -343,8 +350,8 @@ export function HubSpotModal({ c, onClose, onSynced, markApprovedOnSubmit = fals
             never part of the sync payload. The "Sourcing notes" field
             above is the one that DOES go to HubSpot.
           */}
-          <section className="rounded-[2px] border border-line bg-paper p-3" data-testid="hubspot-modal-internal-notes">
-            <h3 className="font-mono text-[11px] uppercase tracking-widest text-slate-mid">Internal notes</h3>
+          <section className="rounded-[2px] border-2 border-alerta bg-paper p-3" data-testid="hubspot-modal-internal-notes">
+            <h3 className="font-mono text-[11px] font-bold uppercase tracking-widest text-marigold">Internal notes <span className="text-alerta">* Required</span></h3>
             <p className="mb-2 mt-0.5 text-[11px] text-slate-mid">
               For the Vamos team only — saved in Deal Radar and <strong>never sent to HubSpot</strong>.
             </p>
